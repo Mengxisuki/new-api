@@ -15,7 +15,12 @@ import (
 
 func GetAllRedemptions(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	redemptions, total, err := model.GetAllRedemptions(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	var ownerUserId *int
+	if c.GetInt("role") == common.RoleAdminUser {
+		adminId := c.GetInt("id")
+		ownerUserId = &adminId
+	}
+	redemptions, total, err := model.GetAllRedemptions(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), ownerUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -29,7 +34,12 @@ func GetAllRedemptions(c *gin.Context) {
 func SearchRedemptions(c *gin.Context) {
 	keyword := c.Query("keyword")
 	pageInfo := common.GetPageQuery(c)
-	redemptions, total, err := model.SearchRedemptions(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	var ownerUserId *int
+	if c.GetInt("role") == common.RoleAdminUser {
+		adminId := c.GetInt("id")
+		ownerUserId = &adminId
+	}
+	redemptions, total, err := model.SearchRedemptions(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), ownerUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -49,6 +59,10 @@ func GetRedemption(c *gin.Context) {
 	redemption, err := model.GetRedemptionById(id)
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if c.GetInt("role") == common.RoleAdminUser && redemption.UserId != c.GetInt("id") {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -120,7 +134,12 @@ func AddRedemption(c *gin.Context) {
 
 func DeleteRedemption(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	err := model.DeleteRedemptionById(id)
+	var ownerUserId *int
+	if c.GetInt("role") == common.RoleAdminUser {
+		adminId := c.GetInt("id")
+		ownerUserId = &adminId
+	}
+	err := model.DeleteRedemptionById(id, ownerUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -143,6 +162,10 @@ func UpdateRedemption(c *gin.Context) {
 	cleanRedemption, err := model.GetRedemptionById(redemption.Id)
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if c.GetInt("role") == common.RoleAdminUser && cleanRedemption.UserId != c.GetInt("id") {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
 	if statusOnly == "" {
@@ -172,7 +195,12 @@ func UpdateRedemption(c *gin.Context) {
 }
 
 func DeleteInvalidRedemption(c *gin.Context) {
-	rows, err := model.DeleteInvalidRedemptions()
+	var ownerUserId *int
+	if c.GetInt("role") == common.RoleAdminUser {
+		adminId := c.GetInt("id")
+		ownerUserId = &adminId
+	}
+	rows, err := model.DeleteInvalidRedemptions(ownerUserId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

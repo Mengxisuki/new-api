@@ -26,7 +26,14 @@ type Redemption struct {
 	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
 }
 
-func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
+func applyRedemptionOwnerScope(tx *gorm.DB, ownerUserId *int) *gorm.DB {
+	if ownerUserId == nil {
+		return tx
+	}
+	return tx.Where("user_id = ?", *ownerUserId)
+}
+
+func GetAllRedemptions(startIdx int, num int, ownerUserId *int) (redemptions []*Redemption, total int64, err error) {
 	// 开始事务
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -38,15 +45,17 @@ func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total 
 		}
 	}()
 
+	query := applyRedemptionOwnerScope(tx.Model(&Redemption{}), ownerUserId)
+
 	// 获取总数
-	err = tx.Model(&Redemption{}).Count(&total).Error
+	err = query.Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
 	// 获取分页数据
-	err = tx.Order("id desc").Limit(num).Offset(startIdx).Find(&redemptions).Error
+	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&redemptions).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -60,7 +69,7 @@ func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total 
 	return redemptions, total, nil
 }
 
-func SearchRedemptions(keyword string, startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
+func SearchRedemptions(keyword string, startIdx int, num int, ownerUserId *int) (redemptions []*Redemption, total int64, err error) {
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return nil, 0, tx.Error
@@ -72,7 +81,7 @@ func SearchRedemptions(keyword string, startIdx int, num int) (redemptions []*Re
 	}()
 
 	// Build query based on keyword type
-	query := tx.Model(&Redemption{})
+	query := applyRedemptionOwnerScope(tx.Model(&Redemption{}), ownerUserId)
 
 	// Only try to convert to ID if the string represents a valid integer
 	if id, err := strconv.Atoi(keyword); err == nil {
@@ -179,20 +188,22 @@ func (redemption *Redemption) Delete() error {
 	return err
 }
 
-func DeleteRedemptionById(id int) (err error) {
+func DeleteRedemptionById(id int, ownerUserId *int) (err error) {
 	if id == 0 {
 		return errors.New("id 为空！")
 	}
 	redemption := Redemption{Id: id}
-	err = DB.Where(redemption).First(&redemption).Error
+	query := applyRedemptionOwnerScope(DB.Where(redemption), ownerUserId)
+	err = query.First(&redemption).Error
 	if err != nil {
 		return err
 	}
 	return redemption.Delete()
 }
 
-func DeleteInvalidRedemptions() (int64, error) {
+func DeleteInvalidRedemptions(ownerUserId *int) (int64, error) {
 	now := common.GetTimestamp()
-	result := DB.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})
+	query := applyRedemptionOwnerScope(DB, ownerUserId)
+	result := query.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})
 	return result.RowsAffected, result.Error
 }

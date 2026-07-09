@@ -37,6 +37,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -46,7 +47,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/password-input'
 import { Turnstile } from '@/components/turnstile'
-import { register, wechatLoginByCode } from '@/features/auth/api'
+import {
+  getAffiliateCodeInfo,
+  register,
+  wechatLoginByCode,
+} from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { registerFormSchema } from '@/features/auth/constants'
@@ -55,6 +60,7 @@ import { useEmailVerification } from '@/features/auth/hooks/use-email-verificati
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import {
   getAffiliateCode,
+  removeAffiliateCode,
   saveAffiliateCode,
 } from '@/features/auth/lib/storage'
 
@@ -69,6 +75,10 @@ export function SignUpForm({
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
+  const [inviterId, setInviterId] = useState<number | null>(null)
+  const [isAffiliateCodeLocked, setIsAffiliateCodeLocked] = useState(false)
+  const [isResolvingAffiliateCode, setIsResolvingAffiliateCode] =
+    useState(false)
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
 
   const { status } = useStatus()
@@ -97,10 +107,12 @@ export function SignUpForm({
       email: '',
       password: '',
       confirmPassword: '',
+      affCode: '',
     },
   })
 
   const emailValue = form.watch('email')
+  const affCodeValue = form.watch('affCode') ?? ''
   const emailVerificationRequired = !!status?.email_verification
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
@@ -111,6 +123,15 @@ export function SignUpForm({
     true
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
+  const normalizedAffiliateCode = affCodeValue.trim()
+  const hasAffiliateCode = normalizedAffiliateCode.length > 0
+  const affiliateCodeError = form.formState.errors.affCode?.message
+  const isAffiliateCodeReady =
+    !hasAffiliateCode ||
+    (!isResolvingAffiliateCode &&
+      !affiliateCodeError &&
+      inviterId !== null &&
+      inviterId > 0)
 
   const wechatQrCodeUrl = useMemo(() => {
     return (
@@ -136,10 +157,69 @@ export function SignUpForm({
 
   useEffect(() => {
     const aff = new URLSearchParams(window.location.search).get('aff')?.trim()
+    const storedAff = getAffiliateCode().trim()
+    const initialAffiliateCode = aff || storedAff
+
     if (aff) {
+      setIsAffiliateCodeLocked(true)
       saveAffiliateCode(aff)
     }
-  }, [])
+
+    if (initialAffiliateCode) {
+      form.setValue('affCode', initialAffiliateCode, {
+        shouldDirty: false,
+        shouldTouch: false,
+      })
+    }
+  }, [form])
+
+  useEffect(() => {
+    if (!normalizedAffiliateCode) {
+      removeAffiliateCode()
+      setInviterId(null)
+      setIsResolvingAffiliateCode(false)
+      form.clearErrors('affCode')
+      return
+    }
+
+    saveAffiliateCode(normalizedAffiliateCode)
+    setInviterId(null)
+    setIsResolvingAffiliateCode(true)
+    form.clearErrors('affCode')
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await getAffiliateCodeInfo(normalizedAffiliateCode)
+        if (cancelled) return
+
+        if (res.success && res.data?.inviter_id) {
+          setInviterId(res.data.inviter_id)
+          return
+        }
+
+        form.setError('affCode', {
+          type: 'manual',
+          message: res.message || t('Request failed'),
+        })
+      } catch (_error) {
+        if (cancelled) return
+        form.setError('affCode', {
+          type: 'manual',
+          message: t('Request failed'),
+        })
+      } finally {
+        if (!cancelled) {
+          setIsResolvingAffiliateCode(false)
+        }
+      }
+    }, 300)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [form, normalizedAffiliateCode, t])
 
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
     if (requiresLegalConsent && !agreedToLegal) {
@@ -161,6 +241,13 @@ export function SignUpForm({
 
     if (!validateTurnstile()) return
 
+    const affCode = data.affCode?.trim() || undefined
+    if (affCode) {
+      saveAffiliateCode(affCode)
+    } else {
+      removeAffiliateCode()
+    }
+
     setIsLoading(true)
     try {
       const res = await register({
@@ -168,7 +255,7 @@ export function SignUpForm({
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff_code: getAffiliateCode(),
+        aff_code: affCode,
         turnstile: turnstileToken,
       })
 
@@ -284,6 +371,51 @@ export function SignUpForm({
           )}
         />
 
+        <FormField
+          control={form.control}
+          name='affCode'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Invitation Code')}</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={t('Enter invitation code')}
+                  autoComplete='off'
+                  readOnly={isAffiliateCodeLocked}
+                  aria-readonly={isAffiliateCodeLocked}
+                  {...field}
+                  value={field.value ?? ''}
+                />
+              </FormControl>
+              {(isResolvingAffiliateCode ||
+                inviterId !== null ||
+                isAffiliateCodeLocked) && (
+                <FormDescription className='space-y-1 text-xs'>
+                  {isResolvingAffiliateCode ? (
+                    <span className='flex items-center gap-2'>
+                      <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                      {t('Checking invitation code...')}
+                    </span>
+                  ) : null}
+                  {inviterId !== null ? (
+                    <span className='block'>
+                      {t('Invited by user ID')} {inviterId}
+                    </span>
+                  ) : null}
+                  {isAffiliateCodeLocked ? (
+                    <span className='block'>
+                      {t(
+                        'Invitation code from invite link cannot be changed.'
+                      )}
+                    </span>
+                  ) : null}
+                </FormDescription>
+              )}
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         {/* Email Verification Section */}
         {emailVerificationRequired && (
           <>
@@ -364,6 +496,7 @@ export function SignUpForm({
           className='mt-2 w-full justify-center gap-2'
           disabled={
             isLoading ||
+            !isAffiliateCodeReady ||
             (requiresLegalConsent && !agreedToLegal) ||
             !turnstileReady
           }

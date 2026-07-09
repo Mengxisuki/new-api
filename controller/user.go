@@ -392,6 +392,28 @@ func GetAffCode(c *gin.Context) {
 	return
 }
 
+func GetAffCodeInfo(c *gin.Context) {
+	affCode := strings.TrimSpace(c.Query("aff_code"))
+	if affCode == "" {
+		common.ApiErrorI18n(c, i18n.MsgUserAffCodeEmpty)
+		return
+	}
+
+	inviterId, err := model.GetUserIdByAffCode(affCode)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserNotExists)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"inviter_id": inviterId,
+		},
+	})
+}
+
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")

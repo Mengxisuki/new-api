@@ -41,6 +41,10 @@ export interface RegisterPayload {
   turnstile?: string
 }
 
+export interface AffiliateCodeInfo {
+  inviter_id: number
+}
+
 export interface PasswordResetPayload {
   email: string
   turnstile?: string
@@ -75,10 +79,10 @@ export interface Login2FAResponse {
   data?: User
 }
 
-export interface ApiResponse {
+export interface ApiResponse<T = unknown> {
   success: boolean
   message: string
-  data?: unknown
+  data?: T
 }
 
 // ============================================================================

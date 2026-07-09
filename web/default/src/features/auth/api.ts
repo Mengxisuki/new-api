@@ -24,6 +24,7 @@ import type {
   TwoFAPayload,
   RegisterPayload,
   ApiResponse,
+  AffiliateCodeInfo,
 } from './types'
 
 // ============================================================================
@@ -107,6 +108,15 @@ export async function wechatLoginByCode(code: string): Promise<ApiResponse> {
 export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   const res = await api.post(`/api/user/register`, payload, {
     params: { turnstile: payload.turnstile ?? '' },
+  })
+  return res.data
+}
+
+export async function getAffiliateCodeInfo(
+  affCode: string
+): Promise<ApiResponse<AffiliateCodeInfo>> {
+  const res = await api.get('/api/user/aff_info', {
+    params: { aff_code: affCode },
   })
   return res.data
 }

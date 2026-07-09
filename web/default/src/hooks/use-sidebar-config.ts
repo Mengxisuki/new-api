@@ -32,6 +32,20 @@ type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
 // to signal "no narrowing" (empty/invalid/legacy users).
 type SidebarModulesUserConfig = SidebarModulesAdminConfig | null
 
+function isAllowedByOverlay(
+  config: SidebarModulesUserConfig,
+  section: string,
+  module: string
+): boolean {
+  if (!config) return true
+
+  const sectionConfig = config[section]
+  if (!sectionConfig) return true
+  if (sectionConfig.enabled === false) return false
+
+  return sectionConfig[module] !== false
+}
+
 /**
  * Default sidebar modules configuration
  */
@@ -167,6 +181,7 @@ function parseUserSidebarConfig(
 function isModuleEnabled(
   url: string,
   adminConfig: SidebarModulesAdminConfig,
+  permissionConfig: SidebarModulesUserConfig,
   userConfig: SidebarModulesUserConfig
 ): boolean {
   const mapping = URL_TO_CONFIG_MAP[url]
@@ -181,13 +196,8 @@ function isModuleEnabled(
     adminSection && adminSection.enabled && adminSection[module] === true
   )
   if (!adminAllowed) return false
-
-  if (!userConfig) return true
-
-  const userSection = userConfig[section]
-  if (!userSection) return true
-  if (userSection.enabled === false) return false
-  return userSection[module] !== false
+  if (!isAllowedByOverlay(permissionConfig, section, module)) return false
+  return isAllowedByOverlay(userConfig, section, module)
 }
 
 /**
@@ -196,6 +206,7 @@ function isModuleEnabled(
 function isNavItemVisible(
   item: NavItem,
   adminConfig: SidebarModulesAdminConfig,
+  permissionConfig: SidebarModulesUserConfig,
   userConfig: SidebarModulesUserConfig
 ): boolean {
   // Handle dynamic chat presets type — also runs the admin × user AND gate
@@ -203,18 +214,15 @@ function isNavItemVisible(
     const adminChat = adminConfig.chat
     const adminAllowed = Boolean(adminChat?.enabled && adminChat.chat === true)
     if (!adminAllowed) return false
-    if (!userConfig) return true
-    const userChat = userConfig.chat
-    if (!userChat) return true
-    if (userChat.enabled === false) return false
-    return userChat.chat !== false
+    if (!isAllowedByOverlay(permissionConfig, 'chat', 'chat')) return false
+    return isAllowedByOverlay(userConfig, 'chat', 'chat')
   }
 
   // Handle direct link type
   if ('url' in item && item.url) {
     const configUrls = item.configUrls ?? [item.url]
     return configUrls.some((url) =>
-      isModuleEnabled(url as string, adminConfig, userConfig)
+      isModuleEnabled(url as string, adminConfig, permissionConfig, userConfig)
     )
   }
 
@@ -222,7 +230,12 @@ function isNavItemVisible(
   if ('items' in item && item.items) {
     // If has sub-items, show this collapsible item if at least one sub-item is visible
     return item.items.some((subItem) =>
-      isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+      isModuleEnabled(
+        subItem.url as string,
+        adminConfig,
+        permissionConfig,
+        userConfig
+      )
     )
   }
 
@@ -235,6 +248,7 @@ function isNavItemVisible(
 function filterNavItems(
   items: NavItem[],
   adminConfig: SidebarModulesAdminConfig,
+  permissionConfig: SidebarModulesUserConfig,
   userConfig: SidebarModulesUserConfig
 ): NavItem[] {
   return items
@@ -242,7 +256,12 @@ function filterNavItems(
       // If collapsible item, also filter its sub-items
       if ('items' in item && item.items) {
         const filteredSubItems = item.items.filter((subItem) =>
-          isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+          isModuleEnabled(
+            subItem.url as string,
+            adminConfig,
+            permissionConfig,
+            userConfig
+          )
         )
 
         return {
@@ -252,7 +271,9 @@ function filterNavItems(
       }
       return item
     })
-    .filter((item) => isNavItemVisible(item, adminConfig, userConfig))
+    .filter((item) =>
+      isNavItemVisible(item, adminConfig, permissionConfig, userConfig)
+    )
 }
 
 /**
@@ -295,15 +316,26 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
     return parseUserSidebarConfig(auth?.user?.sidebar_modules)
   }, [auth?.user?.permissions?.sidebar_settings, auth?.user?.sidebar_modules])
 
+  const permissionConfig = useMemo(() => {
+    const raw = auth?.user?.permissions?.sidebar_modules
+    if (!raw || typeof raw !== 'object') return null
+    return raw as SidebarModulesAdminConfig
+  }, [auth?.user?.permissions?.sidebar_modules])
+
   const filteredNavGroups = useMemo(
     () =>
       navGroups
         .map((group) => ({
           ...group,
-          items: filterNavItems(group.items, adminConfig, userConfig),
+          items: filterNavItems(
+            group.items,
+            adminConfig,
+            permissionConfig,
+            userConfig
+          ),
         }))
         .filter((group) => group.items.length > 0), // Only show navigation groups with visible items
-    [navGroups, adminConfig, userConfig]
+    [navGroups, adminConfig, permissionConfig, userConfig]
   )
 
   return filteredNavGroups

@@ -23,6 +23,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { Button } from '@/components/ui/button'
@@ -89,6 +90,8 @@ export function UsersMutateDrawer({
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()
+  const currentUserRole = useAuthStore((state) => state.auth.user?.role ?? 0)
+  const isSuperAdmin = currentUserRole >= 100
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
 
@@ -240,10 +243,14 @@ export function UsersMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Role')}</FormLabel>
                         <Select
-                          items={[
-                            { value: '1', label: t('Common User') },
-                            { value: '10', label: t('Admin') },
-                          ]}
+                          items={
+                            isSuperAdmin
+                              ? [
+                                  { value: '1', label: t('Common User') },
+                                  { value: '10', label: t('Admin') },
+                                ]
+                              : [{ value: '1', label: t('Common User') }]
+                          }
                           onValueChange={(value) =>
                             value !== null && field.onChange(parseInt(value))
                           }
@@ -259,7 +266,9 @@ export function UsersMutateDrawer({
                               <SelectItem value='1'>
                                 {t('Common User')}
                               </SelectItem>
-                              <SelectItem value='10'>{t('Admin')}</SelectItem>
+                              {isSuperAdmin && (
+                                <SelectItem value='10'>{t('Admin')}</SelectItem>
+                              )}
                             </SelectGroup>
                           </SelectContent>
                         </Select>

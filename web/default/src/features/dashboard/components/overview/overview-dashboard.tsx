@@ -439,6 +439,7 @@ export function OverviewDashboard() {
   const remainQuota = Number(user?.quota ?? 0)
   const usedQuota = Number(user?.used_quota ?? 0)
   const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
+  const isSuperAdmin = user?.role === ROLE.SUPER_ADMIN
 
   const apiKeysQuery = useQuery({
     queryKey: ['dashboard', 'overview', 'api-keys'],
@@ -533,8 +534,8 @@ export function OverviewDashboard() {
   )
 
   const visibleQuickActions = useMemo(
-    () => quickActions.filter((action) => !action.adminOnly || isAdmin),
-    [isAdmin, quickActions]
+    () => quickActions.filter((action) => !action.adminOnly || isSuperAdmin),
+    [isSuperAdmin, quickActions]
   )
 
   const heroSignals = useMemo<HeroSignal[]>(

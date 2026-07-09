@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -64,6 +65,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
   const { setOpen, setCurrentRow, triggerRefresh } = useUsers()
+  const currentUserRole = useAuthStore((state) => state.auth.user?.role ?? 0)
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
@@ -130,6 +132,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const isDisabled = user.status === USER_STATUS.DISABLED
   const isAdmin = user.role >= USER_ROLE.ADMIN
   const isRoot = user.role === USER_ROLE.ROOT
+  const isSuperAdmin = currentUserRole === USER_ROLE.ROOT
 
   if (isUserDeleted(user)) {
     return null
@@ -178,7 +181,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {isAdmin && !isRoot && (
+          {isSuperAdmin && isAdmin && !isRoot && (
             <DropdownMenuItem onClick={() => handleManage('demote')}>
               {t('Demote')}
               <DropdownMenuShortcut>
@@ -187,7 +190,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {!isAdmin && (
+          {isSuperAdmin && !isAdmin && (
             <DropdownMenuItem onClick={() => handleManage('promote')}>
               {t('Promote')}
               <DropdownMenuShortcut>
@@ -208,17 +211,19 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              setSubscriptionsDialogOpen(true)
-            }}
-          >
-            {t('Manage Subscriptions')}
-            <DropdownMenuShortcut>
-              <CreditCard size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {isSuperAdmin && (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                setSubscriptionsDialogOpen(true)
+              }}
+            >
+              {t('Manage Subscriptions')}
+              <DropdownMenuShortcut>
+                <CreditCard size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
           <DropdownMenuSeparator />
 
@@ -288,12 +293,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onUnbindSuccess={triggerRefresh}
       />
 
-      <UserSubscriptionsDialog
-        open={subscriptionsDialogOpen}
-        onOpenChange={setSubscriptionsDialogOpen}
-        user={{ id: user.id, username: user.username }}
-        onSuccess={triggerRefresh}
-      />
+      {isSuperAdmin && (
+        <UserSubscriptionsDialog
+          open={subscriptionsDialogOpen}
+          onOpenChange={setSubscriptionsDialogOpen}
+          user={{ id: user.id, username: user.username }}
+          onSuccess={triggerRefresh}
+        />
+      )}
     </>
   )
 }

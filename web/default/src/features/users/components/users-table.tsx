@@ -33,6 +33,7 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import {
   DISABLED_ROW_DESKTOP,
@@ -61,6 +62,8 @@ export function UsersTable() {
   const { t } = useTranslation()
   const columns = useUsersColumns()
   const { refreshTrigger } = useUsers()
+  const currentUserRole = useAuthStore((state) => state.auth.user?.role ?? 0)
+  const isSuperAdmin = currentUserRole >= 100
   const isMobile = useMediaQuery('(max-width: 640px)')
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
@@ -215,7 +218,7 @@ export function UsersTable() {
           {
             columnId: 'role',
             title: t('Role'),
-            options: getUserRoleOptions(t),
+            options: getUserRoleOptions(t, isSuperAdmin),
             singleSelect: true,
           },
         ],

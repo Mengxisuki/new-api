@@ -87,11 +87,23 @@ export const USER_ROLES = {
   },
 } as const
 
-export const getUserRoleOptions = (t: (key: string) => string) => [
-  { label: t('User'), value: String(USER_ROLE.USER), icon: User },
-  { label: t('Admin'), value: String(USER_ROLE.ADMIN), icon: Users },
-  { label: t('Root'), value: String(USER_ROLE.ROOT), icon: Shield },
-]
+export const getUserRoleOptions = (
+  t: (key: string) => string,
+  includeAdminLevels = true
+) => {
+  const options = [
+    { label: t('User'), value: String(USER_ROLE.USER), icon: User },
+  ]
+
+  if (includeAdminLevels) {
+    options.push(
+      { label: t('Admin'), value: String(USER_ROLE.ADMIN), icon: Users },
+      { label: t('Root'), value: String(USER_ROLE.ROOT), icon: Shield }
+    )
+  }
+
+  return options
+}
 
 // ============================================================================
 // Default Values

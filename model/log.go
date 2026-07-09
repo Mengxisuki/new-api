@@ -300,12 +300,43 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func getInvitedUserIDsForLogs(inviterId int) ([]int, error) {
+	var userIDs []int
+	err := DB.Model(&User{}).
+		Where("inviter_id = ?", inviterId).
+		Where("role < ?", common.RoleAdminUser).
+		Pluck("id", &userIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
+func applyInviterLogScope(tx *gorm.DB, inviterId *int) (*gorm.DB, error) {
+	if inviterId == nil {
+		return tx, nil
+	}
+	userIDs, err := getInvitedUserIDsForLogs(*inviterId)
+	if err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 {
+		return tx.Where("1 = 0"), nil
+	}
+	return tx.Where("logs.user_id IN ?", userIDs), nil
+}
+
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, inviterId *int) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
+	}
+
+	tx, err = applyInviterLogScope(tx, inviterId)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	if modelName != "" {
@@ -443,11 +474,20 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, inviterId *int) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
+
+	tx, err = applyInviterLogScope(tx, inviterId)
+	if err != nil {
+		return stat, err
+	}
+	rpmTpmQuery, err = applyInviterLogScope(rpmTpmQuery, inviterId)
+	if err != nil {
+		return stat, err
+	}
 
 	if username != "" {
 		tx = tx.Where("username = ?", username)

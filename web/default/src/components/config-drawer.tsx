@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type SVGProps } from 'react'
 import { Radio as RadioPrimitive } from '@base-ui/react/radio'
 import { RadioGroup as Radio } from '@base-ui/react/radio-group'
 import { CircleCheck, Palette, RotateCcw } from 'lucide-react'
+import { type SVGProps } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { IconDir } from '@/assets/custom/icon-dir'
 import { IconLayoutCompact } from '@/assets/custom/icon-layout-compact'
 import { IconLayoutDefault } from '@/assets/custom/icon-layout-default'
@@ -32,17 +33,11 @@ import { IconThemeDark } from '@/assets/custom/icon-theme-dark'
 import { IconThemeLight } from '@/assets/custom/icon-theme-light'
 import { IconThemeSystem } from '@/assets/custom/icon-theme-system'
 import {
-  type ContentLayout,
-  THEME_PRESETS,
-  type ThemePreset,
-  type ThemeRadius,
-  type ThemeScale,
-} from '@/lib/theme-customization'
-import { cn } from '@/lib/utils'
-import { useDirection } from '@/context/direction-provider'
-import { type Collapsible, useLayout } from '@/context/layout-provider'
-import { useThemeCustomization } from '@/context/theme-customization-provider'
-import { useTheme } from '@/context/theme-provider'
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -53,12 +48,20 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { useDirection } from '@/context/direction-provider'
+import { type Collapsible, useLayout } from '@/context/layout-provider'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { useTheme } from '@/context/theme-provider'
 import {
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-} from '@/components/drawer-layout'
+  type ContentLayout,
+  THEME_PRESETS,
+  type ThemeFont,
+  type ThemePreset,
+  type ThemeRadius,
+  type ThemeScale,
+} from '@/lib/theme-customization'
+import { cn } from '@/lib/utils'
+
 import { useSidebar } from './ui/sidebar'
 
 const Item = RadioPrimitive.Root
@@ -104,6 +107,7 @@ export function ConfigDrawer() {
         <div className={sideDrawerFormClassName()}>
           <ThemeConfig />
           <PresetConfig />
+          <FontConfig />
           <RadiusConfig />
           <ScaleConfig />
           <SidebarConfig />
@@ -302,6 +306,90 @@ function PresetConfig() {
   )
 }
 
+/**
+ * Font options shown in the theme drawer.
+ *
+ * Each option renders a live "Aa" preview in the font it represents.
+ * `Auto` deliberately leaves `fontFamily` undefined so the preview inherits
+ * the currently active body font — that way the user sees what `Auto` will
+ * actually look like for the active preset (Anthropic → serif glyphs,
+ * everything else → sans glyphs) without us having to duplicate the
+ * preset-default mapping in the UI.
+ */
+const FONT_OPTIONS: {
+  value: ThemeFont
+  label: string
+  // CSS font-family applied to the "Aa" preview. `undefined` = inherit
+  // from the current theme (used by the `default` option).
+  preview?: string
+}[] = [
+  { value: 'default', label: 'Auto', preview: undefined },
+  { value: 'sans', label: 'Sans', preview: 'var(--font-sans)' },
+  { value: 'serif', label: 'Serif', preview: 'var(--font-serif)' },
+]
+
+function FontConfig() {
+  const { t } = useTranslation()
+  const { defaults, customization, setFont } = useThemeCustomization()
+  return (
+    <div>
+      <SectionTitle
+        title={t('Font')}
+        showReset={customization.font !== defaults.font}
+        onReset={() => setFont(defaults.font)}
+      />
+      <Radio
+        value={customization.font}
+        onValueChange={(v) => setFont(v as ThemeFont)}
+        className='grid w-full grid-cols-3 gap-4'
+        aria-label={t('Select body font')}
+      >
+        {FONT_OPTIONS.map((option) => (
+          <Item
+            key={option.value}
+            value={option.value}
+            className='group flex flex-col items-stretch outline-none'
+            aria-label={
+              option.value === 'default' ? t('System default') : option.label
+            }
+          >
+            <div
+              className={cn(
+                'ring-border relative h-12 rounded-md ring-[1px] transition',
+                'group-data-checked:ring-primary group-data-checked:shadow-md',
+                'group-focus-visible:ring-2',
+                'group-hover:ring-primary/60'
+              )}
+            >
+              <CircleCheck
+                className={cn(
+                  'fill-primary absolute top-0 right-0 z-10 size-5 translate-x-1/2 -translate-y-1/2 stroke-white',
+                  'group-data-unchecked:hidden'
+                )}
+                aria-hidden='true'
+              />
+              <span
+                aria-hidden='true'
+                className='text-foreground absolute inset-0 flex items-center justify-center text-lg leading-none font-medium'
+                style={
+                  option.preview
+                    ? { fontFamily: option.preview }
+                    : // `font: inherit` defers to the active theme so the
+                      // "Auto" tile previews what the resolved font will be.
+                      { font: 'inherit', fontSize: '1.125rem' }
+                }
+              >
+                Aa
+              </span>
+            </div>
+            <div className='mt-1.5 text-center text-xs'>{option.label}</div>
+          </Item>
+        ))}
+      </Radio>
+    </div>
+  )
+}
+
 const RADIUS_OPTIONS: {
   value: ThemeRadius
   label: string
@@ -404,6 +492,7 @@ function ScaleConfig() {
     { value: 'sm', label: t('Compact'), rows: 4, rowGap: '3px' },
     { value: 'default', label: t('Default'), rows: 3, rowGap: '6px' },
     { value: 'lg', label: t('Comfortable'), rows: 2, rowGap: '10px' },
+    { value: 'xl', label: t('Super Large'), rows: 1, rowGap: '14px' },
   ]
   return (
     <div>
@@ -415,7 +504,7 @@ function ScaleConfig() {
       <Radio
         value={customization.scale}
         onValueChange={(v) => setScale(v as ThemeScale)}
-        className='grid w-full grid-cols-3 gap-4'
+        className='grid w-full grid-cols-4 gap-3'
         aria-label={t('Select interface density')}
       >
         {scaleOptions.map((option) => (

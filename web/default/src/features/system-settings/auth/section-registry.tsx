@@ -47,6 +47,7 @@ const AUTH_SECTIONS = [
     titleKey: 'OAuth Integrations',
     build: (settings: AuthSettings) => (
       <OAuthSection
+        serverAddress={settings.ServerAddress}
         defaultValues={{
           GitHubOAuthEnabled: settings.GitHubOAuthEnabled,
           GitHubClientId: settings.GitHubClientId,
@@ -93,14 +94,8 @@ const AUTH_SECTIONS = [
             | 'required'
             | 'preferred'
             | 'discouraged',
-          'passkey.attachment_preference': (settings[
-            'passkey.attachment_preference'
-          ] === ''
-            ? 'none'
-            : settings['passkey.attachment_preference']) as
-            | 'none'
-            | 'platform'
-            | 'cross-platform',
+          'passkey.attachment_preference':
+            settings['passkey.attachment_preference'],
         }}
       />
     ),
@@ -121,7 +116,9 @@ const AUTH_SECTIONS = [
   {
     id: 'custom-oauth',
     titleKey: 'Custom OAuth',
-    build: () => <CustomOAuthSection />,
+    build: (settings: AuthSettings) => (
+      <CustomOAuthSection serverAddress={settings.ServerAddress} />
+    ),
   },
 ] as const
 

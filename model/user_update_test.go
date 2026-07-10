@@ -92,6 +92,41 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	assert.Equal(t, "zh", got.GetSetting().Language)
 }
 
+func TestUserListsIncludeInviterUsername(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	inviter := User{
+		Username: "inviter-user",
+		Password: "password",
+		AffCode:  "inviter-code",
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&inviter).Error)
+
+	invitedUser := User{
+		Username:  "invited-user",
+		Password:  "password",
+		AffCode:   "invited-code",
+		InviterId: inviter.Id,
+		Status:    common.UserStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&invitedUser).Error)
+
+	users, total, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 20}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	require.Len(t, users, 2)
+	assert.Equal(t, invitedUser.Id, users[0].Id)
+	assert.Equal(t, inviter.Username, users[0].InviterUsername)
+
+	searchResults, searchTotal, err := SearchUsers("invited-user", "", nil, nil, 0, 20, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), searchTotal)
+	require.Len(t, searchResults, 1)
+	assert.Equal(t, invitedUser.Id, searchResults[0].Id)
+	assert.Equal(t, inviter.Username, searchResults[0].InviterUsername)
+}
+
 func TestEnsureEmailAvailableRejectsExistingEmailCaseInsensitive(t *testing.T) {
 	setupUserUpdateTestState(t)
 

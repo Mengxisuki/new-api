@@ -45,6 +45,7 @@ type User struct {
 	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
 	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
 	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	InviterUsername  string                     `json:"inviter_username,omitempty" gorm:"-:all"`
 	DeletedAt        gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`
@@ -288,6 +289,41 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
+func fillInviterUsernames(tx *gorm.DB, users []*User) error {
+	inviterIds := make([]int, 0)
+	seenInviterIds := make(map[int]struct{})
+	for _, user := range users {
+		if user.InviterId == 0 {
+			continue
+		}
+		if _, exists := seenInviterIds[user.InviterId]; exists {
+			continue
+		}
+		seenInviterIds[user.InviterId] = struct{}{}
+		inviterIds = append(inviterIds, user.InviterId)
+	}
+	if len(inviterIds) == 0 {
+		return nil
+	}
+
+	var inviters []struct {
+		Id       int
+		Username string
+	}
+	if err := tx.Unscoped().Model(&User{}).Select("id", "username").Where("id IN ?", inviterIds).Scan(&inviters).Error; err != nil {
+		return err
+	}
+
+	usernamesById := make(map[int]string, len(inviters))
+	for _, inviter := range inviters {
+		usernamesById[inviter.Id] = inviter.Username
+	}
+	for _, user := range users {
+		user.InviterUsername = usernamesById[user.InviterId]
+	}
+	return nil
+}
+
 func GetAllUsers(pageInfo *common.PageInfo, inviterId *int) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
@@ -315,6 +351,10 @@ func GetAllUsers(pageInfo *common.PageInfo, inviterId *int) (users []*User, tota
 	// Get paginated users within same transaction
 	err = query.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
 	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = fillInviterUsernames(tx, users); err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
@@ -386,6 +426,10 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	// 获取分页数据
 	err = query.Omit("password", "access_token").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = fillInviterUsernames(tx, users); err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}

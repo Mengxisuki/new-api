@@ -485,9 +485,7 @@ func applyInviterLogScope(tx *gorm.DB, inviterId *int) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(userIDs) == 0 {
-		return tx.Where("1 = 0"), nil
-	}
+	userIDs = append(userIDs, *inviterId)
 	return tx.Where("logs.user_id IN ?", userIDs), nil
 }
 

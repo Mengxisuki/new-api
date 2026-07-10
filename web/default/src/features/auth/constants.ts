@@ -30,6 +30,10 @@ export const loginFormSchema = z.object({
 export const registerFormSchema = z
   .object({
     username: z.string().min(1, 'Please enter your username'),
+    display_name: z
+      .string()
+      .max(20, 'Display name must be at most 20 characters long')
+      .optional(),
     email: z.string().optional(),
     password: z
       .string()

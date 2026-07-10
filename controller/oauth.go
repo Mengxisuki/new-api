@@ -118,6 +118,10 @@ func HandleOAuth(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+		case *OAuthInvitationRequiredError:
+			common.ApiErrorI18n(c, i18n.MsgUserInvitationRequired)
+		case *OAuthInvitationInvalidError:
+			common.ApiErrorI18n(c, i18n.MsgUserAffCodeInvalid)
 		default:
 			common.ApiError(c, err)
 		}
@@ -276,10 +280,22 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	user.Status = common.UserStatusEnabled
 
 	// Handle affiliate code
-	affCode := session.Get("aff")
-	inviterId := 0
-	if affCode != nil {
-		inviterId, _ = model.GetUserIdByAffCode(affCode.(string))
+	affCode := ""
+	if sessionAffCode := session.Get("aff"); sessionAffCode != nil {
+		if affCodeValue, ok := sessionAffCode.(string); ok {
+			affCode = affCodeValue
+		}
+	}
+	inviterId, err := resolveRegistrationInviterID(affCode)
+	if err != nil {
+		switch err.(type) {
+		case *RegistrationInvitationRequiredError:
+			return nil, &OAuthInvitationRequiredError{}
+		case *RegistrationInvitationInvalidError:
+			return nil, &OAuthInvitationInvalidError{}
+		default:
+			return nil, err
+		}
 	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
@@ -360,6 +376,18 @@ type OAuthEmailAlreadyTakenError struct{}
 
 func (e *OAuthEmailAlreadyTakenError) Error() string {
 	return "email is already in use"
+}
+
+type OAuthInvitationRequiredError struct{}
+
+func (e *OAuthInvitationRequiredError) Error() string {
+	return "oauth registration requires an invitation code"
+}
+
+type OAuthInvitationInvalidError struct{}
+
+func (e *OAuthInvitationInvalidError) Error() string {
+	return "oauth registration invitation code is invalid"
 }
 
 // handleOAuthError handles OAuth errors and returns translated message

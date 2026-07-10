@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Share2 } from 'lucide-react'
+import { RefreshCw, Share2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
@@ -30,18 +30,24 @@ import type { UserWalletData } from '../types'
 
 interface AffiliateRewardsCardProps {
   user: UserWalletData | null
+  affiliateCode: string
   affiliateLink: string
   onTransfer: () => void
+  onReset: () => void
   complianceConfirmed?: boolean
   loading?: boolean
+  resetting?: boolean
 }
 
 export function AffiliateRewardsCard({
   user,
+  affiliateCode,
   affiliateLink,
   onTransfer,
+  onReset,
   complianceConfirmed = true,
   loading,
+  resetting = false,
 }: AffiliateRewardsCardProps) {
   const { t } = useTranslation()
   if (loading) {
@@ -97,30 +103,69 @@ export function AffiliateRewardsCard({
           ))}
         </div>
 
-        <div className='flex items-center gap-2'>
-          <Input
-            value={affiliateLink}
-            readOnly
-            className='border-muted bg-background/70 h-9 min-w-0 flex-1 font-mono text-xs'
-          />
-          <CopyButton
-            value={affiliateLink}
-            variant='outline'
-            className='bg-background size-9 shrink-0'
-            iconClassName='size-4'
-            tooltip={t('Copy referral link')}
-            aria-label={t('Copy referral link')}
-          />
-          {hasRewards && (
-            <Button
-              onClick={onTransfer}
-              disabled={!complianceConfirmed}
-              className='h-9 shrink-0 px-3'
-              size='sm'
-            >
-              {t('Transfer to Balance')}
-            </Button>
-          )}
+        <div className='grid gap-2'>
+          <div className='space-y-1'>
+            <p className='text-muted-foreground text-[11px] font-medium tracking-wider uppercase'>
+              {t('Invitation Code')}
+            </p>
+            <div className='flex items-center gap-2'>
+              <Input
+                value={affiliateCode}
+                readOnly
+                className='border-muted bg-background/70 h-9 min-w-0 flex-1 font-mono text-xs'
+              />
+              <CopyButton
+                value={affiliateCode}
+                variant='outline'
+                className='bg-background size-9 shrink-0'
+                iconClassName='size-4'
+                tooltip={t('Copy invitation code')}
+                aria-label={t('Copy invitation code')}
+              />
+              <Button
+                variant='outline'
+                size='sm'
+                className='h-9 shrink-0 px-3'
+                disabled={resetting}
+                onClick={onReset}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${resetting ? 'animate-spin' : ''}`}
+                />
+                {t('Reset')}
+              </Button>
+            </div>
+          </div>
+          <div className='space-y-1'>
+            <p className='text-muted-foreground text-[11px] font-medium tracking-wider uppercase'>
+              {t('Invitation Link')}
+            </p>
+            <div className='flex items-center gap-2'>
+              <Input
+                value={affiliateLink}
+                readOnly
+                className='border-muted bg-background/70 h-9 min-w-0 flex-1 font-mono text-xs'
+              />
+              <CopyButton
+                value={affiliateLink}
+                variant='outline'
+                className='bg-background size-9 shrink-0'
+                iconClassName='size-4'
+                tooltip={t('Copy invitation link')}
+                aria-label={t('Copy invitation link')}
+              />
+              {hasRewards && (
+                <Button
+                  onClick={onTransfer}
+                  disabled={!complianceConfirmed}
+                  className='h-9 shrink-0 px-3'
+                  size='sm'
+                >
+                  {t('Transfer to Balance')}
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
         {!complianceConfirmed ? (
           <p className='text-muted-foreground text-xs lg:col-span-3'>

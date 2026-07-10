@@ -41,6 +41,7 @@ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
 export type AffiliateCodeResponse = ApiResponse<string>
 export type AffiliateTransferResponse = ApiResponse
+export type ResetAffiliateCodeResponse = ApiResponse<string>
 export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
@@ -228,6 +229,10 @@ export interface UserWalletData {
   id: number
   /** Username */
   username: string
+  /** Display role */
+  role: number
+  /** Current invitation code */
+  aff_code?: string
   /** Current quota balance */
   quota: number
   /** Total used quota */

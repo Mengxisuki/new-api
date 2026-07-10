@@ -196,6 +196,7 @@ func Register(c *gin.Context) {
 		return
 	}
 	user.Username = strings.TrimSpace(user.Username)
+	user.DisplayName = strings.TrimSpace(user.DisplayName)
 	user.Email = model.NormalizeEmail(user.Email)
 	if user.Username == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
@@ -237,12 +238,26 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserExists)
 		return
 	}
-	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId, err := resolveRegistrationInviterID(user.AffCode)
+	if err != nil {
+		switch err.(type) {
+		case *RegistrationInvitationRequiredError:
+			common.ApiErrorI18n(c, i18n.MsgUserInvitationRequired)
+		case *RegistrationInvitationInvalidError:
+			common.ApiErrorI18n(c, i18n.MsgUserAffCodeInvalid)
+		default:
+			common.ApiError(c, err)
+		}
+		return
+	}
+	displayName := user.DisplayName
+	if displayName == "" {
+		displayName = user.Username
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
-		DisplayName: user.Username,
+		DisplayName: displayName,
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
@@ -478,6 +493,31 @@ func GetAffCode(c *gin.Context) {
 		"data":    user.AffCode,
 	})
 	return
+}
+
+func ResetAffCode(c *gin.Context) {
+	if c.GetInt("role") < common.RoleAdminUser {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
+		return
+	}
+
+	user, err := model.GetUserById(c.GetInt("id"), true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	user.AffCode = common.GetRandomString(4)
+	if err := user.Update(false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    user.AffCode,
+	})
 }
 
 func GetAffCodeInfo(c *gin.Context) {

@@ -20,25 +20,32 @@ import i18next from 'i18next'
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { getSelf } from '@/lib/api'
-
-import { getAffiliateCode, transferAffiliateQuota } from '../api'
+import {
+  getAffiliateCode,
+  resetAffiliateCode,
+  transferAffiliateQuota,
+} from '../api'
 import { generateAffiliateLink } from '../lib'
 
 // ============================================================================
 // Affiliate Hook
 // ============================================================================
 
-export function useAffiliate() {
+export function useAffiliate(enabled = true) {
   const [affiliateCode, setAffiliateCode] = useState<string>('')
   const [affiliateLink, setAffiliateLink] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [transferring, setTransferring] = useState(false)
-  const { copyToClipboard } = useCopyToClipboard()
+  const [resetting, setResetting] = useState(false)
 
   // Fetch affiliate code
   const fetchAffiliateCode = useCallback(async () => {
+    if (!enabled) {
+      setAffiliateCode('')
+      setAffiliateLink('')
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
       const response = await getAffiliateCode()
@@ -54,12 +61,7 @@ export function useAffiliate() {
     } finally {
       setLoading(false)
     }
-  }, [])
-
-  // Copy affiliate link
-  const copyAffiliateLink = useCallback(() => {
-    copyToClipboard(affiliateLink)
-  }, [affiliateLink, copyToClipboard])
+  }, [enabled])
 
   // Transfer affiliate quota to balance
   const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
@@ -69,17 +71,36 @@ export function useAffiliate() {
 
       if (response.success) {
         toast.success(response.message || i18next.t('Transfer successful'))
-        await getSelf()
         return true
       }
 
       toast.error(response.message || i18next.t('Transfer failed'))
       return false
-    } catch (_error) {
+    } catch {
       toast.error(i18next.t('Transfer failed'))
       return false
     } finally {
       setTransferring(false)
+    }
+  }, [])
+
+  const regenerateAffiliateCode = useCallback(async (): Promise<boolean> => {
+    try {
+      setResetting(true)
+      const response = await resetAffiliateCode()
+      if (response.success && response.data) {
+        setAffiliateCode(response.data)
+        setAffiliateLink(generateAffiliateLink(response.data))
+        toast.success(i18next.t('Invitation code reset successfully'))
+        return true
+      }
+      toast.error(response.message || i18next.t('Request failed'))
+      return false
+    } catch {
+      toast.error(i18next.t('Request failed'))
+      return false
+    } finally {
+      setResetting(false)
     }
   }, [])
 
@@ -91,9 +112,10 @@ export function useAffiliate() {
     affiliateCode,
     affiliateLink,
     loading,
+    resetting,
     transferring,
-    copyAffiliateLink,
     transferQuota,
+    regenerateAffiliateCode,
     refetch: fetchAffiliateCode,
   }
 }

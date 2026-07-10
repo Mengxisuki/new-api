@@ -25,7 +25,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TitledCard } from '@/components/ui/titled-card'
 
-import type { UserProfile } from '../types'
+import type { UpdateUserRequest, UserProfile } from '../types'
+import { ProfileDisplayNameSection } from './profile-display-name-section'
 import { AccountBindingsTab } from './tabs/account-bindings-tab'
 import { NotificationTab } from './tabs/notification-tab'
 
@@ -36,13 +37,17 @@ import { NotificationTab } from './tabs/notification-tab'
 interface ProfileSettingsCardProps {
   profile: UserProfile | null
   loading: boolean
+  updating: boolean
   onProfileUpdate: () => void
+  onProfileSave: (data: UpdateUserRequest) => Promise<boolean>
 }
 
 export function ProfileSettingsCard({
   profile,
   loading,
+  updating,
   onProfileUpdate,
+  onProfileSave,
 }: ProfileSettingsCardProps) {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState('bindings')
@@ -56,9 +61,11 @@ export function ProfileSettingsCard({
         </CardHeader>
         <CardContent className='space-y-4 p-3 sm:p-5'>
           <Skeleton className='h-10 w-full' />
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className='h-20 w-full' />
-          ))}
+          {['profile-settings-1', 'profile-settings-2', 'profile-settings-3'].map(
+            (key) => (
+              <Skeleton key={key} className='h-20 w-full' />
+            )
+          )}
         </CardContent>
       </Card>
     )
@@ -71,6 +78,12 @@ export function ProfileSettingsCard({
       icon={<Settings className='h-4 w-4' />}
       disableHoverEffect
     >
+      <ProfileDisplayNameSection
+        profile={profile}
+        updating={updating}
+        onSave={onProfileSave}
+      />
+
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className='grid w-full grid-cols-2 items-stretch gap-1 rounded-xl p-1 group-data-horizontal/tabs:h-10'>
           <TabsTrigger

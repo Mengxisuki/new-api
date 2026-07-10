@@ -98,6 +98,7 @@ export function SignUpForm({
     resolver: zodResolver(registerFormSchema),
     defaultValues: {
       username: '',
+      display_name: '',
       email: '',
       password: '',
       confirmPassword: '',
@@ -115,17 +116,26 @@ export function SignUpForm({
     status?.oauth_register_enabled ??
     status?.data?.oauth_register_enabled ??
     true
+  const registerRequiresInvitation =
+    status?.register_requires_invitation ??
+    status?.data?.register_requires_invitation ??
+    false
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
   const normalizedAffiliateCode = affCodeValue.trim()
   const hasAffiliateCode = normalizedAffiliateCode.length > 0
   const affiliateCodeError = form.formState.errors.affCode?.message
   const isAffiliateCodeReady =
-    !hasAffiliateCode ||
-    (!isResolvingAffiliateCode &&
-      !affiliateCodeError &&
-      inviterId !== null &&
-      inviterId > 0)
+    registerRequiresInvitation
+      ? !isResolvingAffiliateCode &&
+        !affiliateCodeError &&
+        inviterId !== null &&
+        inviterId > 0
+      : !hasAffiliateCode ||
+        (!isResolvingAffiliateCode &&
+          !affiliateCodeError &&
+          inviterId !== null &&
+          inviterId > 0)
 
   const wechatQrCodeUrl = useMemo(() => {
     return (
@@ -196,7 +206,7 @@ export function SignUpForm({
           type: 'manual',
           message: res.message || t('Request failed'),
         })
-      } catch (_error) {
+      } catch {
         if (cancelled) return
         form.setError('affCode', {
           type: 'manual',
@@ -236,6 +246,13 @@ export function SignUpForm({
     if (!validateTurnstile()) return
 
     const affCode = data.affCode?.trim() || undefined
+    if (registerRequiresInvitation && !affCode) {
+      form.setError('affCode', {
+        type: 'manual',
+        message: t('Invitation code is required'),
+      })
+      return
+    }
     if (affCode) {
       saveAffiliateCode(affCode)
     } else {
@@ -246,6 +263,7 @@ export function SignUpForm({
     try {
       const res = await register({
         username: data.username,
+        display_name: data.display_name?.trim() || data.username,
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
@@ -259,7 +277,7 @@ export function SignUpForm({
       } else {
         toast.error(res?.message || t('Failed to create account'))
       }
-    } catch (_error) {
+    } catch {
       // Errors are handled by global interceptor
     } finally {
       setIsLoading(false)
@@ -295,7 +313,10 @@ export function SignUpForm({
 
     setIsWeChatSubmitting(true)
     try {
-      const res = await wechatLoginByCode(wechatCode)
+      const res = await wechatLoginByCode(
+        wechatCode,
+        form.getValues('affCode')?.trim() || undefined
+      )
       if (res?.success) {
         await handleLoginSuccess(res.data as { id?: number } | null)
         toast.success(t('Signed in via WeChat'))
@@ -303,11 +324,21 @@ export function SignUpForm({
       } else {
         toast.error(res?.message || t('Login failed'))
       }
-    } catch (_error) {
+    } catch {
       toast.error(t('Login failed'))
     } finally {
       setIsWeChatSubmitting(false)
     }
+  }
+
+  const renderSendCodeButtonContent = () => {
+    if (isActive) {
+      return t('Resend ({{seconds}}s)', { seconds: secondsLeft })
+    }
+    if (isSendingCode) {
+      return <Loader2 className='h-4 w-4 animate-spin' />
+    }
+    return t('Send code')
   }
 
   return (
@@ -327,6 +358,23 @@ export function SignUpForm({
               <FormControl>
                 <Input placeholder={t('Enter your username')} {...field} />
               </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name='display_name'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Display Name')}</FormLabel>
+              <FormControl>
+                <Input placeholder={t('Enter display name')} {...field} />
+              </FormControl>
+              <FormDescription>
+                {t('Leave empty to use username')}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -381,6 +429,11 @@ export function SignUpForm({
                   value={field.value ?? ''}
                 />
               </FormControl>
+              {registerRequiresInvitation ? (
+                <FormDescription>
+                  {t('Registration requires a valid invitation code or invite link.')}
+                </FormDescription>
+              ) : null}
               {(isResolvingAffiliateCode ||
                 inviterId !== null ||
                 isAffiliateCodeLocked) && (
@@ -455,13 +508,7 @@ export function SignUpForm({
                 }
                 onClick={handleSendVerificationCode}
               >
-                {isActive ? (
-                  t('Resend ({{seconds}}s)', { seconds: secondsLeft })
-                ) : isSendingCode ? (
-                  <Loader2 className='h-4 w-4 animate-spin' />
-                ) : (
-                  t('Send code')
-                )}
+                {renderSendCodeButtonContent()}
               </Button>
             </div>
           </>
@@ -502,7 +549,11 @@ export function SignUpForm({
         {oauthRegisterEnabled && (
           <OAuthProviders
             status={status}
-            disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
+            disabled={
+              isLoading ||
+              (requiresLegalConsent && !agreedToLegal) ||
+              (registerRequiresInvitation && !isAffiliateCodeReady)
+            }
             onWeChatLogin={hasWeChatLogin ? handleOpenWeChatDialog : undefined}
             isWeChatLoading={isWeChatSubmitting}
             className='pt-2'

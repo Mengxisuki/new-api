@@ -23,6 +23,7 @@ import { SectionPageLayout } from '@/components/layout'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
@@ -94,11 +95,14 @@ export function Wallet(props: WalletProps) {
     processPayment,
   } = usePayment()
   const {
+    affiliateCode,
     affiliateLink,
     loading: affiliateLoading,
+    resetting: affiliateResetting,
     transferQuota,
     transferring,
-  } = useAffiliate()
+    regenerateAffiliateCode,
+  } = useAffiliate((user?.role ?? 0) >= ROLE.ADMIN)
   const { redeeming, redeemCode } = useRedemption()
   const { processing: creemProcessing, processCreemPayment } = useCreemPayment()
   const { processWaffoPayment } = useWaffoPayment()
@@ -316,15 +320,20 @@ export function Wallet(props: WalletProps) {
               />
             </div>
 
-            <AffiliateRewardsCard
-              user={user}
-              affiliateLink={affiliateLink}
-              onTransfer={() => setTransferDialogOpen(true)}
-              complianceConfirmed={
-                topupInfo?.payment_compliance_confirmed !== false
-              }
-              loading={affiliateLoading}
-            />
+            {(user?.role ?? 0) >= ROLE.ADMIN ? (
+              <AffiliateRewardsCard
+                user={user}
+                affiliateCode={affiliateCode}
+                affiliateLink={affiliateLink}
+                onTransfer={() => setTransferDialogOpen(true)}
+                onReset={regenerateAffiliateCode}
+                complianceConfirmed={
+                  topupInfo?.payment_compliance_confirmed !== false
+                }
+                loading={affiliateLoading}
+                resetting={affiliateResetting}
+              />
+            ) : null}
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>

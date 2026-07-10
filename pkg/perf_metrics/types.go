@@ -8,6 +8,7 @@ type Store interface {
 }
 
 type Sample struct {
+	UserID       int
 	Model        string
 	Group        string
 	LatencyMs    int64
@@ -19,9 +20,10 @@ type Sample struct {
 }
 
 type QueryParams struct {
-	Model string
-	Group string
-	Hours int
+	Model   string
+	Group   string
+	Hours   int
+	UserIDs []int
 }
 
 type BucketPoint struct {
@@ -61,6 +63,7 @@ type SummaryAllResult struct {
 }
 
 type bucketKey struct {
+	userID   int
 	model    string
 	group    string
 	bucketTs int64

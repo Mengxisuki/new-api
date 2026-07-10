@@ -465,27 +465,14 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func getInvitedUserIDsForLogs(inviterId int) ([]int, error) {
-	var userIDs []int
-	err := DB.Model(&User{}).
-		Where("inviter_id = ?", inviterId).
-		Where("role < ?", common.RoleAdminUser).
-		Pluck("id", &userIDs).Error
-	if err != nil {
-		return nil, err
-	}
-	return userIDs, nil
-}
-
 func applyInviterLogScope(tx *gorm.DB, inviterId *int) (*gorm.DB, error) {
 	if inviterId == nil {
 		return tx, nil
 	}
-	userIDs, err := getInvitedUserIDsForLogs(*inviterId)
+	userIDs, err := GetInviterScopedUserIDs(*inviterId)
 	if err != nil {
 		return nil, err
 	}
-	userIDs = append(userIDs, *inviterId)
 	return tx.Where("logs.user_id IN ?", userIDs), nil
 }
 

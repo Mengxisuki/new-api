@@ -289,6 +289,21 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
+// GetInviterScopedUserIDs returns an administrator's own user ID together with
+// the IDs of users they invited. It defines the data scope shared by delegated
+// administrator views.
+func GetInviterScopedUserIDs(inviterId int) ([]int, error) {
+	var invitedUserIDs []int
+	err := DB.Model(&User{}).
+		Where("inviter_id = ?", inviterId).
+		Where("role < ?", common.RoleAdminUser).
+		Pluck("id", &invitedUserIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return append([]int{inviterId}, invitedUserIDs...), nil
+}
+
 func fillInviterUsernames(tx *gorm.DB, users []*User) error {
 	inviterIds := make([]int, 0)
 	seenInviterIds := make(map[int]struct{})

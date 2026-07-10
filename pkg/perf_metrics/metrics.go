@@ -43,6 +43,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
 		generationMs = latencyMs
 	}
 	Record(Sample{
+		UserID:       info.UserId,
 		Model:        info.OriginModelName,
 		Group:        info.UsingGroup,
 		LatencyMs:    latencyMs,
@@ -67,6 +68,7 @@ func Record(sample Sample) {
 	}
 
 	key := bucketKey{
+		userID:   sample.UserID,
 		model:    sample.Model,
 		group:    sample.Group,
 		bucketTs: bucketStart(time.Now().Unix()),
@@ -87,12 +89,13 @@ func Query(params QueryParams) (QueryResult, error) {
 	startTs := endTs - int64(params.Hours)*3600
 
 	merged := map[bucketKey]counters{}
-	rows, err := model.GetPerfMetrics(params.Model, params.Group, startTs, endTs)
+	rows, err := model.GetPerfMetrics(params.Model, params.Group, startTs, endTs, params.UserIDs)
 	if err != nil {
 		return QueryResult{}, err
 	}
 	for _, row := range rows {
 		mergeCounters(merged, bucketKey{
+			userID:   row.UserId,
 			model:    row.ModelName,
 			group:    row.Group,
 			bucketTs: row.BucketTs,
@@ -112,6 +115,9 @@ func Query(params QueryParams) (QueryResult, error) {
 		if k.model != params.Model || k.bucketTs < startTs || k.bucketTs > endTs {
 			return true
 		}
+		if !userIDAllowed(params.UserIDs, k.userID) {
+			return true
+		}
 		if params.Group != "" && k.group != params.Group {
 			return true
 		}
@@ -122,7 +128,7 @@ func Query(params QueryParams) (QueryResult, error) {
 	return buildQueryResult(params.Model, merged), nil
 }
 
-func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
+func QuerySummaryAll(hours int, groups []string, userIDs []int) (SummaryAllResult, error) {
 	if hours <= 0 {
 		hours = 24
 	}
@@ -133,7 +139,7 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 	startTs := endTs - int64(hours)*3600
 	allowedGroups := allowedGroupSet(groups)
 
-	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
+	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups, userIDs)
 	if err != nil {
 		return SummaryAllResult{}, err
 	}
@@ -155,6 +161,9 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 	hotBuckets.Range(func(key, value any) bool {
 		k := key.(bucketKey)
 		if k.bucketTs < startTs || k.bucketTs > endTs {
+			return true
+		}
+		if !userIDAllowed(userIDs, k.userID) {
 			return true
 		}
 		if allowedGroups != nil {
@@ -275,7 +284,10 @@ func mergeCounters(merged map[bucketKey]counters, key bucketKey, value counters)
 	if value.requestCount == 0 {
 		return
 	}
-	current := merged[key]
+	merged[key] = addCounters(merged[key], value)
+}
+
+func addCounters(current counters, value counters) counters {
 	current.requestCount += value.requestCount
 	current.successCount += value.successCount
 	current.totalLatencyMs += value.totalLatencyMs
@@ -283,7 +295,19 @@ func mergeCounters(merged map[bucketKey]counters, key bucketKey, value counters)
 	current.ttftCount += value.ttftCount
 	current.outputTokens += value.outputTokens
 	current.generationMs += value.generationMs
-	merged[key] = current
+	return current
+}
+
+func userIDAllowed(userIDs []int, userID int) bool {
+	if userIDs == nil {
+		return true
+	}
+	for _, allowedUserID := range userIDs {
+		if allowedUserID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResult {
@@ -295,7 +319,7 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 		if _, ok := groupBuckets[key.group]; !ok {
 			groupBuckets[key.group] = map[int64]counters{}
 		}
-		groupBuckets[key.group][key.bucketTs] = value
+		groupBuckets[key.group][key.bucketTs] = addCounters(groupBuckets[key.group][key.bucketTs], value)
 	}
 
 	groups := make([]string, 0, len(groupBuckets))
@@ -406,7 +430,7 @@ func recordRedis(key bucketKey, sample Sample) {
 }
 
 func mergeRedisActiveBuckets(merged map[bucketKey]counters, params QueryParams, startTs int64, endTs int64) {
-	if !common.RedisEnabled || common.RDB == nil || params.Model == "" || params.Group == "" {
+	if !common.RedisEnabled || common.RDB == nil || params.Model == "" || params.Group == "" || params.UserIDs != nil {
 		return
 	}
 	active := bucketStart(time.Now().Unix())

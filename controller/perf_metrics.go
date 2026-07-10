@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -20,7 +22,19 @@ func GetPerfMetricsSummary(c *gin.Context) {
 	}
 
 	activeGroups := append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
-	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups)
+	var userIDs []int
+	if c.GetInt("role") == common.RoleAdminUser {
+		scopedUserIDs, err := model.GetInviterScopedUserIDs(c.GetInt("id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		userIDs = scopedUserIDs
+	}
+	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups, userIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -52,11 +66,23 @@ func GetPerfMetrics(c *gin.Context) {
 		}
 	}
 
-	result, err := perfmetrics.Query(perfmetrics.QueryParams{
+	params := perfmetrics.QueryParams{
 		Model: modelName,
 		Group: c.Query("group"),
 		Hours: hours,
-	})
+	}
+	if c.GetInt("role") == common.RoleAdminUser {
+		userIDs, err := model.GetInviterScopedUserIDs(c.GetInt("id"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		params.UserIDs = userIDs
+	}
+	result, err := perfmetrics.Query(params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,

@@ -32,7 +32,16 @@ func GetAllQuotaDates(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	username := c.Query("username")
-	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username)
+	var userIDs []int
+	if c.GetInt("role") == common.RoleAdminUser {
+		var err error
+		userIDs, err = model.GetInviterScopedUserIDs(c.GetInt("id"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	dates, err := model.GetAllQuotaDatesForUsers(startTimestamp, endTimestamp, username, userIDs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -48,7 +57,16 @@ func GetAllQuotaDates(c *gin.Context) {
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp)
+	var userIDs []int
+	if c.GetInt("role") == common.RoleAdminUser {
+		var err error
+		userIDs, err = model.GetInviterScopedUserIDs(c.GetInt("id"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	dates, err := model.GetQuotaDataGroupByUserForUsers(startTimestamp, endTimestamp, userIDs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -91,7 +109,17 @@ func GetAllFlowQuotaDates(c *gin.Context) {
 		return
 	}
 	username := c.Query("username")
-	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, username, 0, c.GetInt("role"))
+	role := c.GetInt("role")
+	var userIDs []int
+	if role == common.RoleAdminUser {
+		var err error
+		userIDs, err = model.GetInviterScopedUserIDs(c.GetInt("id"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	dates, err := model.GetFlowQuotaDataForUsers(startTimestamp, endTimestamp, username, 0, role, userIDs)
 	if err != nil {
 		common.ApiError(c, err)
 		return

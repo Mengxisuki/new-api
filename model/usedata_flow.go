@@ -23,11 +23,15 @@ type FlowQuotaData struct {
 }
 
 func GetFlowQuotaData(startTime int64, endTime int64, username string, userID int, role int) ([]*FlowQuotaData, error) {
+	return GetFlowQuotaDataForUsers(startTime, endTime, username, userID, role, nil)
+}
+
+func GetFlowQuotaDataForUsers(startTime int64, endTime int64, username string, userID int, role int, userIDs []int) ([]*FlowQuotaData, error) {
 	switch {
 	case role >= common.RoleRootUser:
 		return getRootFlowQuotaData(startTime, endTime, username)
 	case role >= common.RoleAdminUser:
-		return getAdminFlowQuotaData(startTime, endTime, username)
+		return getAdminFlowQuotaData(startTime, endTime, username, userIDs)
 	default:
 		return getSelfFlowQuotaData(startTime, endTime, userID)
 	}
@@ -54,10 +58,11 @@ func getSelfFlowQuotaData(startTime int64, endTime int64, userID int) ([]*FlowQu
 	return rows, fillFlowTokenNames(rows)
 }
 
-func getAdminFlowQuotaData(startTime int64, endTime int64, username string) ([]*FlowQuotaData, error) {
+func getAdminFlowQuotaData(startTime int64, endTime int64, username string, userIDs []int) ([]*FlowQuotaData, error) {
 	rows := make([]*FlowQuotaData, 0)
 	query := flowQuotaBaseQuery(startTime, endTime).
 		Select("user_id, username, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
+	query = applyQuotaDataUserScope(query, userIDs)
 	if username != "" {
 		query = query.Where("username = ?", username)
 	}

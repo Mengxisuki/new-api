@@ -261,6 +261,9 @@ func InitLogDB() (err error) {
 }
 
 func migrateDB() error {
+	if err := migratePerfMetricUserScope(); err != nil {
+		return err
+	}
 	// Migrate price_amount column from float/double to decimal for existing tables
 	migrateSubscriptionPlanPriceAmount()
 	// Migrate model_limits column from varchar to text for existing tables
@@ -316,6 +319,9 @@ func migrateDB() error {
 }
 
 func migrateDBFast() error {
+	if err := migratePerfMetricUserScope(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 
@@ -386,6 +392,16 @@ func migrateDBFast() error {
 	}
 	common.SysLog("database migrated")
 	return nil
+}
+
+func migratePerfMetricUserScope() error {
+	if !DB.Migrator().HasTable(&PerfMetric{}) {
+		return nil
+	}
+	if !DB.Migrator().HasIndex(&PerfMetric{}, "idx_perf_model_group_bucket") {
+		return nil
+	}
+	return DB.Migrator().DropIndex(&PerfMetric{}, "idx_perf_model_group_bucket")
 }
 
 func migrateLOGDB() error {

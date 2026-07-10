@@ -39,6 +39,7 @@ func flushCompletedBuckets() {
 		}
 
 		err := model.UpsertPerfMetric(&model.PerfMetric{
+			UserId:         k.userID,
 			ModelName:      k.model,
 			Group:          k.group,
 			BucketTs:       k.bucketTs,

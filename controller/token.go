@@ -9,7 +9,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,7 +22,48 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	maskedToken.PrepareGroupPolicyResponse()
 	return &maskedToken
+}
+
+const maxTokenGroups = 20
+
+func applyTokenGroupPolicy(userId int, requested *model.Token, target *model.Token) error {
+	if requested.Groups == nil {
+		target.Group = requested.Group
+		target.GroupPolicy = ""
+		return nil
+	}
+
+	userGroup, err := model.GetUserGroup(userId, false)
+	if err != nil {
+		return err
+	}
+	usableGroups := service.GetUserUsableGroups(userGroup)
+
+	if len(requested.Groups) == 0 {
+		return fmt.Errorf("至少选择一个令牌分组")
+	}
+	if len(requested.Groups) > maxTokenGroups {
+		return fmt.Errorf("令牌分组不能超过 %d 个", maxTokenGroups)
+	}
+	seen := make(map[string]struct{}, len(requested.Groups))
+	for _, group := range requested.Groups {
+		if group == "" || group == "auto" {
+			return fmt.Errorf("无效的令牌分组 %q", group)
+		}
+		if _, exists := seen[group]; exists {
+			return fmt.Errorf("令牌分组 %s 重复", group)
+		}
+		if _, ok := usableGroups[group]; !ok {
+			return fmt.Errorf("无权访问 %s 分组", group)
+		}
+		if !ratio_setting.ContainsGroupRatio(group) {
+			return fmt.Errorf("分组 %s 已被弃用", group)
+		}
+		seen[group] = struct{}{}
+	}
+	return target.SetGroupPolicy(requested.Groups, requested.AutoGroup)
 }
 
 func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
@@ -219,8 +262,11 @@ func AddToken(c *gin.Context) {
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
-		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
+	}
+	if err := applyTokenGroupPolicy(c.GetInt("id"), &token, &cleanToken); err != nil {
+		common.ApiError(c, err)
+		return
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -297,7 +343,10 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
-		cleanToken.Group = token.Group
+		if err := applyTokenGroupPolicy(userId, &token, cleanToken); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 	}
 	err = cleanToken.Update()

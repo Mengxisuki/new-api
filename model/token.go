@@ -27,8 +27,66 @@ type Token struct {
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
+	GroupPolicy        string         `json:"-" gorm:"type:text"`
+	Groups             []string       `json:"groups,omitempty" gorm:"-"`
+	AutoGroup          bool           `json:"auto_group" gorm:"-"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+}
+
+type TokenGroupPolicy struct {
+	Version   int      `json:"version"`
+	Groups    []string `json:"groups"`
+	AutoGroup bool     `json:"auto_group"`
+}
+
+func (token *Token) GetGroupPolicy() (TokenGroupPolicy, bool, error) {
+	if token.GroupPolicy == "" {
+		return TokenGroupPolicy{}, false, nil
+	}
+
+	policy := TokenGroupPolicy{}
+	if err := common.UnmarshalJsonStr(token.GroupPolicy, &policy); err != nil {
+		return TokenGroupPolicy{}, true, err
+	}
+	return policy, true, nil
+}
+
+func (token *Token) SetGroupPolicy(groups []string, autoGroup bool) error {
+	policy := TokenGroupPolicy{
+		Version:   1,
+		Groups:    groups,
+		AutoGroup: autoGroup,
+	}
+	data, err := common.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	token.GroupPolicy = string(data)
+	token.Groups = groups
+	token.AutoGroup = autoGroup
+	if len(groups) > 0 {
+		token.Group = groups[0]
+	} else if autoGroup {
+		token.Group = "auto"
+	}
+	return nil
+}
+
+func (token *Token) PrepareGroupPolicyResponse() {
+	policy, configured, err := token.GetGroupPolicy()
+	if err != nil || !configured {
+		if token.Group == "auto" {
+			token.AutoGroup = true
+			return
+		}
+		if token.Group != "" {
+			token.Groups = []string{token.Group}
+		}
+		return
+	}
+	token.Groups = policy.Groups
+	token.AutoGroup = policy.AutoGroup
 }
 
 func (token *Token) Clean() {
@@ -302,7 +360,7 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "group_policy", "cross_group_retry").Updates(token).Error
 	return err
 }
 

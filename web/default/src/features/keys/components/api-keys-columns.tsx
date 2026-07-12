@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
 import { BadgeCell, TruncatedCell } from '@/components/data-table'
@@ -35,7 +35,7 @@ import { formatQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { API_KEY_STATUSES } from '../constants'
-import { type ApiKey } from '../types'
+import type { ApiKey } from '../types'
 import {
   ApiKeyCell,
   ModelLimitsCell,
@@ -196,6 +196,45 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
         const apiKey = row.original
         const group = row.getValue('group') as string
         const ratio = group && group !== 'auto' ? groupRatios[group] : undefined
+        let orderedGroups = apiKey.groups
+        if (orderedGroups.length === 0 && group) {
+          orderedGroups = [group]
+        }
+
+        if (apiKey.groups.length > 0) {
+          return (
+            <Tooltip>
+              <TooltipTrigger
+                render={<BadgeCell className='gap-1.5 text-xs' />}
+              >
+                <GroupBadge
+                  group={orderedGroups[0]}
+                  ratio={groupRatios[orderedGroups[0]]}
+                />
+                {orderedGroups.length > 1 && (
+                  <StatusBadge
+                    label={`+${orderedGroups.length - 1}`}
+                    variant='info'
+                    copyable={false}
+                  />
+                )}
+                {apiKey.auto_group && (
+                  <StatusBadge
+                    label={t('Auto')}
+                    variant='info'
+                    copyable={false}
+                  />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>
+                <span className='text-xs'>
+                  {orderedGroups.join(' → ')}
+                  {apiKey.auto_group ? ` → ${t('Auto')}` : ''}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          )
+        }
 
         if (group === 'auto') {
           return (

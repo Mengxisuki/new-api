@@ -65,6 +65,12 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		// normal group ratio
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
+	if snapshot := relayInfo.TieredBillingSnapshot; snapshot != nil {
+		snapshot.GroupRatio = groupRatioInfo.GroupRatio
+		snapshot.EstimatedQuotaAfterGroup = billingexpr.QuotaRound(
+			snapshot.EstimatedQuotaBeforeGroup * snapshot.GroupRatio,
+		)
+	}
 
 	return groupRatioInfo
 }

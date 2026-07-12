@@ -3,8 +3,11 @@ package service
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/gin-gonic/gin"
 )
 
 func GetUserUsableGroups(userGroup string) map[string]string {
@@ -51,6 +54,40 @@ func GetUserAutoGroup(userGroup string) []string {
 		}
 	}
 	return autoGroups
+}
+
+func GetRequestGroupCandidates(ctx *gin.Context, userGroup string) []string {
+	value, configured := common.GetContextKey(ctx, constant.ContextKeyTokenGroups)
+	selectedGroups, ok := value.([]string)
+	if !configured || !ok {
+		return GetUserAutoGroup(userGroup)
+	}
+
+	usableGroups := GetUserUsableGroups(userGroup)
+	candidates := make([]string, 0, len(selectedGroups))
+	seen := make(map[string]struct{}, len(selectedGroups))
+	for _, group := range selectedGroups {
+		if _, usable := usableGroups[group]; !usable {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		candidates = append(candidates, group)
+	}
+
+	if !common.GetContextKeyBool(ctx, constant.ContextKeyTokenAutoGroup) {
+		return candidates
+	}
+	for _, group := range GetUserAutoGroup(userGroup) {
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		candidates = append(candidates, group)
+	}
+	return candidates
 }
 
 // GetUserGroupRatio 获取用户使用某个分组的倍率

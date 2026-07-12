@@ -10,10 +10,40 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHandleGroupRatioUpdatesTieredSnapshotForFinalAutoGroup(t *testing.T) {
+	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
+	originalGroupGroupRatio := ratio_setting.GroupGroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatio))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(originalGroupGroupRatio))
+	})
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"premium":0.5}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{}`))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("auto_group", "premium")
+	info := &relaycommon.RelayInfo{
+		UserGroup:  "default",
+		UsingGroup: "default",
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			GroupRatio:                1,
+			EstimatedQuotaBeforeGroup: 100,
+			EstimatedQuotaAfterGroup:  100,
+		},
+	}
+
+	ratioInfo := HandleGroupRatio(ctx, info)
+	require.Equal(t, 0.5, ratioInfo.GroupRatio)
+	require.Equal(t, "premium", info.UsingGroup)
+	require.Equal(t, 0.5, info.TieredBillingSnapshot.GroupRatio)
+	require.Equal(t, 50, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+}
 
 func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)

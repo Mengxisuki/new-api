@@ -34,6 +34,8 @@ export const apiKeySchema = z.object({
   created_time: z.number(),
   accessed_time: z.number(),
   group: z.string().nullish().default(''),
+  groups: z.array(z.string()).optional().default([]),
+  auto_group: z.boolean().optional().default(false),
   cross_group_retry: z
     .preprocess((v) => {
       if (v === 1) return true
@@ -91,6 +93,8 @@ export interface ApiKeyFormData {
   model_limits: string
   allow_ips: string
   group: string
+  groups: string[]
+  auto_group: boolean
   cross_group_retry: boolean
 }
 

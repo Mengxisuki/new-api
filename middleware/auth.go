@@ -419,7 +419,37 @@ func TokenAuth() func(c *gin.Context) {
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group
-		if tokenGroup != "" {
+		policy, policyConfigured, policyErr := token.GetGroupPolicy()
+		if policyErr != nil {
+			common.SysLog(fmt.Sprintf("TokenAuth invalid group policy for token %d: %v", token.Id, policyErr))
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
+		if policyConfigured {
+			if len(policy.Groups) == 0 && !policy.AutoGroup {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "令牌没有可用分组")
+				return
+			}
+			usableGroups := service.GetUserUsableGroups(userGroup)
+			for _, group := range policy.Groups {
+				if _, ok := usableGroups[group]; !ok || !ratio_setting.ContainsGroupRatio(group) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", group))
+					return
+				}
+			}
+			common.SetContextKey(c, constant.ContextKeyTokenGroups, policy.Groups)
+			common.SetContextKey(c, constant.ContextKeyTokenAutoGroup, policy.AutoGroup)
+			candidates := service.GetRequestGroupCandidates(c, userGroup)
+			if len(candidates) == 0 {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "令牌没有可用分组")
+				return
+			}
+			if len(policy.Groups) > 1 || policy.AutoGroup {
+				tokenGroup = "auto"
+			} else {
+				tokenGroup = candidates[0]
+			}
+		} else if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
@@ -432,9 +462,13 @@ func TokenAuth() func(c *gin.Context) {
 					return
 				}
 			}
-			userGroup = tokenGroup
 		}
-		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
+		if tokenGroup != "" {
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, tokenGroup)
+		} else {
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
+		}
+		common.SetContextKey(c, constant.ContextKeyTokenGroup, tokenGroup)
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {
@@ -462,7 +496,9 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	} else {
 		c.Set("token_model_limit_enabled", false)
 	}
-	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
+	if _, exists := common.GetContextKey(c, constant.ContextKeyTokenGroup); !exists {
+		common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
+	}
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
 	if len(parts) > 1 {
 		if model.IsAdmin(token.UserId) {

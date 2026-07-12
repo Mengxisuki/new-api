@@ -10,7 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func GetUserUsableGroups(userGroup string) map[string]string {
+// GetUserSelectableGroups returns groups that may be shown in user-facing
+// selectors. It strictly follows the global selectable list and per-user-group
+// visibility rules, so a user's account group is not implicitly exposed.
+func GetUserSelectableGroups(userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
 	if userGroup != "" {
 		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
@@ -31,16 +34,24 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 				}
 			}
 		}
-		// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup
-		if _, ok := groupsCopy[userGroup]; !ok {
-			groupsCopy[userGroup] = "用户分组"
-		}
 	}
 	return groupsCopy
 }
 
-func GroupInUserUsableGroups(userGroup, groupName string) bool {
-	_, ok := GetUserUsableGroups(userGroup)[groupName]
+// GetUserUsableGroups returns groups available to internal routing and auth.
+// The account group remains usable even when it is hidden from selectors.
+func GetUserUsableGroups(userGroup string) map[string]string {
+	groups := GetUserSelectableGroups(userGroup)
+	if userGroup != "" {
+		if _, ok := groups[userGroup]; !ok {
+			groups[userGroup] = "用户分组"
+		}
+	}
+	return groups
+}
+
+func GroupInUserSelectableGroups(userGroup, groupName string) bool {
+	_, ok := GetUserSelectableGroups(userGroup)[groupName]
 	return ok
 }
 

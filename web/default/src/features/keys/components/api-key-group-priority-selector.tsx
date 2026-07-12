@@ -1,9 +1,11 @@
 import { ArrowDown, ArrowUp, GripVertical, X } from 'lucide-react'
+import { Reorder, useDragControls, useReducedMotion } from 'motion/react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 import {
   ApiKeyGroupCombobox,
@@ -16,11 +18,108 @@ type ApiKeyGroupPrioritySelectorProps = {
   onValueChange: (value: string[]) => void
 }
 
+type SortableGroupItemProps = {
+  group: string
+  option?: ApiKeyGroupOption
+  index: number
+  total: number
+  onMove: (from: number, to: number) => void
+  onRemove: (group: string) => void
+}
+
+function SortableGroupItem(props: SortableGroupItemProps) {
+  const { t } = useTranslation()
+  const controls = useDragControls()
+  const reducedMotion = useReducedMotion()
+  const [isDragging, setIsDragging] = useState(false)
+
+  return (
+    <Reorder.Item
+      as='div'
+      value={props.group}
+      dragControls={controls}
+      dragListener={false}
+      onDragStart={() => setIsDragging(true)}
+      onDragEnd={() => setIsDragging(false)}
+      whileDrag={reducedMotion ? undefined : { scale: 1.02 }}
+      transition={
+        reducedMotion
+          ? { duration: 0 }
+          : { type: 'spring', stiffness: 500, damping: 38 }
+      }
+      className={cn(
+        'bg-muted/30 relative flex items-center gap-2 rounded-lg border p-2.5 transition-[border-color,background-color,box-shadow,opacity]',
+        isDragging &&
+          'bg-background border-ring/60 shadow-xl ring-2 ring-ring/25'
+      )}
+      role='listitem'
+    >
+      <Button
+        type='button'
+        variant='ghost'
+        size='icon-sm'
+        className='cursor-grab touch-none active:cursor-grabbing'
+        aria-label={t('Drag to reorder')}
+        onPointerDown={(event) => controls.start(event)}
+      >
+        <GripVertical className='text-muted-foreground size-4' />
+      </Button>
+      <Badge variant='secondary' className='shrink-0'>
+        {t('Priority {{priority}}', { priority: props.index + 1 })}
+      </Badge>
+      <div className='min-w-0 flex-1'>
+        <div className='truncate text-sm font-medium'>{props.group}</div>
+        {props.option?.desc && (
+          <div className='text-muted-foreground truncate text-xs'>
+            {props.option.desc}
+          </div>
+        )}
+      </div>
+      {props.option?.ratio !== undefined && (
+        <Badge variant='outline' className='hidden shrink-0 sm:inline-flex'>
+          {props.option.ratio}x
+        </Badge>
+      )}
+      <div className='flex shrink-0 gap-1'>
+        <Button
+          type='button'
+          variant='ghost'
+          size='icon-sm'
+          disabled={props.index === 0}
+          aria-label={t('Move {{group}} up', { group: props.group })}
+          onClick={() => props.onMove(props.index, props.index - 1)}
+        >
+          <ArrowUp className='size-4' />
+        </Button>
+        <Button
+          type='button'
+          variant='ghost'
+          size='icon-sm'
+          disabled={props.index === props.total - 1}
+          aria-label={t('Move {{group}} down', { group: props.group })}
+          onClick={() => props.onMove(props.index, props.index + 1)}
+        >
+          <ArrowDown className='size-4' />
+        </Button>
+        <Button
+          type='button'
+          variant='ghost'
+          size='icon-sm'
+          disabled={props.total === 1}
+          aria-label={t('Remove {{group}}', { group: props.group })}
+          onClick={() => props.onRemove(props.group)}
+        >
+          <X className='size-4' />
+        </Button>
+      </div>
+    </Reorder.Item>
+  )
+}
+
 export function ApiKeyGroupPrioritySelector(
   props: ApiKeyGroupPrioritySelectorProps
 ) {
   const { t } = useTranslation()
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
   const candidates = props.options.filter(
     (option) => option.value !== 'auto' && !props.value.includes(option.value)
   )
@@ -35,85 +134,33 @@ export function ApiKeyGroupPrioritySelector(
 
   return (
     <div className='flex flex-col gap-3'>
-      <div className='flex flex-col gap-2'>
+      <Reorder.Group
+        as='div'
+        axis='y'
+        values={props.value}
+        onReorder={props.onValueChange}
+        className='flex flex-col gap-2'
+        role='list'
+      >
         {props.value.map((group, index) => {
           const option = props.options.find((item) => item.value === group)
           return (
-            <div
+            <SortableGroupItem
               key={group}
-              draggable
-              onDragStart={() => setDragIndex(index)}
-              onDragEnd={() => setDragIndex(null)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => {
-                if (dragIndex !== null) moveGroup(dragIndex, index)
-                setDragIndex(null)
-              }}
-              className='bg-muted/30 flex items-center gap-2 rounded-lg border p-2.5'
-            >
-              <GripVertical
-                className='text-muted-foreground size-4 shrink-0 cursor-grab'
-                aria-label={t('Drag to reorder')}
-              />
-              <Badge variant='secondary' className='shrink-0'>
-                {t('Priority {{priority}}', { priority: index + 1 })}
-              </Badge>
-              <div className='min-w-0 flex-1'>
-                <div className='truncate text-sm font-medium'>{group}</div>
-                {option?.desc && (
-                  <div className='text-muted-foreground truncate text-xs'>
-                    {option.desc}
-                  </div>
-                )}
-              </div>
-              {option?.ratio !== undefined && (
-                <Badge
-                  variant='outline'
-                  className='hidden shrink-0 sm:inline-flex'
-                >
-                  {option.ratio}x
-                </Badge>
-              )}
-              <div className='flex shrink-0 gap-1'>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon-sm'
-                  disabled={index === 0}
-                  aria-label={t('Move {{group}} up', { group })}
-                  onClick={() => moveGroup(index, index - 1)}
-                >
-                  <ArrowUp className='size-4' />
-                </Button>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon-sm'
-                  disabled={index === props.value.length - 1}
-                  aria-label={t('Move {{group}} down', { group })}
-                  onClick={() => moveGroup(index, index + 1)}
-                >
-                  <ArrowDown className='size-4' />
-                </Button>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon-sm'
-                  disabled={props.value.length === 1}
-                  aria-label={t('Remove {{group}}', { group })}
-                  onClick={() =>
-                    props.onValueChange(
-                      props.value.filter((item) => item !== group)
-                    )
-                  }
-                >
-                  <X className='size-4' />
-                </Button>
-              </div>
-            </div>
+              group={group}
+              option={option}
+              index={index}
+              total={props.value.length}
+              onMove={moveGroup}
+              onRemove={(removedGroup) =>
+                props.onValueChange(
+                  props.value.filter((item) => item !== removedGroup)
+                )
+              }
+            />
           )
         })}
-      </div>
+      </Reorder.Group>
       {candidates.length > 0 && (
         <ApiKeyGroupCombobox
           options={candidates}

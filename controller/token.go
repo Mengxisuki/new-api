@@ -39,7 +39,7 @@ func applyTokenGroupPolicy(userId int, requested *model.Token, target *model.Tok
 	if err != nil {
 		return err
 	}
-	usableGroups := service.GetUserUsableGroups(userGroup)
+	usableGroups := service.GetUserSelectableGroups(userGroup)
 
 	if len(requested.Groups) == 0 {
 		return fmt.Errorf("至少选择一个令牌分组")

@@ -93,6 +93,10 @@ export function chatLinkRequiresApiKey(url: string): boolean {
   )
 }
 
+export function isCCSwitchChatLink(url: string): boolean {
+  return url.trim().toLowerCase().startsWith('ccswitch')
+}
+
 export function parseChatConfig(raw: RawChatConfig): ChatPreset[] {
   let parsed: unknown = raw
 

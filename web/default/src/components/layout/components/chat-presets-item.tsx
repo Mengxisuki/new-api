@@ -45,9 +45,11 @@ import { fetchActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import {
   chatLinkRequiresApiKey,
+  isCCSwitchChatLink,
   resolveChatUrl,
   type ChatPreset,
 } from '@/features/chat/lib/chat-links'
+import { CCSwitchDialog } from '@/features/keys/components/dialogs/cc-switch-dialog'
 
 import { normalizeHref } from '../lib/url-utils'
 import type { NavChatPresets } from '../types'
@@ -160,6 +162,7 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
   const { state, isMobile, setOpenMobile } = useSidebar()
   const href = useLocation({ select: (location) => location.href })
   const [loadingPresetId, setLoadingPresetId] = useState<string | null>(null)
+  const [ccSwitchKey, setCCSwitchKey] = useState<string | null>(null)
   const loadingPresetIdRef = useRef<string | null>(null)
 
   const visiblePresets = useMemo(
@@ -171,7 +174,8 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
     async (preset: ChatPreset) => {
       if (preset.type === 'web') return
 
-      const needsKey = chatLinkRequiresApiKey(preset.url)
+      const opensCCSwitch = isCCSwitchChatLink(preset.url)
+      const needsKey = opensCCSwitch || chatLinkRequiresApiKey(preset.url)
       let activeKey: string | undefined
 
       if (needsKey && loadingPresetIdRef.current) {
@@ -199,6 +203,12 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
         }
       }
 
+      if (opensCCSwitch && activeKey) {
+        setCCSwitchKey(activeKey)
+        setOpenMobile(false)
+        return
+      }
+
       const url = resolveChatUrl({
         template: preset.url,
         apiKey: needsKey ? activeKey : undefined,
@@ -219,6 +229,13 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
   )
 
   const normalizedHref = normalizeHref(href)
+  const ccSwitchDialog = (
+    <CCSwitchDialog
+      open={ccSwitchKey !== null}
+      onOpenChange={(open) => !open && setCCSwitchKey(null)}
+      tokenKey={ccSwitchKey ?? ''}
+    />
+  )
 
   // Don't render if no visible presets
   if (visiblePresets.length === 0) {
@@ -228,59 +245,65 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
   // Collapsed state on non-mobile - render dropdown menu
   if (state === 'collapsed' && !isMobile) {
     return (
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<SidebarMenuButton tooltip={item.title} />}
-          >
-            {item.icon && <item.icon className='h-4 w-4 shrink-0' />}
-            <span className='min-w-0 flex-1 truncate'>{item.title}</span>
-            <ChevronRight className='ms-auto h-4 w-4 shrink-0 opacity-70' />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='start'>
-            {visiblePresets.map((preset) => (
-              <DropdownPresetItem
-                key={preset.id}
-                preset={preset}
-                loading={loadingPresetId === preset.id}
-                onOpen={handleOpenExternal}
-              />
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </SidebarMenuItem>
+      <>
+        <SidebarMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<SidebarMenuButton tooltip={item.title} />}
+            >
+              {item.icon && <item.icon className='h-4 w-4 shrink-0' />}
+              <span className='min-w-0 flex-1 truncate'>{item.title}</span>
+              <ChevronRight className='ms-auto h-4 w-4 shrink-0 opacity-70' />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start'>
+              {visiblePresets.map((preset) => (
+                <DropdownPresetItem
+                  key={preset.id}
+                  preset={preset}
+                  loading={loadingPresetId === preset.id}
+                  onOpen={handleOpenExternal}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SidebarMenuItem>
+        {ccSwitchDialog}
+      </>
     )
   }
 
   // Expanded state - render collapsible menu
   return (
-    <Collapsible
-      defaultOpen={normalizedHref.startsWith('/chat')}
-      className='group/collapsible'
-      render={<SidebarMenuItem />}
-    >
-      <CollapsibleTrigger
-        className='group/collapsible-trigger'
-        render={<SidebarMenuButton />}
+    <>
+      <Collapsible
+        defaultOpen={normalizedHref.startsWith('/chat')}
+        className='group/collapsible'
+        render={<SidebarMenuItem />}
       >
-        {item.icon && <item.icon className='shrink-0' />}
-        <span className='min-w-0 flex-1 truncate'>{item.title}</span>
-        <ChevronRight className='ms-auto size-4 shrink-0 transition-transform duration-200 group-data-[panel-open]/collapsible-trigger:rotate-90' />
-      </CollapsibleTrigger>
-      <CollapsibleContent className='CollapsibleContent'>
-        <SidebarMenuSub>
-          {visiblePresets.map((preset) => (
-            <ChatMenuItem
-              key={preset.id}
-              preset={preset}
-              active={normalizedHref === `/chat/${preset.id}`}
-              loading={loadingPresetId === preset.id}
-              onOpen={handleOpenExternal}
-              onNavigate={() => setOpenMobile(false)}
-            />
-          ))}
-        </SidebarMenuSub>
-      </CollapsibleContent>
-    </Collapsible>
+        <CollapsibleTrigger
+          className='group/collapsible-trigger'
+          render={<SidebarMenuButton />}
+        >
+          {item.icon && <item.icon className='shrink-0' />}
+          <span className='min-w-0 flex-1 truncate'>{item.title}</span>
+          <ChevronRight className='ms-auto size-4 shrink-0 transition-transform duration-200 group-data-[panel-open]/collapsible-trigger:rotate-90' />
+        </CollapsibleTrigger>
+        <CollapsibleContent className='CollapsibleContent'>
+          <SidebarMenuSub>
+            {visiblePresets.map((preset) => (
+              <ChatMenuItem
+                key={preset.id}
+                preset={preset}
+                active={normalizedHref === `/chat/${preset.id}`}
+                loading={loadingPresetId === preset.id}
+                onOpen={handleOpenExternal}
+                onNavigate={() => setOpenMobile(false)}
+              />
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+      {ccSwitchDialog}
+    </>
   )
 }

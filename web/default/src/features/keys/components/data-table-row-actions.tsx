@@ -48,7 +48,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
-import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
+import {
+  isCCSwitchChatLink,
+  resolveChatUrl,
+  type ChatPreset,
+} from '@/features/chat/lib/chat-links'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
 import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
@@ -114,8 +118,22 @@ export function DataTableRowActions<TData>({
     return null
   }, [apiKey.id, resolvedRealKey, resolveRealKey, t])
 
+  const handleOpenCCSwitch = useCallback(async () => {
+    const realKey = await resolveRealKey(apiKey.id)
+    if (!realKey) return
+
+    setResolvedKey(realKey)
+    setCurrentRow(apiKey)
+    setOpen('cc-switch')
+  }, [apiKey, resolveRealKey, setCurrentRow, setOpen, setResolvedKey])
+
   const handleOpenChatPreset = useCallback(
     async (preset: ChatPreset) => {
+      if (isCCSwitchChatLink(preset.url)) {
+        await handleOpenCCSwitch()
+        return
+      }
+
       const realKey = await resolveRealKey(apiKey.id)
       if (!realKey) return
 
@@ -152,7 +170,7 @@ export function DataTableRowActions<TData>({
         window.location.href = resolvedUrl
       }
     },
-    [resolveRealKey, apiKey.id, serverAddress, t]
+    [apiKey.id, handleOpenCCSwitch, resolveRealKey, serverAddress, t]
   )
 
   const handleToggleStatus = async (
@@ -269,15 +287,7 @@ export function DataTableRowActions<TData>({
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={async () => {
-            const realKey = await resolveRealKey(apiKey.id)
-            if (!realKey) return
-            setResolvedKey(realKey)
-            setCurrentRow(apiKey)
-            setOpen('cc-switch')
-          }}
-        >
+        <DropdownMenuItem onClick={handleOpenCCSwitch}>
           {t('CC Switch')}
           <DropdownMenuShortcut>
             <ArrowRightLeft size={16} />

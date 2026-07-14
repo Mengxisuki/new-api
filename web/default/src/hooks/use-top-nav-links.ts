@@ -86,6 +86,9 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
+  // Help Center
+  links.push({ title: t('Help Center'), href: '/help' })
+
   // Docs (supports external links)
   if (modules?.docs !== false) {
     if (docsLink) {

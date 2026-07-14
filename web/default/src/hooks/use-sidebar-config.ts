@@ -359,5 +359,11 @@ export function useIsSidebarModuleVisible(url: string): boolean {
       ? null
       : parseUserSidebarConfig(auth?.user?.sidebar_modules)
 
-  return isModuleEnabled(url, adminConfig, userConfig)
+  const rawPermissionConfig = auth?.user?.permissions?.sidebar_modules
+  const permissionConfig =
+    rawPermissionConfig && typeof rawPermissionConfig === 'object'
+      ? (rawPermissionConfig as SidebarModulesAdminConfig)
+      : null
+
+  return isModuleEnabled(url, adminConfig, permissionConfig, userConfig)
 }

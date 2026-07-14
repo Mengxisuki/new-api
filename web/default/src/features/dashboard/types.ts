@@ -219,6 +219,7 @@ export interface ApiInfoItem {
   route: string
   description: string
   color: string
+  source?: 'server_address'
 }
 
 export interface PingStatus {

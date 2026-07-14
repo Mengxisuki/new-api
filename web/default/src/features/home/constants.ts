@@ -120,11 +120,6 @@ export const DEFAULT_FEATURES = [
     description: 'Multi-user management with flexible permission allocation',
     iconName: 'Users',
   },
-  {
-    title: 'Open Source',
-    description: 'Community driven, self-hosted, and extensible',
-    iconName: 'HeartHandshake',
-  },
 ] as const
 
 export function getGatewayFeatures(t: TFunction) {

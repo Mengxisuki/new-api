@@ -54,7 +54,7 @@ export function ApiInfoPanel() {
           {t('API Info')}
         </span>
       }
-      description={t('Configured routes and latency checks')}
+      description={t('Server Address')}
       loading={loading}
       empty={!list.length}
       emptyMessage={t('No API routes configured')}

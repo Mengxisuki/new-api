@@ -40,6 +40,10 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
   const { t } = useTranslation()
   const item = props.item
   const status = props.status
+  const routeLabel =
+    item.source === 'server_address' ? t('Base URL') : item.route
+  const description =
+    item.source === 'server_address' ? t('Server Address') : item.description
 
   return (
     <div className='group hover:bg-muted/40 flex items-center justify-between gap-2 px-3 py-2.5 transition-colors sm:gap-3 sm:px-5 sm:py-3'>
@@ -54,10 +58,10 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
         <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
           <div className='flex items-baseline gap-2'>
             <span className='font-mono text-sm font-semibold'>
-              {item.route}
+              {routeLabel}
             </span>
             <span className='text-muted-foreground/60 hidden truncate text-xs md:inline'>
-              {item.description}
+              {description}
             </span>
           </div>
           <span className='text-muted-foreground/40 truncate font-mono text-xs'>
@@ -94,16 +98,18 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
 
         <div className='flex items-center gap-0.5'>
           <Button
-            variant='ghost'
+            variant='outline'
             size='sm'
             onClick={() => props.onTest(item.url)}
             disabled={status.testing}
-            className='size-7 p-0'
             title={t('Test Latency')}
+            aria-label={t('Test Latency')}
           >
             <Zap
-              className={cn('size-3.5', status.testing && 'animate-pulse')}
+              data-icon='inline-start'
+              className={cn(status.testing && 'animate-pulse')}
             />
+            {t('Test')}
           </Button>
 
           <Button

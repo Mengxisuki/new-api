@@ -373,9 +373,9 @@ function RequestPreview(props: {
           <span className='bg-success size-2 rounded-full' />
         </div>
         <div className='flex flex-col gap-1 overflow-hidden'>
-          {previewLines.map((line, index) => (
+          {previewLines.map((line) => (
             <code
-              key={`${line}-${index}`}
+              key={line}
               className='text-muted-foreground truncate'
               title={line}
             >
@@ -605,8 +605,9 @@ export function OverviewDashboard() {
   const setupGuideExpanded =
     manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete)
   const showLeftContentPanels =
-    isAdmin || showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
-  const showContentPanels = showLeftContentPanels || showUptimePanel
+    isAdmin || showAnnouncementsPanel || showFAQPanel
+  const showRightContentPanels = showApiInfoPanel || showUptimePanel
+  const showContentPanels = showLeftContentPanels || showRightContentPanels
 
   const handleSetupGuideToggle = () => {
     const nextExpanded = !setupGuideExpanded
@@ -753,7 +754,7 @@ export function OverviewDashboard() {
           className={cn(
             'grid grid-cols-1 gap-4',
             showLeftContentPanels &&
-              showUptimePanel &&
+              showRightContentPanels &&
               'xl:grid-cols-[minmax(0,1fr)_22rem]'
           )}
         >
@@ -761,18 +762,12 @@ export function OverviewDashboard() {
             <div
               className={cn(
                 'grid min-w-0 grid-cols-1 gap-4',
-                (showApiInfoPanel || showAnnouncementsPanel || showFAQPanel) &&
-                  'lg:grid-cols-2'
+                (showAnnouncementsPanel || showFAQPanel) && 'lg:grid-cols-2'
               )}
             >
               {isAdmin && (
                 <CardStaggerItem className='lg:col-span-2'>
                   <PerformanceHealthPanel />
-                </CardStaggerItem>
-              )}
-              {showApiInfoPanel && (
-                <CardStaggerItem>
-                  <ApiInfoPanel />
                 </CardStaggerItem>
               )}
               {showAnnouncementsPanel && (
@@ -787,10 +782,19 @@ export function OverviewDashboard() {
               )}
             </div>
           )}
-          {showUptimePanel && (
-            <CardStaggerItem>
-              <UptimePanel />
-            </CardStaggerItem>
+          {showRightContentPanels && (
+            <div className='flex min-w-0 flex-col gap-4'>
+              {showApiInfoPanel && (
+                <CardStaggerItem>
+                  <ApiInfoPanel />
+                </CardStaggerItem>
+              )}
+              {showUptimePanel && (
+                <CardStaggerItem>
+                  <UptimePanel />
+                </CardStaggerItem>
+              )}
+            </div>
           )}
         </CardStaggerContainer>
       )}

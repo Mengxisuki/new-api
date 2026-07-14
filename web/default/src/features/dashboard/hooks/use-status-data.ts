@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMemo } from 'react'
+
 import { useStatus } from '@/hooks/use-status'
 
 import type { AnnouncementItem, ApiInfoItem, FAQItem } from '../types'
@@ -38,7 +40,44 @@ export function useStatusData<T = unknown>(
  * Get API info list
  */
 export function useApiInfo() {
-  return useStatusData<ApiInfoItem>('api_info_enabled', 'api_info')
+  const { status, loading } = useStatus()
+  const items = useMemo<ApiInfoItem[]>(() => {
+    if (!status || status.api_info_enabled === false) return []
+
+    const configuredItems = Array.isArray(status.api_info)
+      ? (status.api_info as ApiInfoItem[])
+      : []
+    const rawServerAddress =
+      status.server_address ?? status.data?.server_address
+    const serverAddresses =
+      typeof rawServerAddress === 'string'
+        ? rawServerAddress
+            .split(/\r?\n/)
+            .map((address) => address.trim())
+            .filter(Boolean)
+        : []
+    const knownAddresses = new Set(
+      serverAddresses.map((address) => address.replace(/\/+$/, ''))
+    )
+    const serverAddressItems = serverAddresses.map((url) => ({
+      url,
+      route: '',
+      description: '',
+      color: 'blue',
+      source: 'server_address' as const,
+    }))
+
+    return [
+      ...serverAddressItems,
+      ...configuredItems.filter((item) => {
+        const url = item?.url?.trim()
+        if (!url) return false
+        return !knownAddresses.has(url.replace(/\/+$/, ''))
+      }),
+    ]
+  }, [status])
+
+  return { items, loading }
 }
 
 /**

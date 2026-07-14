@@ -172,11 +172,11 @@ export function Features(_props: FeaturesProps) {
       title: t('Team Collaboration'),
       desc: t('Multi-user management with flexible permission allocation'),
     },
-    {
-      icon: <HeartHandshake className='size-5' strokeWidth={1.5} />,
-      title: t('Open Source'),
-      desc: t('Community driven, self-hosted, and extensible'),
-    },
+    // {
+    //   icon: <HeartHandshake className='size-5' strokeWidth={1.5} />,
+    //   title: t('Open Source'),
+    //   desc: t('Community driven, self-hosted, and extensible'),
+    // },
   ]
 
   return (

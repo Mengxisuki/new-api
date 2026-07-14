@@ -20,7 +20,7 @@ import { Zap, ExternalLink, Gauge } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
-import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   getLatencyColorClass,
@@ -46,102 +46,98 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
     item.source === 'server_address' ? t('Server Address') : item.description
 
   return (
-    <div className='group hover:bg-muted/40 flex items-center justify-between gap-2 px-3 py-2.5 transition-colors sm:gap-3 sm:px-5 sm:py-3'>
-      <div className='flex min-w-0 flex-1 items-center gap-2 sm:gap-3'>
-        <span
-          className={cn(
-            'inline-block size-2 shrink-0 rounded-full',
-            getBgColorClass(item.color)
-          )}
-        />
-
-        <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
-          <div className='flex items-baseline gap-2'>
-            <span className='font-mono text-sm font-semibold'>
-              {routeLabel}
-            </span>
-            <span className='text-muted-foreground/60 hidden truncate text-xs md:inline'>
-              {description}
-            </span>
-          </div>
-          <span className='text-muted-foreground/40 truncate font-mono text-xs'>
-            {item.url}
+    <div className='group hover:bg-muted/40 flex flex-col gap-2 px-2.5 py-2 transition-colors sm:px-3'>
+      <div className='flex min-w-0 flex-col gap-1'>
+        <div className='flex min-w-0 items-baseline gap-2'>
+          <span
+            className={cn(
+              'inline-block size-2 shrink-0 rounded-full',
+              getBgColorClass(item.color)
+            )}
+            aria-hidden='true'
+          />
+          <span className='shrink-0 font-mono text-sm font-semibold'>
+            {routeLabel}
+          </span>
+          <span className='text-muted-foreground/60 truncate text-xs'>
+            {description}
           </span>
         </div>
-      </div>
-
-      <div className='flex shrink-0 items-center gap-2'>
-        <div className='flex items-center'>
+        <div className='flex min-w-0 items-center gap-1.5 pl-4'>
+          <span className='text-muted-foreground min-w-0 truncate font-mono text-xs'>
+            {item.url}
+          </span>
           {status.testing && (
-            <StatusBadge
-              label={t('Testing...')}
-              variant='warning'
-              className='animate-pulse'
-              copyable={false}
-            />
+            <Badge variant='secondary' className='animate-pulse font-mono'>
+              {t('Testing...')}
+            </Badge>
           )}
           {status.latency !== null && !status.testing && (
-            <StatusBadge
-              variant='success'
-              label={`${status.latency}${t('ms')}`}
+            <Badge
+              variant='secondary'
               className={cn(
                 'font-mono font-medium',
                 getLatencyColorClass(status.latency)
               )}
-              copyable={false}
-            />
+            >
+              {status.latency}
+              {t('ms')}
+            </Badge>
           )}
           {status.error && (
-            <StatusBadge label={t('N/A')} variant='neutral' copyable={false} />
+            <Badge variant='outline' className='text-muted-foreground'>
+              {t('N/A')}
+            </Badge>
           )}
         </div>
+      </div>
 
-        <div className='flex items-center gap-0.5'>
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => props.onTest(item.url)}
-            disabled={status.testing}
-            title={t('Test Latency')}
-            aria-label={t('Test Latency')}
-          >
-            <Zap
-              data-icon='inline-start'
-              className={cn(status.testing && 'animate-pulse')}
-            />
-            {t('Test')}
-          </Button>
-
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={() => openExternalSpeedTest(item.url)}
-            className='hidden size-7 p-0 sm:inline-flex'
-            title={t('External Speed Test')}
-          >
-            <Gauge className='size-3.5' />
-          </Button>
-
-          <CopyButton
-            value={item.url}
-            variant='ghost'
-            size='sm'
-            className='size-7 p-0'
-            iconClassName='size-3.5'
-            tooltip={t('Copy URL')}
-            aria-label={t('Copy URL')}
+      <div className='border-border/50 flex flex-wrap items-center justify-end gap-1 border-t pt-1.5'>
+        <Button
+          variant='outline'
+          size='xs'
+          onClick={() => props.onTest(item.url)}
+          disabled={status.testing}
+          title={t('Test Latency')}
+          aria-label={t('Test Latency')}
+        >
+          <Zap
+            data-icon='inline-start'
+            className={cn(status.testing && 'animate-pulse')}
           />
+          {t('Test')}
+        </Button>
 
-          <Button
-            variant='ghost'
-            size='sm'
-            className='hidden size-7 p-0 sm:inline-flex'
-            title={t('Open in New Tab')}
-            render={<a href={item.url} target='_blank' rel='noreferrer' />}
-          >
-            <ExternalLink className='size-3.5' />
-          </Button>
-        </div>
+        <Button
+          variant='ghost'
+          size='icon-xs'
+          onClick={() => openExternalSpeedTest(item.url)}
+          className='hidden sm:inline-flex'
+          title={t('External Speed Test')}
+          aria-label={t('External Speed Test')}
+        >
+          <Gauge />
+        </Button>
+
+        <CopyButton
+          value={item.url}
+          variant='ghost'
+          size='sm'
+          className='size-6 p-0'
+          tooltip={t('Copy URL')}
+          aria-label={t('Copy URL')}
+        />
+
+        <Button
+          variant='ghost'
+          size='icon-xs'
+          className='hidden sm:inline-flex'
+          title={t('Open in New Tab')}
+          aria-label={t('Open in New Tab')}
+          render={<a href={item.url} target='_blank' rel='noreferrer' />}
+        >
+          <ExternalLink />
+        </Button>
       </div>
     </div>
   )

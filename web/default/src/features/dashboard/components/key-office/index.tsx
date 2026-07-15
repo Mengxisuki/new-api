@@ -44,12 +44,11 @@ export default function KeyActivityOffice() {
   )
 
   if (activityQuery.isLoading) {
-    return <Skeleton className='h-[620px] w-full rounded-xl' />
+    return <Skeleton className='h-[620px] w-full rounded-b-xl' />
   }
 
   return (
     <section className='relative overflow-hidden rounded-xl border bg-[#f7f3e8] shadow-xs dark:bg-[#171b18]'>
-      <div className='absolute inset-x-0 top-0 h-28 bg-[linear-gradient(110deg,rgba(45,93,71,0.16),transparent_52%,rgba(210,147,60,0.14))]' />
       <header className='relative flex flex-col gap-4 border-b border-black/5 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-white/10'>
         <div>
           <div className='flex items-center gap-2'>

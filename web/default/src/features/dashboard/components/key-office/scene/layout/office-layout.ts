@@ -89,6 +89,14 @@ export type IdleRouteNode = {
  */
 export const IDLE_ROUTE_NODES = [
   {
+    id: 'L0',
+    x: 300,
+    y: 300,
+    state: 'thinking',
+    stayMs: [2600, 4800],
+    facing: 'right',
+  },
+  {
     id: 'L1',
     x: 300,
     y: 380,
@@ -123,7 +131,7 @@ export const IDLE_ROUTE_NODES = [
   {
     id: 'B1',
     x: 390,
-    y: 585,
+    y: 560,
     state: 'thinking',
     stayMs: [2600, 4600],
     facing: 'front',
@@ -131,7 +139,7 @@ export const IDLE_ROUTE_NODES = [
   {
     id: 'B2',
     x: 480,
-    y: 585,
+    y: 560,
     state: 'idle',
     stayMs: [2000, 4000],
     facing: 'front',
@@ -139,7 +147,7 @@ export const IDLE_ROUTE_NODES = [
   {
     id: 'B3',
     x: 570,
-    y: 585,
+    y: 560,
     state: 'talking',
     stayMs: [2000, 3600],
     facing: 'front',
@@ -177,11 +185,43 @@ export const IDLE_ROUTE_NODES = [
     facing: 'left',
   },
   {
+    id: 'R0',
+    x: 660,
+    y: 300,
+    state: 'talking',
+    stayMs: [2000, 3600],
+    facing: 'back',
+  },
+  {
     id: 'C1',
     x: 480,
     y: 435,
     state: 'thinking',
     stayMs: [2600, 4600],
+    facing: 'front',
+  },
+  {
+    id: 'D1',
+    x: 390,
+    y: 300,
+    state: 'thinking',
+    stayMs: [2600, 4600],
+    facing: 'front',
+  },
+  {
+    id: 'D2',
+    x: 480,
+    y: 300,
+    state: 'idle',
+    stayMs: [2000, 4000],
+    facing: 'front',
+  },
+  {
+    id: 'D3',
+    x: 570,
+    y: 300,
+    state: 'talking',
+    stayMs: [2000, 3600],
     facing: 'front',
   },
 ] as const satisfies readonly IdleRouteNode[]
@@ -191,6 +231,7 @@ export const IDLE_ROUTE_NODES = [
  * 图中存在多个环路，因此相同起终点也可以随机走不同线路。
  */
 export const IDLE_ROUTE_EDGES = [
+  ['L0', 'L1'],
   ['L1', 'L2'],
   ['L2', 'L3'],
   ['L3', 'L4'],
@@ -201,10 +242,16 @@ export const IDLE_ROUTE_EDGES = [
   ['R4', 'R3'],
   ['R3', 'R2'],
   ['R2', 'R1'],
+  ['R1', 'R0'],
   ['L2', 'C1'],
   ['C1', 'R2'],
   ['C1', 'B2'],
+  ['L0', 'D1'],
+  ['D1', 'D2'],
+  ['D2', 'D3'],
+  ['D3', 'R0'],
+  ['D2', 'C1'],
 ] as const satisfies readonly (readonly [string, string])[]
 
-/** 调整完成后可改为 false，隐藏节点编号和线路。 */
-export const SHOW_IDLE_ROUTE_GRAPH = true
+/** 调试节点位置时改为 true，显示节点编号和线路。 */
+export const SHOW_IDLE_ROUTE_GRAPH = false

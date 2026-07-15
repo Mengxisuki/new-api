@@ -16,7 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Desk } from '@/features/dashboard/components/key-office/types/agent'
+import type {
+  AgentState,
+  Desk,
+} from '@/features/dashboard/components/key-office/types/agent'
 
 export const SCENE_WIDTH = 960
 export const SCENE_HEIGHT = 640
@@ -65,13 +68,143 @@ function buildDesks(): Desk[] {
 
 export const DESKS: Desk[] = buildDesks()
 
-export const IDLE_WAYPOINTS = [
-  { x: 300, y: 180 },
-  { x: 300, y: 320 },
-  { x: 300, y: 460 },
-  { x: 660, y: 180 },
-  { x: 660, y: 320 },
-  { x: 660, y: 460 },
-  { x: 380, y: 555 },
-  { x: 580, y: 555 },
-] as const
+/** 空闲角色只在办公室下半区活动，避免走到顶部的布景区域。 */
+export type IdleRouteNodeState = Exclude<AgentState, 'walking' | 'working'>
+
+export type IdleRouteNode = {
+  id: string
+  x: number
+  y: number
+  /** 到达节点后播放的角色状态。 */
+  state: IdleRouteNodeState
+  /** 在节点停留的随机时长范围，单位为毫秒。 */
+  stayMs: readonly [min: number, max: number]
+  /** 到达节点后角色朝向。 */
+  facing: 'front' | 'back' | 'left' | 'right'
+}
+
+/**
+ * 闲逛节点配置：修改 x/y 可调整活动区域，state 可切换节点动画。
+ * 节点编号会显示在办公室中，便于直接对照这里调整。
+ */
+export const IDLE_ROUTE_NODES = [
+  {
+    id: 'L1',
+    x: 300,
+    y: 380,
+    state: 'thinking',
+    stayMs: [2600, 4800],
+    facing: 'right',
+  },
+  {
+    id: 'L2',
+    x: 300,
+    y: 435,
+    state: 'idle',
+    stayMs: [2200, 4200],
+    facing: 'front',
+  },
+  {
+    id: 'L3',
+    x: 300,
+    y: 500,
+    state: 'talking',
+    stayMs: [2000, 3600],
+    facing: 'front',
+  },
+  {
+    id: 'L4',
+    x: 300,
+    y: 560,
+    state: 'idle',
+    stayMs: [2400, 4400],
+    facing: 'right',
+  },
+  {
+    id: 'B1',
+    x: 390,
+    y: 585,
+    state: 'thinking',
+    stayMs: [2600, 4600],
+    facing: 'front',
+  },
+  {
+    id: 'B2',
+    x: 480,
+    y: 585,
+    state: 'idle',
+    stayMs: [2000, 4000],
+    facing: 'front',
+  },
+  {
+    id: 'B3',
+    x: 570,
+    y: 585,
+    state: 'talking',
+    stayMs: [2000, 3600],
+    facing: 'front',
+  },
+  {
+    id: 'R4',
+    x: 660,
+    y: 560,
+    state: 'idle',
+    stayMs: [2400, 4400],
+    facing: 'left',
+  },
+  {
+    id: 'R3',
+    x: 660,
+    y: 500,
+    state: 'thinking',
+    stayMs: [2600, 4800],
+    facing: 'front',
+  },
+  {
+    id: 'R2',
+    x: 660,
+    y: 435,
+    state: 'idle',
+    stayMs: [2200, 4200],
+    facing: 'front',
+  },
+  {
+    id: 'R1',
+    x: 660,
+    y: 380,
+    state: 'talking',
+    stayMs: [2000, 3600],
+    facing: 'left',
+  },
+  {
+    id: 'C1',
+    x: 480,
+    y: 435,
+    state: 'thinking',
+    stayMs: [2600, 4600],
+    facing: 'front',
+  },
+] as const satisfies readonly IdleRouteNode[]
+
+/**
+ * 闲逛线路配置：每一项连接两个节点，线路双向可走。
+ * 图中存在多个环路，因此相同起终点也可以随机走不同线路。
+ */
+export const IDLE_ROUTE_EDGES = [
+  ['L1', 'L2'],
+  ['L2', 'L3'],
+  ['L3', 'L4'],
+  ['L4', 'B1'],
+  ['B1', 'B2'],
+  ['B2', 'B3'],
+  ['B3', 'R4'],
+  ['R4', 'R3'],
+  ['R3', 'R2'],
+  ['R2', 'R1'],
+  ['L2', 'C1'],
+  ['C1', 'R2'],
+  ['C1', 'B2'],
+] as const satisfies readonly (readonly [string, string])[]
+
+/** 调整完成后可改为 false，隐藏节点编号和线路。 */
+export const SHOW_IDLE_ROUTE_GRAPH = true

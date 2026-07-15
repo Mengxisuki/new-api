@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UserAgreementRouteImport } from './routes/user-agreement'
 import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
-import { Route as KeyOfficePreviewRouteImport } from './routes/key-office-preview'
 import { Route as HelpRouteImport } from './routes/help'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as authRouteRouteImport } from './routes/(auth)/route'
@@ -80,11 +79,6 @@ const UserAgreementRoute = UserAgreementRouteImport.update({
 const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
   id: '/privacy-policy',
   path: '/privacy-policy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const KeyOfficePreviewRoute = KeyOfficePreviewRouteImport.update({
-  id: '/key-office-preview',
-  path: '/key-office-preview',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HelpRoute = HelpRouteImport.update({
@@ -414,7 +408,6 @@ const AuthenticatedSystemSettingsAuthSectionRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/help': typeof HelpRoute
-  '/key-office-preview': typeof KeyOfficePreviewRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/user-agreement': typeof UserAgreementRoute
   '/system-settings': typeof AuthenticatedSystemSettingsRouteRouteWithChildren
@@ -476,7 +469,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/help': typeof HelpRoute
-  '/key-office-preview': typeof KeyOfficePreviewRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/user-agreement': typeof UserAgreementRoute
   '/forgot-password': typeof authForgotPasswordRoute
@@ -540,7 +532,6 @@ export interface FileRoutesById {
   '/(auth)': typeof authRouteRouteWithChildren
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/help': typeof HelpRoute
-  '/key-office-preview': typeof KeyOfficePreviewRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/user-agreement': typeof UserAgreementRoute
   '/_authenticated/system-settings': typeof AuthenticatedSystemSettingsRouteRouteWithChildren
@@ -604,7 +595,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/help'
-    | '/key-office-preview'
     | '/privacy-policy'
     | '/user-agreement'
     | '/system-settings'
@@ -666,7 +656,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/help'
-    | '/key-office-preview'
     | '/privacy-policy'
     | '/user-agreement'
     | '/forgot-password'
@@ -729,7 +718,6 @@ export interface FileRouteTypes {
     | '/(auth)'
     | '/_authenticated'
     | '/help'
-    | '/key-office-preview'
     | '/privacy-policy'
     | '/user-agreement'
     | '/_authenticated/system-settings'
@@ -794,7 +782,6 @@ export interface RootRouteChildren {
   authRouteRoute: typeof authRouteRouteWithChildren
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   HelpRoute: typeof HelpRoute
-  KeyOfficePreviewRoute: typeof KeyOfficePreviewRoute
   PrivacyPolicyRoute: typeof PrivacyPolicyRoute
   UserAgreementRoute: typeof UserAgreementRoute
   errors401Route: typeof errors401Route
@@ -826,13 +813,6 @@ declare module '@tanstack/react-router' {
       path: '/privacy-policy'
       fullPath: '/privacy-policy'
       preLoaderRoute: typeof PrivacyPolicyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/key-office-preview': {
-      id: '/key-office-preview'
-      path: '/key-office-preview'
-      fullPath: '/key-office-preview'
-      preLoaderRoute: typeof KeyOfficePreviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/help': {
@@ -1388,7 +1368,6 @@ const rootRouteChildren: RootRouteChildren = {
   authRouteRoute: authRouteRouteWithChildren,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   HelpRoute: HelpRoute,
-  KeyOfficePreviewRoute: KeyOfficePreviewRoute,
   PrivacyPolicyRoute: PrivacyPolicyRoute,
   UserAgreementRoute: UserAgreementRoute,
   errors401Route: errors401Route,

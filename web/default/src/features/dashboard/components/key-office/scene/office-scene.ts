@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Application, Container, Graphics, Sprite } from 'pixi.js'
+import { Application, Container, Graphics, Sprite, Text } from 'pixi.js'
 
 import type { KeyOfficeEmployee } from '../types'
 import type { Agent } from '../types/agent'
@@ -30,8 +30,11 @@ import { DeskEntity } from './entities/DeskEntity'
 import {
   COLORS,
   DESKS,
+  IDLE_ROUTE_EDGES,
+  IDLE_ROUTE_NODES,
   SCENE_HEIGHT,
   SCENE_WIDTH,
+  SHOW_IDLE_ROUTE_GRAPH,
 } from './layout/office-layout'
 import { OfficeSimulator } from './simulation/office-simulator'
 import { AnimationSystem } from './systems/AnimationSystem'
@@ -72,6 +75,7 @@ export class KeyOfficeScene {
 
     await Promise.all([loadSpineAssets(), loadOfficeAssets()])
     this.drawMap()
+    this.drawIdleRouteGraph()
     this.spawnDesks()
     this.syncEntities()
     app.ticker.add(this.onTick)
@@ -188,6 +192,53 @@ export class KeyOfficeScene {
         entity.occupiedIndicator
       )
     }
+    this.world.addChild(layer)
+  }
+
+  private drawIdleRouteGraph() {
+    if (!this.world || !SHOW_IDLE_ROUTE_GRAPH) return
+
+    const layer = new Container()
+    const lines = new Graphics()
+    const nodesById = new Map(
+      IDLE_ROUTE_NODES.map((node) => [node.id, node] as const)
+    )
+
+    for (const [fromId, toId] of IDLE_ROUTE_EDGES) {
+      const from = nodesById.get(fromId)
+      const to = nodesById.get(toId)
+      if (!from || !to) continue
+      lines.moveTo(from.x, from.y)
+      lines.lineTo(to.x, to.y)
+    }
+    lines.stroke({ color: 0x0f766e, alpha: 0.42, width: 2 })
+    layer.addChild(lines)
+
+    const stateColors = {
+      idle: 0x64748b,
+      talking: 0xd97706,
+      thinking: 0x7c3aed,
+    } as const
+    for (const node of IDLE_ROUTE_NODES) {
+      const marker = new Graphics()
+      marker.circle(node.x, node.y, 7)
+      marker.fill({ color: stateColors[node.state], alpha: 0.9 })
+      marker.stroke({ color: 0xffffff, alpha: 0.95, width: 2 })
+
+      const label = new Text({
+        text: node.id,
+        style: {
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+          fontSize: 10,
+          fontWeight: '700',
+          fill: 0x134e4a,
+        },
+      })
+      label.anchor.set(0.5, 1)
+      label.position.set(node.x, node.y - 10)
+      layer.addChild(marker, label)
+    }
+
     this.world.addChild(layer)
   }
 

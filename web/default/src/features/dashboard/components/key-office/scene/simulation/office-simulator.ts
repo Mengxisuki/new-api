@@ -35,20 +35,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { DESKS, IDLE_WAYPOINTS } from '../layout/office-layout'
+import { DESKS } from '../layout/office-layout'
+import {
+  findNearestIdleRouteNode,
+  findRandomIdleRoute,
+  getIdleRouteNode,
+  pickRandomIdleDestination,
+} from '../navigation/idle-route'
 import { MovementSystem } from '../systems/MovementSystem'
 
-function pickIdleWaypoint(agent: Agent) {
-  const offset = Math.floor(Date.now() / 5000)
-  const index = Math.abs(agent.tokenId + offset) % IDLE_WAYPOINTS.length
-  return IDLE_WAYPOINTS[index]
-}
-
-function pathFromDesk(agent: Agent, target: { x: number; y: number }) {
+function pathFromDesk(
+  agent: Agent,
+  route: readonly { x: number; y: number }[]
+) {
   const desk = DESKS.find((candidate) => candidate.id === agent.assignedDeskId)
-  if (!desk) return [target]
-  const sideX = target.x < desk.seatX ? desk.seatX - 82 : desk.seatX + 82
-  return [{ x: sideX, y: desk.seatY }, { x: sideX, y: target.y }, target]
+  const first = route[0]
+  if (!desk || !first) return [...route]
+  const sideX = first.x < desk.seatX ? desk.seatX - 82 : desk.seatX + 82
+  return [{ x: sideX, y: desk.seatY }, { x: sideX, y: first.y }, ...route]
 }
 
 function pathToDesk(agent: Agent) {
@@ -60,11 +64,6 @@ function pathToDesk(agent: Agent) {
     { x: sideX, y: desk.seatY },
     { x: desk.seatX, y: desk.seatY },
   ]
-}
-
-function pathBetweenIdlePoints(agent: Agent, target: { x: number; y: number }) {
-  if (agent.x < 480 === target.x < 480) return [target]
-  return [{ x: agent.x, y: 555 }, { x: target.x, y: 555 }, target]
 }
 
 export class OfficeSimulator {
@@ -92,6 +91,11 @@ export class OfficeSimulator {
             walkPath: undefined,
             walkPathIndex: undefined,
             idleMoveAt: undefined,
+            idleNodeId: undefined,
+            idleTargetNodeId: undefined,
+            idleTargetState: undefined,
+            idleTargetStayMs: undefined,
+            idleTargetFacing: undefined,
           }
         }
         const finalWaypoint = agent.walkPath?.at(-1)
@@ -107,15 +111,29 @@ export class OfficeSimulator {
 
       if (agent.state === 'walking') return agent
       if ((agent.idleMoveAt ?? 0) > now) {
-        return { ...agent, state: 'idle', currentTask: undefined }
+        return agent
       }
 
-      const destination = pickIdleWaypoint(agent)
       const atDesk = Math.hypot(agent.x - desk.seatX, agent.y - desk.seatY) < 12
-      const path = atDesk
-        ? pathFromDesk(agent, destination)
-        : pathBetweenIdlePoints(agent, destination)
-      return MovementSystem.assignWalkPath(agent, path)
+      const currentNode =
+        getIdleRouteNode(agent.idleNodeId) ??
+        findNearestIdleRouteNode(agent.x, agent.y)
+      const destination = pickRandomIdleDestination(currentNode.id)
+      const route = findRandomIdleRoute(currentNode.id, destination.id)
+      const needsGraphEntry =
+        Math.hypot(agent.x - currentNode.x, agent.y - currentNode.y) >= 12
+      const graphRoute = needsGraphEntry ? [currentNode, ...route] : route
+      const path = atDesk ? pathFromDesk(agent, graphRoute) : graphRoute
+      const [minStayMs, maxStayMs] = destination.stayMs
+      const idleTargetStayMs =
+        minStayMs + Math.random() * (maxStayMs - minStayMs)
+      return {
+        ...MovementSystem.assignWalkPath(agent, path),
+        idleTargetNodeId: destination.id,
+        idleTargetState: destination.state,
+        idleTargetStayMs,
+        idleTargetFacing: destination.facing,
+      }
     })
   }
 }

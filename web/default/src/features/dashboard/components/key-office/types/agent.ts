@@ -69,6 +69,13 @@ export interface Agent {
   lastUsedAt: number
   desiredState: 'working' | 'idle'
   idleMoveAt?: number
+  /** 最近到达的闲逛节点。 */
+  idleNodeId?: string
+  /** 本次闲逛的目标节点及到达后的状态。 */
+  idleTargetNodeId?: string
+  idleTargetState?: Exclude<AgentState, 'walking' | 'working'>
+  idleTargetStayMs?: number
+  idleTargetFacing?: ChibiFacing
 }
 
 export interface Desk {

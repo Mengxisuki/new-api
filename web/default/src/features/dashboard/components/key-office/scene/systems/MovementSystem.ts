@@ -87,7 +87,10 @@ export class MovementSystem {
 
         const atHome = isHomeDeskSeat(agent.assignedDeskId, tx, ty)
         const shouldWork = atHome && agent.desiredState === 'working'
-        const viewFacing = shouldWork ? 'back' : resolveWalkViewFacing(dx, dy)
+        const idleState = agent.idleTargetState ?? 'idle'
+        const viewFacing = shouldWork
+          ? 'back'
+          : (agent.idleTargetFacing ?? resolveWalkViewFacing(dx, dy))
         entity.apply({
           x: tx,
           y: ty,
@@ -95,13 +98,20 @@ export class MovementSystem {
           targetY: undefined,
           walkPath: undefined,
           walkPathIndex: undefined,
-          state: shouldWork ? 'working' : 'idle',
+          state: shouldWork ? 'working' : idleState,
           viewFacing,
           facing: viewFacingToLR(viewFacing),
           currentTask: shouldWork ? agent.currentTask : undefined,
           idleMoveAt: shouldWork
             ? undefined
-            : Date.now() + 2500 + Math.random() * 4500,
+            : Date.now() + (agent.idleTargetStayMs ?? 2500),
+          idleNodeId: shouldWork
+            ? undefined
+            : (agent.idleTargetNodeId ?? agent.idleNodeId),
+          idleTargetNodeId: undefined,
+          idleTargetState: undefined,
+          idleTargetStayMs: undefined,
+          idleTargetFacing: undefined,
         })
         entity.setPosition(tx, ty)
         continue
@@ -143,6 +153,10 @@ export class MovementSystem {
       currentTask:
         agent.desiredState === 'working' ? agent.currentTask : undefined,
       bubbleText: undefined,
+      idleTargetNodeId: undefined,
+      idleTargetState: undefined,
+      idleTargetStayMs: undefined,
+      idleTargetFacing: undefined,
       viewFacing,
       facing: viewFacingToLR(viewFacing),
     }

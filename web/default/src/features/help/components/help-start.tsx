@@ -27,6 +27,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
+import { DocsButton } from '@/components/docs-button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
@@ -94,13 +95,16 @@ export function QuickStartContent() {
               'Create a key, set an optional budget, and copy it when it is shown.'
             )}
           >
-            <Button
-              variant='outline'
-              render={<Link to='/keys' />}
-              nativeButton={false}
-            >
-              {t('Open API Keys')}
-            </Button>
+            <div className='flex flex-wrap gap-2'>
+              <Button
+                variant='outline'
+                render={<Link to='/keys' />}
+                nativeButton={false}
+              >
+                {t('Open API Keys')}
+              </Button>
+              <DocsButton compact />
+            </div>
           </GuideCard>
           <GuideCard
             icon={PlayCircle02Icon}

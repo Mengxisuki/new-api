@@ -28,6 +28,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
+import { DocsButton } from '@/components/docs-button'
 import { Button } from '@/components/ui/button'
 
 import { GuideCard, HelpSection } from './help-primitives'
@@ -71,6 +72,7 @@ export function AppTutorialsContent() {
             )}
           />
         </div>
+        <DocsButton compact className='self-start' />
       </HelpSection>
 
       <HelpSection title={t('Connection checklist')}>
@@ -179,22 +181,7 @@ export function DeveloperGuideContent(props: DeveloperGuideContentProps) {
             )}
           </p>
         </div>
-        {props.docsLink ? (
-          <Button
-            variant='outline'
-            render={
-              <a
-                href={props.docsLink}
-                target='_blank'
-                rel='noopener noreferrer'
-              />
-            }
-            nativeButton={false}
-          >
-            {t('Open Docs')}
-            <HugeiconsIcon icon={ArrowRight01Icon} data-icon='inline-end' />
-          </Button>
-        ) : null}
+        <DocsButton compact href={props.docsLink} />
       </div>
     </div>
   )

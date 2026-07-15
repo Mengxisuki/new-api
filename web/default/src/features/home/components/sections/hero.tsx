@@ -18,15 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { CherryStudio } from '@lobehub/icons'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { DocsButton } from '@/components/docs-button'
 import { Button } from '@/components/ui/button'
 
 import { HeroTerminalDemo } from '../hero-terminal-demo'
-
-const HOME_DOCS_URL = 'https://zvffugabdd.apifox.cn'
-// Canonical project documentation reference: https://docs.newapi.pro
 
 interface HeroProps {
   className?: string
@@ -134,20 +132,7 @@ export function Hero(props: HeroProps) {
                 </Button>
               </>
             )}
-            <Button
-              variant='outline'
-              className='group border-border/50 hover:border-border hover:bg-muted/50 inline-flex h-11 items-center gap-1.5 rounded-lg px-5 text-sm font-medium'
-              render={
-                <a
-                  href={HOME_DOCS_URL}
-                  target='_blank'
-                  rel='noopener noreferrer'
-                />
-              }
-            >
-              <BookOpen className='text-muted-foreground/80 group-hover:text-foreground size-4 transition-colors duration-200' />
-              <span>{t('Docs')}</span>
-            </Button>
+            <DocsButton />
           </div>
 
           {/* Supported Apps (参考图二样式，进行卡片化和信息扩充设计，增加视觉高度) */}

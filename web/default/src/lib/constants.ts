@@ -23,6 +23,8 @@ For commercial licensing, please contact support@quantumnous.com
 // System Configuration Defaults
 export const DEFAULT_SYSTEM_NAME = 'New API'
 export const DEFAULT_LOGO = '/logo.png'
+// Canonical project documentation reference: https://docs.newapi.pro
+export const HOME_DOCS_URL = 'https://zvffugabdd.apifox.cn'
 
 // LocalStorage Keys
 export const STORAGE_KEYS = {

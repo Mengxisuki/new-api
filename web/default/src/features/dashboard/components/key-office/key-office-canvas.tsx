@@ -76,7 +76,7 @@ export function KeyOfficeCanvas(props: KeyOfficeCanvasProps) {
   return (
     <div
       ref={hostRef}
-      className='h-full min-h-[420px] w-full overflow-hidden rounded-xl sm:min-h-[520px]'
+      className='h-full min-h-[420px] w-full overflow-hidden sm:min-h-[520px]'
       aria-label={t('API key activity office')}
       role='img'
     />

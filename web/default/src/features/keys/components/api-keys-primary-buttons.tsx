@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { DocsButton } from '@/components/docs-button'
 import { Button } from '@/components/ui/button'
 
 import { useApiKeys } from './api-keys-provider'
@@ -27,8 +28,12 @@ export function ApiKeysPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen } = useApiKeys()
   return (
-    <div className='flex gap-2'>
-      <Button size='sm' onClick={() => setOpen('create')}>
+    <div className='flex flex-wrap gap-2'>
+      <DocsButton />
+      <Button
+        className='h-11 rounded-lg px-5 text-sm font-medium'
+        onClick={() => setOpen('create')}
+      >
         <Plus className='h-4 w-4' />
         {t('Create API Key')}
       </Button>

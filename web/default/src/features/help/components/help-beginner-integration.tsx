@@ -28,6 +28,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
+import { DocsButton } from '@/components/docs-button'
 import { Button } from '@/components/ui/button'
 
 import { GuideCard, HelpSection } from './help-primitives'
@@ -134,6 +135,7 @@ export function BeginnerIntegration() {
             />
             {t('Open Usage Logs')}
           </Button>
+          <DocsButton compact />
         </div>
       </HelpSection>
 

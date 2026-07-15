@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Activity, KeyRound, PersonStanding } from 'lucide-react'
+import { Activity, KeyRound, PersonStanding, ShieldCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getKeyActivity } from '@/features/dashboard/api'
@@ -115,6 +116,23 @@ export default function KeyActivityOffice() {
           </p>
         </div>
       )}
+
+      <footer className='border-t border-black/5 px-3 py-3 sm:px-5 dark:border-white/10'>
+        <Alert
+          role='note'
+          className='border-emerald-900/10 bg-emerald-950/[0.035] px-3 py-2.5 text-emerald-950 dark:border-emerald-100/10 dark:bg-emerald-100/[0.045] dark:text-emerald-50'
+        >
+          <ShieldCheck className='mt-0.5 size-4' aria-hidden='true' />
+          <AlertTitle className='text-xs font-semibold'>
+            {t('Your request content stays private')}
+          </AlertTitle>
+          <AlertDescription className='text-xs leading-relaxed text-emerald-950/65 dark:text-emerald-50/65'>
+            {t(
+              'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.'
+            )}
+          </AlertDescription>
+        </Alert>
+      </footer>
     </section>
   )
 }

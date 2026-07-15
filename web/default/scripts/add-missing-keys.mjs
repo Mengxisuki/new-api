@@ -72,9 +72,12 @@ const newKeys = {
     Working: 'Working',
     'Shown publicly. Does not change your login username.':
       'Shown publicly. Does not change your login username.',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.',
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.',
     'You can select up to 20 groups': 'You can select up to 20 groups',
+    'Your request content stays private': 'Your request content stays private',
   },
   zh: {
     '{{count}} active requests': '{{count}} 个活跃请求',
@@ -120,9 +123,12 @@ const newKeys = {
     Working: '工作中',
     'Shown publicly. Does not change your login username.':
       '该名称会公开展示，不会修改登录用户名。',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      '此页面仅留存请求状态。平台不会存储请求内容，仅保留必要的 Token 用量统计和用户行为统计。',
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       '当所选分组均不支持请求模型时，继续按系统自动分配顺序查找。',
     'You can select up to 20 groups': '最多可选择 20 个分组',
+    'Your request content stays private': '您的请求内容始终保密',
   },
   fr: {
     '{{count}} active requests': '{{count}} requêtes actives',
@@ -173,10 +179,14 @@ const newKeys = {
     Working: 'Au travail',
     'Shown publicly. Does not change your login username.':
       'Affiché publiquement. Ne modifie pas votre identifiant de connexion.',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      'Cette page conserve uniquement l’état des requêtes. La plateforme ne stocke pas leur contenu ; seules les statistiques nécessaires d’utilisation des tokens et d’activité utilisateur sont conservées.',
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       "Si le modèle demandé n'est disponible dans aucun groupe sélectionné, poursuivre selon l'ordre d'affectation automatique du système.",
     'You can select up to 20 groups':
       "Vous pouvez sélectionner jusqu'à 20 groupes",
+    'Your request content stays private':
+      'Le contenu de vos requêtes reste confidentiel',
   },
   ja: {
     '{{count}} active requests': 'アクティブなリクエスト {{count}} 件',
@@ -224,9 +234,12 @@ const newKeys = {
     Working: '作業中',
     'Shown publicly. Does not change your login username.':
       '公開表示されます。ログイン用ユーザー名は変更されません。',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      'このページに保存されるのはリクエストの状態だけです。プラットフォームはリクエスト内容を保存せず、必要なトークン使用量とユーザー行動の統計のみを保持します。',
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       '選択したグループで要求モデルを利用できない場合、システムの自動割り当て順序で検索を続けます。',
     'You can select up to 20 groups': '選択できるグループは最大20件です',
+    'Your request content stays private': 'リクエスト内容は常に非公開です',
   },
   ru: {
     '{{count}} active requests': 'Активных запросов: {{count}}',
@@ -274,9 +287,13 @@ const newKeys = {
     Working: 'Работает',
     'Shown publicly. Does not change your login username.':
       'Показывается публично. Не изменяет ваш логин.',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      'На этой странице сохраняется только статус запросов. Платформа не хранит их содержимое, а сохраняет только необходимую статистику использования токенов и действий пользователей.',
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       'Если модель недоступна в выбранных группах, продолжить поиск по системному порядку автоназначения.',
     'You can select up to 20 groups': 'Можно выбрать не более 20 групп',
+    'Your request content stays private':
+      'Содержимое ваших запросов остаётся конфиденциальным',
   },
   vi: {
     '{{count}} active requests': '{{count}} yêu cầu đang hoạt động',
@@ -324,9 +341,13 @@ const newKeys = {
     Working: 'Đang làm việc',
     'Shown publicly. Does not change your login username.':
       'Tên này sẽ hiển thị công khai và không làm thay đổi tên đăng nhập.',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      'Trang này chỉ lưu trạng thái yêu cầu. Nền tảng không lưu nội dung yêu cầu; chỉ các số liệu thống kê cần thiết về mức sử dụng token và hoạt động người dùng được lưu lại.',
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       'Khi mô hình không có trong các nhóm đã chọn, tiếp tục theo thứ tự phân bổ tự động của hệ thống.',
     'You can select up to 20 groups': 'Bạn có thể chọn tối đa 20 nhóm',
+    'Your request content stays private':
+      'Nội dung yêu cầu của bạn luôn được bảo mật',
   },
   'zh-TW': {
     '{{count}} active requests': '{{count}} 個活躍請求',
@@ -362,6 +383,9 @@ const newKeys = {
     'When the requested model is unavailable in the selected groups, continue with the system auto assignment order.':
       '當所選分組均不支援請求模型時，繼續按照系統自動分配順序查找。',
     'You can select up to 20 groups': '最多可選擇 20 個分組',
+    'This page only retains request status. The platform does not store request content; only necessary token usage and user activity statistics are retained.':
+      '此頁面僅留存請求狀態。平台不會儲存請求內容，僅保留必要的 Token 用量統計和使用者行為統計。',
+    'Your request content stays private': '您的請求內容始終保密',
   },
 }
 

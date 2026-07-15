@@ -62,7 +62,12 @@ export function GuideCard(props: GuideCardProps) {
     <Card className='h-full'>
       <CardHeader>
         <div className='bg-muted text-foreground mb-2 flex size-9 items-center justify-center rounded-lg'>
-          <HugeiconsIcon icon={props.icon} strokeWidth={2} className='size-4' />
+          <HugeiconsIcon
+            icon={props.icon}
+            strokeWidth={2}
+            className='size-4'
+            aria-hidden='true'
+          />
         </div>
         {props.eyebrow && (
           <p className='text-muted-foreground text-xs font-medium tracking-wide uppercase'>

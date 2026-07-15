@@ -17,8 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  Chart01Icon,
-  CheckmarkCircle02Icon,
   InformationCircleIcon,
   Key01Icon,
   PlayCircle02Icon,
@@ -135,74 +133,6 @@ export function QuickStartContent() {
   }'`}</code>
           </pre>
         </div>
-      </HelpSection>
-    </div>
-  )
-}
-
-export function GettingStartedContent() {
-  const { t } = useTranslation()
-
-  return (
-    <div className='flex flex-col gap-10'>
-      <HelpSection
-        title={t('Understand the core workflow')}
-        description={t(
-          'The gateway keeps access, billing, and observability in one place while your application uses a familiar API format.'
-        )}
-      >
-        <div className='grid gap-3 md:grid-cols-3'>
-          <GuideCard
-            icon={Key01Icon}
-            title={t('Protect every key')}
-            description={t(
-              'Use separate keys for separate apps, set expiration or quota limits, and rotate any key that may have leaked.'
-            )}
-          />
-          <GuideCard
-            icon={Chart01Icon}
-            title={t('Track every request')}
-            description={t(
-              'Usage logs show the model, token counts, cost, latency, and request result for troubleshooting.'
-            )}
-          />
-          <GuideCard
-            icon={CheckmarkCircle02Icon}
-            title={t('Start small, then scale')}
-            description={t(
-              'Validate one request before increasing concurrency, enabling streaming, or connecting production traffic.'
-            )}
-          />
-        </div>
-      </HelpSection>
-
-      <HelpSection title={t('Recommended account setup')}>
-        <ol className='border-border/70 divide-border/70 overflow-hidden rounded-xl border'>
-          {[
-            t(
-              'Set a clear name for each API key so usage can be traced to an application.'
-            ),
-            t('Apply a quota limit to development and temporary keys.'),
-            t(
-              'Review the Model Square before choosing a model for production.'
-            ),
-            t(
-              'Check Usage Logs after integration to confirm token and cost behavior.'
-            ),
-          ].map((item, index) => (
-            <li
-              key={item}
-              className='flex items-start gap-3 border-b p-4 last:border-b-0'
-            >
-              <span className='bg-muted flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold'>
-                {index + 1}
-              </span>
-              <span className='text-muted-foreground text-sm leading-6'>
-                {item}
-              </span>
-            </li>
-          ))}
-        </ol>
       </HelpSection>
     </div>
   )

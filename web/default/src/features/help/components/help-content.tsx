@@ -19,9 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import type { HelpTab } from '../types'
+import { GettingStartedContent } from './help-beginner'
 import { FaqContent } from './help-faq'
 import { AppTutorialsContent, DeveloperGuideContent } from './help-guides'
-import { GettingStartedContent, QuickStartContent } from './help-start'
+import { QuickStartContent } from './help-start'
 
 type HelpContentProps = {
   activeTab: HelpTab
@@ -37,7 +38,9 @@ export function HelpContent(props: HelpContentProps) {
     },
     beginner: {
       title: t('Getting Started'),
-      description: t('Learn the account, key, model, and usage workflow.'),
+      description: t(
+        'Understand the complete path from choosing a model to using AI or Codex.'
+      ),
     },
     apps: {
       title: t('App Tutorials'),

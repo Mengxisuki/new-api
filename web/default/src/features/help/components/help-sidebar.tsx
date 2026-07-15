@@ -47,7 +47,7 @@ export function HelpSidebar(props: HelpSidebarProps) {
     {
       value: 'beginner' as const,
       title: t('Getting Started'),
-      description: t('Learn the core workflow'),
+      description: t('Models, pricing, API, and Codex'),
       icon: BookOpen02Icon,
     },
     {

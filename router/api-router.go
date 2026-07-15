@@ -240,6 +240,7 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.POST("/:id/key", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKey)
 			tokenRoute.POST("/", controller.AddToken)
 			tokenRoute.PUT("/", controller.UpdateToken)
+			tokenRoute.PUT("/:id/office-character", controller.UpdateTokenOfficeCharacter)
 			tokenRoute.DELETE("/:id", controller.DeleteToken)
 			tokenRoute.POST("/batch", controller.DeleteTokenBatch)
 			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
@@ -300,6 +301,7 @@ func SetApiRouter(router *gin.Engine) {
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
 		dataRoute.GET("/flow", middleware.AdminAuth(), controller.GetAllFlowQuotaDates)
 		dataRoute.GET("/flow/self", middleware.UserAuth(), controller.GetUserFlowQuotaDates)
+		dataRoute.GET("/key-activity/self", middleware.UserAuth(), controller.GetUserTokenActivity)
 
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{

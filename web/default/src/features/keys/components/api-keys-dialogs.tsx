@@ -20,6 +20,7 @@ import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
 import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
 import { useApiKeys } from './api-keys-provider'
 import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
+import { OfficeCharacterDialog } from './dialogs/office-character-dialog'
 
 export function ApiKeysDialogs() {
   const { open, setOpen, currentRow, resolvedKey } = useApiKeys()
@@ -37,6 +38,7 @@ export function ApiKeysDialogs() {
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
         tokenKey={resolvedKey}
       />
+      <OfficeCharacterDialog />
     </>
   )
 }

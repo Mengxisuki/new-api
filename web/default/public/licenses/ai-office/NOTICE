@@ -1,0 +1,8 @@
+The key activity office is adapted from the local ai-office-react project.
+
+ai-office-react
+Copyright (c) 2026 teejoo
+Licensed under the MIT License. See LICENSE in this directory.
+
+The character renderer uses the Spine Runtimes. See
+SPINE-RUNTIMES-LICENSE in this directory for its separate license terms.

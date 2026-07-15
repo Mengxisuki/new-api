@@ -45,6 +45,11 @@ const DASHBOARD_SECTIONS = [
     adminOnly: true,
     build: () => null,
   },
+  {
+    id: 'key-activity',
+    titleKey: 'API Key Activity',
+    build: () => null,
+  },
 ] as const
 
 export type DashboardSectionId = (typeof DASHBOARD_SECTIONS)[number]['id']

@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -32,10 +34,11 @@ type tokenPageResponse struct {
 }
 
 type tokenResponseItem struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Key    string `json:"key"`
-	Status int    `json:"status"`
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	Key             string `json:"key"`
+	Status          int    `json:"status"`
+	OfficeCharacter string `json:"office_character"`
 }
 
 type tokenKeyResponse struct {
@@ -537,4 +540,55 @@ func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 	if strings.Contains(unauthorizedRecorder.Body.String(), token.Key) {
 		t.Fatalf("unauthorized key response leaked raw token key: %s", unauthorizedRecorder.Body.String())
 	}
+}
+
+func TestUpdateTokenOfficeCharacterRequiresOwnershipAndValidCharacter(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "office-token", "office1234token5678")
+
+	ctx, recorder := newAuthenticatedContext(
+		t,
+		http.MethodPut,
+		"/api/token/1/office-character",
+		map[string]string{"character": "misaki"},
+		1,
+	)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(token.Id)}}
+	UpdateTokenOfficeCharacter(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	var detail tokenResponseItem
+	require.NoError(t, common.Unmarshal(response.Data, &detail))
+	assert.Equal(t, "misaki", detail.OfficeCharacter)
+
+	reloaded, err := model.GetTokenByIds(token.Id, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "misaki", reloaded.OfficeCharacter)
+
+	unauthorizedCtx, unauthorizedRecorder := newAuthenticatedContext(
+		t,
+		http.MethodPut,
+		"/api/token/1/office-character",
+		map[string]string{"character": "nate"},
+		2,
+	)
+	unauthorizedCtx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(token.Id)}}
+	UpdateTokenOfficeCharacter(unauthorizedCtx)
+	assert.False(t, decodeAPIResponse(t, unauthorizedRecorder).Success)
+
+	invalidCtx, invalidRecorder := newAuthenticatedContext(
+		t,
+		http.MethodPut,
+		"/api/token/1/office-character",
+		map[string]string{"character": "unknown"},
+		1,
+	)
+	invalidCtx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(token.Id)}}
+	UpdateTokenOfficeCharacter(invalidCtx)
+	assert.Equal(t, http.StatusBadRequest, invalidRecorder.Code)
+
+	reloaded, err = model.GetTokenByIds(token.Id, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "misaki", reloaded.OfficeCharacter)
 }

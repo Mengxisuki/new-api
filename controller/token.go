@@ -361,6 +361,39 @@ func UpdateToken(c *gin.Context) {
 	})
 }
 
+func UpdateTokenOfficeCharacter(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var request struct {
+		Character string `json:"character"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !model.IsValidOfficeCharacter(request.Character) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid office character",
+		})
+		return
+	}
+	token, err := model.GetTokenByIds(id, c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token.OfficeCharacter = request.Character
+	if err := token.Update(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+}
+
 type TokenBatch struct {
 	Ids []int `json:"ids"`
 }

@@ -71,6 +71,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
+	relayV1Router.Use(middleware.TokenActivity())
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")
@@ -179,7 +180,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relaySunoRouter := router.Group("/suno")
 	relaySunoRouter.Use(middleware.RouteTag("relay"))
 	relaySunoRouter.Use(middleware.SystemPerformanceCheck())
-	relaySunoRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	relaySunoRouter.Use(middleware.TokenAuth(), middleware.TokenActivity(), middleware.Distribute())
 	{
 		relaySunoRouter.POST("/submit/:action", controller.RelayTask)
 		relaySunoRouter.POST("/fetch", controller.RelayTaskFetch)
@@ -191,6 +192,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.SystemPerformanceCheck())
 	relayGeminiRouter.Use(middleware.TokenAuth())
 	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
+	relayGeminiRouter.Use(middleware.TokenActivity())
 	relayGeminiRouter.Use(middleware.Distribute())
 	{
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
@@ -202,7 +204,7 @@ func SetRelayRouter(router *gin.Engine) {
 
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {
 	relayMjRouter.GET("/image/:id", relay.RelayMidjourneyImage)
-	relayMjRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	relayMjRouter.Use(middleware.TokenAuth(), middleware.TokenActivity(), middleware.Distribute())
 	{
 		relayMjRouter.POST("/submit/action", controller.RelayMidjourney)
 		relayMjRouter.POST("/submit/shorten", controller.RelayMidjourney)

@@ -99,6 +99,14 @@ export async function updateApiKeyStatus(
   return res.data
 }
 
+export async function updateApiKeyOfficeCharacter(
+  id: number,
+  character: string
+): Promise<ApiResponse<ApiKey>> {
+  const res = await api.put(`/api/token/${id}/office-character`, { character })
+  return res.data
+}
+
 // Fetch the real (unmasked) key for a token by ID
 export async function fetchTokenKey(
   id: number

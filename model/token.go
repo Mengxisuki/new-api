@@ -31,6 +31,7 @@ type Token struct {
 	Groups             []string       `json:"groups,omitempty" gorm:"-"`
 	AutoGroup          bool           `json:"auto_group" gorm:"-"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
+	OfficeCharacter    string         `json:"office_character" gorm:"type:varchar(32)"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
@@ -360,7 +361,8 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "group_policy", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "group_policy", "cross_group_retry",
+		"office_character").Updates(token).Error
 	return err
 }
 

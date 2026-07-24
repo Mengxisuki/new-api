@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -28,6 +29,7 @@ import {
   Link,
   Loader2,
   Palette,
+  ChartNoAxesColumnIncreasing,
 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -84,6 +86,7 @@ export function DataTableRowActions<TData>({
   row,
 }: DataTableRowActionsProps<TData>) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const apiKey = apiKeySchema.parse(row.original)
   const {
     setOpen,
@@ -97,6 +100,14 @@ export function DataTableRowActions<TData>({
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
   const hasChatPresets = chatPresets.length > 0
   const toggleLabel = isEnabled ? t('Disable') : t('Enable')
+
+  const handleOpenStatistics = useCallback(() => {
+    void navigate({
+      to: '/dashboard/$section',
+      params: { section: 'key-activity' },
+      search: { keyIds: [apiKey.id] },
+    })
+  }, [apiKey.id, navigate])
 
   const handleOpenCCSwitch = useCallback(async () => {
     const realKey = await resolveRealKey(apiKey.id)
@@ -274,6 +285,12 @@ export function DataTableRowActions<TData>({
           {t('Edit office character')}
           <DropdownMenuShortcut>
             <Palette size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleOpenStatistics}>
+          {t('Statistics')}
+          <DropdownMenuShortcut>
+            <ChartNoAxesColumnIncreasing size={16} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuSeparator />

@@ -22,6 +22,14 @@ type tokenActivityResponse struct {
 	} `json:"data"`
 }
 
+type tokenUsageResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Keys   []model.TokenUsageKey   `json:"keys"`
+		Points []model.TokenUsagePoint `json:"points"`
+	} `json:"data"`
+}
+
 func TestGetUserTokenActivityPrioritizesWorkingAndScopesToOwner(t *testing.T) {
 	setupFlowControllerTestDB(t)
 	now := time.Now().Unix()
@@ -65,4 +73,60 @@ func TestGetUserTokenActivityPrioritizesWorkingAndScopesToOwner(t *testing.T) {
 	for _, item := range payload.Data.Tokens {
 		assert.NotEqual(t, 22, item.Id)
 	}
+}
+
+func TestGetUserTokenUsageAggregatesMetricsAndScopesToOwner(t *testing.T) {
+	setupFlowControllerTestDB(t)
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+	startTimestamp := int64(1_700_000_000)
+	logs := []model.Log{
+		{
+			UserId: 1, TokenId: 11, TokenName: "primary", CreatedAt: startTimestamp + 10,
+			Type: model.LogTypeConsume, Quota: 120, PromptTokens: 80, CompletionTokens: 20, UseTime: 4,
+			Other: `{"cache_tokens":30,"cache_creation_tokens_5m":12,"frt":250.8}`,
+		},
+		{
+			UserId: 1, TokenId: 11, TokenName: "primary", CreatedAt: startTimestamp + 20,
+			Type: model.LogTypeError, Other: `{}`,
+		},
+		{
+			UserId: 2, TokenId: 22, TokenName: "backup", CreatedAt: startTimestamp + 30,
+			Type: model.LogTypeConsume, Quota: 999, PromptTokens: 999, CompletionTokens: 999,
+		},
+	}
+	require.NoError(t, model.LOG_DB.Create(&logs).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Request = httptest.NewRequest(http.MethodGet,
+		"/api/data/key-usage/self?start_timestamp=1700000000&end_timestamp=1700003600", nil)
+	GetUserTokenUsage(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	payload := tokenUsageResponse{}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Points, 1)
+	point := payload.Data.Points[0]
+	assert.EqualValues(t, 1, point.SuccessfulRequests)
+	assert.EqualValues(t, 1, point.FailedRequests)
+	assert.EqualValues(t, 100, point.PromptTokens+point.CompletionTokens)
+	assert.EqualValues(t, 120, point.Quota)
+	assert.EqualValues(t, 30, point.CacheReadTokens)
+	assert.EqualValues(t, 12, point.CacheCreateTokens)
+	assert.EqualValues(t, 250, point.LatencyMsSum)
+	assert.EqualValues(t, 1, point.LatencySamples)
+}
+
+func TestGetUserTokenUsageRejectsOversizedRange(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Request = httptest.NewRequest(http.MethodGet,
+		"/api/data/key-usage/self?start_timestamp=1&end_timestamp=99999999", nil)
+
+	GetUserTokenUsage(ctx)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }

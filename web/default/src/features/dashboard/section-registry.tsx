@@ -47,7 +47,7 @@ const DASHBOARD_SECTIONS = [
   },
   {
     id: 'key-activity',
-    titleKey: 'API Key Activity',
+    titleKey: 'API Key Usage',
     build: () => null,
   },
 ] as const

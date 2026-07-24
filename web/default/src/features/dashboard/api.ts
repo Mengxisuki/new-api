@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type { KeyActivityResponse } from './components/key-office/types'
+import type { KeyUsageResponse } from './components/key-usage/types'
 import type {
   FlowQuotaDataItem,
   QuotaDataItem,
@@ -95,5 +96,15 @@ export async function getUptimeStatus() {
 
 export async function getKeyActivity(): Promise<KeyActivityResponse> {
   const res = await api.get('/api/data/key-activity/self')
+  return res.data
+}
+
+export async function getKeyUsage(params: {
+  start_timestamp: number
+  end_timestamp: number
+}): Promise<KeyUsageResponse> {
+  const res = await api.get<KeyUsageResponse>('/api/data/key-usage/self', {
+    params,
+  })
   return res.data
 }

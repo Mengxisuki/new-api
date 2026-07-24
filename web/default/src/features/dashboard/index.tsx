@@ -98,7 +98,7 @@ const LazyFlowCharts = lazy(() =>
   }))
 )
 
-const LazyKeyActivityOffice = lazy(() => import('./components/key-office'))
+const LazyKeyUsageDashboard = lazy(() => import('./components/key-usage'))
 
 function LogStatCardsFallback() {
   return (
@@ -167,7 +167,7 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
     titleKey: 'User Analytics',
   },
   'key-activity': {
-    titleKey: 'API Key Activity',
+    titleKey: 'API Key Usage',
   },
 }
 
@@ -175,6 +175,7 @@ export function Dashboard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
+  const search = route.useSearch()
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
@@ -237,6 +238,16 @@ export function Dashboard() {
       void navigate({
         to: '/dashboard/$section',
         params: { section: section as DashboardSectionId },
+      })
+    },
+    [navigate]
+  )
+  const handleKeyUsageSelectionChange = useCallback(
+    (keyIds: number[]) => {
+      void navigate({
+        to: '/dashboard/$section',
+        params: { section: 'key-activity' },
+        search: keyIds.length > 0 ? { keyIds } : {},
       })
     },
     [navigate]
@@ -393,7 +404,10 @@ export function Dashboard() {
           {activeSection === 'key-activity' && (
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
-                <LazyKeyActivityOffice />
+                <LazyKeyUsageDashboard
+                  selectedKeyIds={search.keyIds ?? []}
+                  onSelectedKeyIdsChange={handleKeyUsageSelectionChange}
+                />
               </Suspense>
             </FadeIn>
           )}

@@ -141,7 +141,8 @@ git push origin oak
 
 - 已在服务器安装 `/usr/local/sbin/oak-ci-deploy`，root:root、0755；服务器与本地 SHA-256 一致，只读 `check` 已通过。没有切换 `current`、重启线上应用或改写生产数据，线上仍为 `oak-01da3a55f`。
 - GitHub `oak-production` 已创建，部署分支规则限定 `oak`；专用密钥已生成并完成服务器授权与限制验证，环境 Secret 等待用户录入。
-- 官网/采购已单独提交为 `5edda9c46`，CI/CD 与说明单独提交到 `oak`。分支推送、默认分支切换和首次 GitHub 构建的最终状态见 [交接记录](../../docs/handoff.md)。
+- 官网/采购提交 `5edda9c46`、CI/CD 提交 `cd94d9a8c` 已分别提交并推送到 `oak`。`upstream-main` 已推送且保持纯官方内容，GitHub 默认分支已设为 `oak`，旧 `main` 未改。
+- [首次真实 GitHub 构建](https://github.com/Mengxisuki/new-api/actions/runs/40663034653)成功：全量测试、构建、发布包校验和产物上传通过，发布任务因 `deploy=false` 跳过。实际运行源码为 `cd94d9a8c`；后续文档提交不改变运行代码。
 - 本地干净源码快照使用冻结依赖验证：前端 205 文件、2468 用例通过，根 Go 模块、relaykit 和 tokenkit 的 `make test` 通过；11 个部署契约测试、actionlint、Bash 语法检查、真实 Linux 发布包校验通过。已补齐采购图片接口在当前分支中的个人访问令牌权限声明。
 - 本机原工作目录残留的被忽略旧源码和旧前端依赖曾造成全量检查失败；干净快照不包含这些内容，未通过删除用户文件或跳过失败测试来处理。
 - 尚未执行实际停机发布和备份恢复演练。GitHub 私钥由用户录入，操作步骤见上文。

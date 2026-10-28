@@ -23,6 +23,8 @@ For commercial licensing, please contact support@quantumnous.com
 // System Configuration Defaults
 export const DEFAULT_SYSTEM_NAME = 'New API'
 export const DEFAULT_LOGO = '/logo.png'
+// 沿用旧官网的接入文档地址，供快速接入示例跳转。
+export const HOME_DOCS_URL = 'https://zvffugabdd.apifox.cn'
 
 // LocalStorage Keys
 export const STORAGE_KEYS = {

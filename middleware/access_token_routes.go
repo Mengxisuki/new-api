@@ -144,10 +144,13 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/subscription/admin/user_subscriptions/:id":          accessTokenScopeRule("billing:write"),
 
 	// router/api-router.go: /api/option
-	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
-	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),
-	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
-	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
+	"GET /api/option/":                 accessTokenScopeRule("option:read"),
+	"GET /api/option/request_policy":   accessTokenScopeRule("option:read"),
+	"PATCH /api/option/request_policy": accessTokenScopeRule("option:write"),
+	"PUT /api/option/":                 accessTokenScopeRule("option:write"),
+	// 采购图片写入沿用设置权限；RootAuth 仍要求超级管理员身份。
+	"POST /api/option/procurement-wechat-qr":                     accessTokenScopeRule("option:write"),
+	"DELETE /api/option/procurement-wechat-qr":                   accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing":                              accessTokenScopeRule("option:read"),
 	"PATCH /api/option/model_pricing":                            accessTokenScopeRule("option:write"),

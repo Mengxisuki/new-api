@@ -44,6 +44,8 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { ProcurementContactFields } from './procurement-contact-fields'
+import { procurementContactSchema } from './procurement-contact-schema'
 import { isValidTaskPublicAddress } from './task-public-address'
 
 const _systemInfoSchema = z.object({
@@ -54,6 +56,7 @@ const _systemInfoSchema = z.object({
   Footer: z.string().optional(),
   About: z.string().optional(),
   HomePageContent: z.string().optional(),
+  ...procurementContactSchema,
   general_setting: z.object({
     docs_link: z.string(),
   }),
@@ -86,6 +89,13 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     Footer: normalizeValue(defaultValues.Footer),
     About: normalizeValue(defaultValues.About),
     HomePageContent: normalizeValue(defaultValues.HomePageContent),
+    ProcurementContactName: normalizeValue(
+      defaultValues.ProcurementContactName
+    ),
+    ProcurementWeChatID: normalizeValue(defaultValues.ProcurementWeChatID),
+    ProcurementWeChatQRCodeURL: normalizeValue(
+      defaultValues.ProcurementWeChatQRCodeURL
+    ),
     general_setting: {
       docs_link: normalizeValue(defaultValues.general_setting?.docs_link),
     },
@@ -110,6 +120,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     Footer: z.string().optional(),
     About: z.string().optional(),
     HomePageContent: z.string().optional(),
+    ...procurementContactSchema,
     general_setting: z.object({
       docs_link: z.string(),
     }),
@@ -326,6 +337,8 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                   )}
                 />
               </SettingsFormGridItem>
+
+              <ProcurementContactFields />
 
               <FormField
                 control={form.control}

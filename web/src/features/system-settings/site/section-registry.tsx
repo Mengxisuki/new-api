@@ -41,6 +41,9 @@ const SITE_SECTIONS = [
           Footer: settings.Footer,
           About: settings.About,
           HomePageContent: settings.HomePageContent,
+          ProcurementContactName: settings.ProcurementContactName,
+          ProcurementWeChatID: settings.ProcurementWeChatID,
+          ProcurementWeChatQRCodeURL: settings.ProcurementWeChatQRCodeURL,
           ServerAddress: settings.ServerAddress,
           TaskPublicAddress: settings.TaskPublicAddress,
           general_setting: {

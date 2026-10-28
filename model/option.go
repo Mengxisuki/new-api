@@ -80,6 +80,11 @@ func InitOptionMap() {
 	common.OptionMap["Notice"] = ""
 	common.OptionMap["About"] = ""
 	common.OptionMap["HomePageContent"] = ""
+	// 采购联系信息默认隐藏，不复用任何认证配置。
+	// 已保存的值由下方现有配置加载流程覆盖。
+	common.OptionMap["ProcurementContactName"] = ""
+	common.OptionMap["ProcurementWeChatID"] = ""
+	common.OptionMap["ProcurementWeChatQRCodeURL"] = ""
 	common.OptionMap["Footer"] = common.Footer
 	common.OptionMap["SystemName"] = common.SystemName
 	common.OptionMap["Logo"] = common.Logo

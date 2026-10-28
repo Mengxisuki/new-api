@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -85,7 +87,9 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
+		// 图片编码通过专用图片接口读取，不放进通用配置 JSON。
+		// 保留当前分支既有隐藏键，避免影响其他设置。
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == procurementQRCodeDataOption {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -218,6 +222,35 @@ func UpdateOption(c *gin.Context) {
 		}
 	}
 	switch option.Key {
+	// 公开联系人先归一化再保存，界面和状态接口使用相同值。
+	// 限制按 Unicode 字符计算，中文姓名不按字节提前截断。
+	case "ProcurementContactName", "ProcurementWeChatID":
+		value := strings.TrimSpace(option.Value.(string))
+		if utf8.RuneCountInString(value) > 100 {
+			common.ApiErrorT(c, "Procurement contact name and WeChat ID must not exceed 100 characters")
+			return
+		}
+		option.Value = value
+	// 图片地址允许 HTTPS 或站内绝对路径，空串表示隐藏二维码。
+	// 拒绝协议相对路径，防止把站内地址解释为外部主机。
+	// 反斜杠和换行在浏览器中有不同解析行为，不进入存储。
+	// 外部地址禁止携带用户名和密码，避免公开页面泄露凭据。
+	// 长度上限与前端公开图片地址校验保持一致。
+	// 去掉两端空白后再解析，避免保存前后显示不一致。
+	// URL 解析失败时立即拒绝，不能用部分解析结果放行。
+	// 通用配置的既有写入流程仅接收通过本入口校验的值。
+	case "ProcurementWeChatQRCodeURL":
+		value := strings.TrimSpace(option.Value.(string))
+		if value != "" {
+			parsed, parseErr := url.Parse(value)
+			isRelative := strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//")
+			isHTTPS := parseErr == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil
+			if len(value) > 2048 || parseErr != nil || strings.ContainsAny(value, "\\\r\n") || (!isRelative && !isHTTPS) {
+				common.ApiErrorT(c, "WeChat QR image must use an HTTPS URL or a site path starting with /, up to 2048 characters")
+				return
+			}
+		}
+		option.Value = value
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
 			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "GitHub OAuth"})

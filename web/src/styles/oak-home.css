@@ -1,0 +1,994 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+.oak-home {
+  --background: #f6f5ef; /* 基础组件在官网内使用局部纸色，不影响控制台。 */
+  --foreground: #29372f;
+  --muted: #eaece4;
+  --muted-foreground: #626b61;
+  --primary: #385440;
+  --primary-foreground: #fffef8;
+  --border: #d6dbd0;
+  --ring: #67826b;
+  --oak-paper: #f6f5ef;
+  --oak-ink: #29372f;
+  --oak-green: #45634a;
+  --oak-muted: #626b61;
+  --oak-line: #d6dbd0;
+  --oak-panel: #eaece4;
+  --oak-trunk-fill: #e7e6d9;
+  --oak-leaf-fill: #eef0e4;
+  color: var(--oak-ink);
+  background: var(--oak-paper);
+  font-family:
+    'Public Sans Variable', 'PingFang SC', 'Microsoft YaHei', sans-serif; /* 中文字体回退只作用于官网，不依赖系统默认字族。 */
+}
+.dark .oak-home {
+  --background: #19251e; /* 暗色由祖先主题类触发，与现有切换器共用入口。 */
+  --foreground: #e5e9dc;
+  --muted: #26352b;
+  --muted-foreground: #b4beaf;
+  --primary: #c3d2b7;
+  --primary-foreground: #1c2b20;
+  --border: #3d4b3f;
+  --ring: #94ad83;
+  --oak-paper: #19251e;
+  --oak-ink: #e5e9dc;
+  --oak-green: #a2b593;
+  --oak-muted: #b4beaf;
+  --oak-line: #3d4b3f;
+  --oak-panel: #26352b;
+  --oak-trunk-fill: #2c3b2b;
+  --oak-leaf-fill: #283a2c; /* 树叶与树干同时调整填色，避免残留浅色图层。 */
+}
+.oak-home > div {
+  background: transparent; /* 公共布局保持透明，让官网局部纸色透出。 */
+}
+.oak-home header {
+  background: var(--oak-paper); /* 页眉沿用纸色，滚动时与正文连续。 */
+  border-color: var(
+    --oak-line
+  ); /* 页眉分隔线共用官网描边，避免套用控制台边框。 */
+}
+.oak-home main {
+  overflow: clip; /* 统一裁切越界插画，防止整页横向滚动。 */
+}
+.oak-container {
+  width: min(1120px, calc(100% - 96px)); /* 桌面行宽上限与两侧留白同时约束。 */
+  margin-inline: auto; /* 所有板块共享居中基线，超宽屏不再拉长正文。 */
+}
+.oak-home section[id],
+.oak-home [id='oak-invoicing'],
+.oak-home [id='oak-procurement-contact'] {
+  scroll-margin-top: 100px; /* 锚点预留固定页眉空间，跳转后标题不会被遮挡。 */
+}
+.oak-home :focus-visible {
+  outline: 2px solid var(--ring); /* 键盘焦点沿用官网主题色。 */
+  outline-offset: 5px; /* 外扩轮廓避免与按钮边框混淆。 */
+}
+.oak-eyebrow {
+  font:
+    500 11px/1.5 ui-monospace,
+    'SFMono-Regular',
+    monospace; /* 栏目标签使用等宽字体，保持编号节奏。 */
+  letter-spacing: 0.14em;
+  color: var(--oak-muted); /* 辅助颜色弱化栏目标签，让正文标题更突出。 */
+}
+.oak-hero {
+  position: relative; /* 首屏作为插画和说明行的定位参照。 */
+}
+.oak-hero-inner {
+  position: relative; /* 插画与首屏底线共享此定位坐标。 */
+  min-height: 710px;
+  padding-top: 100px;
+  padding-bottom: 115px; /* 底部留白为绝对定位的说明行预留空间。 */
+}
+.oak-hero-copy {
+  position: relative; /* 文案建立独立层叠上下文，覆盖插画交叠区域。 */
+  z-index: 1;
+  width: 59%;
+  max-width: 660px; /* 限制文案行宽，避免长译文侵入右侧树冠。 */
+}
+.oak-audience {
+  margin-top: 28px; /* 受众说明与品牌眉题分开，形成阅读起点。 */
+  font-size: 13px;
+  color: var(--oak-muted); /* 辅助色将主视觉留给标题。 */
+}
+.oak-home h1,
+.oak-home h2,
+.oak-closing h2 {
+  font-family:
+    Georgia, 'Songti SC', 'Noto Serif CJK SC', 'SimSun', serif; /* 大标题统一使用衬线字族，区别正文信息。 */
+  font-weight: 400; /* 常规字重保留衬线细节，避免合成粗体。 */
+}
+.oak-home h1 {
+  margin: 18px 0 26px; /* 标题外间距连接受众说明和导语。 */
+  font-size: clamp(40px, 4.65vw, 66px);
+  letter-spacing: -0.055em;
+  line-height: 1.24; /* 紧凑行高只用于标题，不影响正文阅读。 */
+}
+.oak-home h1 span {
+  color: var(--oak-green); /* 第二行使用品牌绿，突出研究团队这一受众。 */
+}
+.oak-hero-description {
+  max-width: 535px; /* 导语独立限宽，让中英文段落保持可读行长。 */
+  font-size: 15px;
+  line-height: 1.95;
+  color: var(--oak-muted); /* 明暗主题由同一辅助色变量驱动。 */
+}
+.oak-actions {
+  display: flex; /* 主次行动共用弹性容器，入口数量变化仍能排列。 */
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 30px; /* 与导语分开，避免行动区融入正文。 */
+}
+.oak-button {
+  height: auto; /* 解除基础按钮固定高度，长译文可以自然增高。 */
+  min-height: 44px;
+  padding: 12px 21px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+  white-space: normal; /* 允许标签换行，窄屏不因按钮文案溢出。 */
+}
+.oak-button-primary {
+  color: var(--primary-foreground); /* 主按钮使用主题前景与底色配对。 */
+  background: var(--primary);
+  border: 1px solid var(--primary); /* 边框与底色一致，保留尺寸但不增加第二圈描边。 */
+}
+.oak-button-primary:hover {
+  background: color-mix(
+    in srgb,
+    var(--primary),
+    var(--oak-ink) 12%
+  ); /* 悬停仅混入少量墨色，保持主按钮层级。 */
+}
+.oak-button-secondary {
+  background: var(--oak-paper); /* 次按钮使用纸色，与主按钮形成权重差异。 */
+  color: var(--oak-ink);
+  border-color: var(
+    --oak-line
+  ); /* 描边遵循官网分隔线变量，暗色无需独立覆盖。 */
+}
+.oak-button-secondary:hover {
+  background: var(--oak-panel); /* 次按钮悬停使用面板色，仍与主按钮区分。 */
+}
+.oak-invoice-callout {
+  display: inline-flex; /* 开票提示将图标和文案组合为行内布局。 */
+  align-items: center;
+  gap: 9px;
+  color: var(--oak-green);
+  margin-top: 23px;
+  font-size: 12px;
+  line-height: 1.7; /* 宽松行高允许长提示折行，不压缩点击区。 */
+}
+.oak-invoice-callout svg {
+  flex-shrink: 0; /* 图标禁止收缩，长文案不会挤扁开票标识。 */
+}
+.oak-invoice-callout:hover,
+.oak-text-link:hover {
+  text-decoration: underline; /* 悬停使用下划线，提供颜色之外的交互反馈。 */
+  text-underline-offset: 5px; /* 下划线下移，避免压住中文笔画。 */
+}
+.oak-research-sketch {
+  position: absolute; /* 插画脱离正文流，由首屏容器负责高度。 */
+  width: 630px;
+  top: 32px;
+  right: -104px;
+  pointer-events: none;
+  color: var(--oak-green); /* 当前颜色传给所有线稿层，统一明暗主题。 */
+}
+.oak-botanical-tree {
+  width: 100%; /* 插画随容器等比缩放，保持固定视窗内的构图。 */
+  height: auto;
+  overflow: visible; /* 树根可超出图形视窗，最终由主区域裁切。 */
+}
+.oak-pencil-construction {
+  stroke: currentColor; /* 辅助线继承插画色，主题切换无需逐路径改色。 */
+  stroke-width: 0.65;
+  opacity: 0.15; /* 低透明度保留手稿感，不抢树体轮廓。 */
+}
+.oak-watercolor {
+  opacity: 0.025; /* 水彩只形成极浅色雾，不覆盖线稿细节。 */
+}
+.oak-trunk {
+  stroke: currentColor; /* 树干线稿继承统一主题色。 */
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.72; /* 主体透明度高于细枝，建立树体层次。 */
+}
+.oak-fine-branches {
+  stroke: currentColor; /* 细枝沿用树体色，避免独立硬编码主题色。 */
+  stroke-width: 1;
+  stroke-linecap: round;
+  opacity: 0.55; /* 细枝比树干更浅，避免树冠内线条结块。 */
+}
+.oak-leaf-studies {
+  stroke: currentColor; /* 叶片轮廓与枝条保持同套笔触。 */
+  stroke-width: 1.5;
+  fill: var(--oak-leaf-fill);
+  opacity: 0.72; /* 轮廓和填色整体合成，暗色仍保留叶片层次。 */
+}
+.oak-pencil-marks {
+  stroke: currentColor; /* 铅笔标记与主线稿共色，避免旁注异色。 */
+  stroke-width: 0.65;
+  opacity: 0.22; /* 辅助标记低对比展示，避免被误认为主树枝。 */
+}
+.oak-roots {
+  stroke: currentColor; /* 根系颜色继承树体，将构图延伸到首屏下缘。 */
+  stroke-width: 0.9;
+  stroke-linecap: round;
+  opacity: 0.32; /* 根系比树干更浅，避免压过底部说明。 */
+}
+.oak-ground-line {
+  stroke: currentColor; /* 地面线共用树体色，主题切换保持整体。 */
+  stroke-width: 0.8;
+  opacity: 0.24; /* 地面线弱于根系，只承担构图基线。 */
+}
+.oak-study-caption {
+  position: absolute; /* 树种标注依附插画坐标，不参与文案排版。 */
+  top: 65%;
+  right: 6%;
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.19em;
+  opacity: 0.62; /* 标注弱化处理，保持植物学手稿的辅助性质。 */
+}
+.oak-hero-baseline {
+  position: absolute; /* 首屏说明固定于容器底部，不随标题行数上移。 */
+  left: 0;
+  bottom: 24px;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  color: var(--oak-muted);
+  font-size: 11px; /* 小字号只承载辅助说明与板块跳转。 */
+}
+.oak-hero-baseline a {
+  display: flex; /* 跳转文案与箭头共享垂直中心。 */
+  align-items: center;
+  gap: 8px; /* 图标留独立间距，长标签也不会贴住箭头。 */
+}
+.oak-ecosystem {
+  border-block: 1px solid var(--oak-line); /* 生态区以上下分隔线区分首屏和正文。 */
+}
+.oak-ecosystem-inner {
+  display: flex; /* 生态区让模型名称与跳转入口共享水平基线。 */
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 96px;
+  padding-block: 20px; /* 两条边框之间保留稳定留白。 */
+}
+.oak-ecosystem-inner > p {
+  font-size: 11px; /* 生态标题弱化为标签，让品牌列表优先被读到。 */
+  color: var(--oak-muted); /* 与眉题使用同套辅助色，形成跨区层级。 */
+}
+.oak-ecosystem-inner > div {
+  display: flex; /* 品牌列表允许自然换行，模型数量变化不撑宽页面。 */
+  flex-wrap: wrap;
+  gap: 28px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.03em; /* 紧字距只用于品牌名，不影响普通正文。 */
+}
+.oak-text-link {
+  display: inline-flex; /* 链接统一采用行内弹性布局，方便组合箭头。 */
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--oak-green); /* 行动文字使用品牌绿，与说明文案区分。 */
+}
+.oak-section {
+  padding-block: 96px; /* 正文板块统一纵向节奏，移动端再集中缩减。 */
+}
+.oak-section-heading {
+  display: flex; /* 标题与导语在桌面并列，并以底部对齐。 */
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 56px;
+  margin-bottom: 40px; /* 内容区与标题区留白，防止导语被误认为正文首项。 */
+}
+.oak-section-heading > div {
+  max-width: 660px; /* 标题限宽，为右侧导语保留空间。 */
+}
+.oak-home h2 {
+  font-size: clamp(
+    28px,
+    3vw,
+    39px
+  ); /* 二级标题随视口缩放，避免桌面断点突变。 */
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+  margin-top: 17px; /* 与栏目眉题保持固定间距，让层级可预测。 */
+}
+.oak-section-heading > p {
+  max-width: 310px; /* 导语禁止收缩成难阅读的细列。 */
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--oak-muted); /* 导语弱化显示，左侧标题保持阅读优先级。 */
+}
+.oak-scenario-tabs {
+  width: 100%; /* 覆盖基础标签栏宽度，使场景导航对齐正文。 */
+  height: auto;
+  justify-content: flex-start;
+  gap: 28px;
+  border-bottom: 1px solid var(--oak-line);
+  border-radius: 0; /* 移除胶囊圆角，延续官网通栏标签样式。 */
+}
+.oak-scenario-tabs [role='tab'] {
+  flex: 0 1 auto; /* 标签按内容分宽，不强制均分三列。 */
+  padding: 14px 0;
+  height: auto;
+  color: var(--oak-muted);
+  font-size: 13px;
+  gap: 12px;
+  white-space: normal;
+  text-align: start; /* 长译文左对齐，换行后仍与编号对应。 */
+}
+.oak-scenario-tabs [role='tab'] span {
+  font:
+    10px ui-monospace,
+    monospace; /* 编号使用等宽字体，减少数字宽度变化。 */
+  color: var(--oak-muted); /* 编号使用辅助色，让场景名称优先被读到。 */
+}
+.oak-scenario-tabs [role='tab'][data-active] {
+  color: var(--oak-green); /* 选中场景使用品牌绿，与基础标签状态同步。 */
+}
+.oak-scenario-panel {
+  display: grid; /* 场景正文与任务示例各占一列。 */
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  padding-top: 38px;
+  margin: 0; /* 清除基础面板外边距，起点只由顶部内边距控制。 */
+}
+.oak-scenario-panel[hidden] {
+  display: none; /* 隐藏面板必须退出布局，防止网格覆盖原生隐藏行为。 */
+}
+.oak-tool-label {
+  font:
+    11px/1.6 ui-monospace,
+    monospace; /* 工具名称用等宽字体，区别操作说明和正文。 */
+  color: var(--oak-green); /* 品牌绿标识工具标签，不引入独立配色。 */
+}
+.oak-scenario-copy h3 {
+  margin: 15px 0; /* 场景标题与工具标签及正文分开。 */
+  font-size: 23px;
+  line-height: 1.5;
+  font-weight: 500;
+  letter-spacing: -0.025em; /* 轻微收紧标题字距，不压缩长中文标题。 */
+}
+.oak-scenario-copy > p:not(.oak-tool-label) {
+  font-size: 14px; /* 只覆盖普通段落，保留工具标签等宽样式。 */
+  line-height: 1.95;
+  color: var(--oak-muted); /* 辅助色与宽行高支持中英文长段落。 */
+}
+.oak-scenario-copy > .oak-scenario-note {
+  margin-top: 22px; /* 边界说明从主文案分离，避免被当作功能承诺。 */
+  font-size: 12px !important;
+  padding-left: 13px;
+  border-left: 2px solid var(--oak-line); /* 左侧细线提供色差之外的层级提示。 */
+}
+.oak-task-example {
+  display: flex; /* 示例卡片使用纵向弹性布局，流程可自然贴底。 */
+  flex-direction: column;
+  padding: 29px 32px;
+  background: var(--oak-panel);
+  border-top: 2px solid var(--oak-green); /* 顶部品牌线和背景色共同标明示例内容。 */
+}
+.oak-task-example blockquote {
+  font-family:
+    Georgia, 'Songti SC', 'SimSun', serif; /* 示例引用采用衬线字体，区别界面操作文案。 */
+  font-size: 19px;
+  line-height: 1.95;
+  margin: 20px 0 30px; /* 引用与流程标签保持独立留白。 */
+}
+.oak-task-flow {
+  display: flex; /* 流程允许换行，阶段增加不会挤压卡片。 */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 15px;
+  margin-top: auto; /* 自动上边距吸收剩余空间，使流程靠近底边。 */
+}
+.oak-task-flow span {
+  font-size: 10px; /* 流程阶段用辅助字号，不盖过任务引用。 */
+  color: var(--oak-muted); /* 颜色弱化阶段标签，保持示例阅读顺序。 */
+}
+.oak-task-flow span + span::before {
+  content: '→'; /* 箭头仅由相邻阶段生成，首项没有多余前导箭头。 */
+  margin-right: 15px; /* 箭头右侧留白，阶段阅读方向更清晰。 */
+}
+.oak-comparison-section {
+  border-block: 1px solid var(--oak-line); /* 对比区域用上下边线从正文中分段。 */
+  background: color-mix(
+    in srgb,
+    var(--oak-panel),
+    var(--oak-paper) 55%
+  ); /* 纸色与面板色混合，暗色也保留轻微层级。 */
+}
+.oak-comparison-scroll {
+  overflow-x: auto; /* 对比表只在自身容器横向滚动，不撑宽整页。 */
+}
+.oak-comparison-table {
+  width: 100%; /* 表格充满内容容器，桌面无需额外居中。 */
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.85; /* 独立行高让长对比项仍能逐列阅读。 */
+}
+.oak-comparison-table th,
+.oak-comparison-table td {
+  padding: 23px 25px; /* 单元格统一横向留白，列间边界更明确。 */
+  text-align: start;
+  vertical-align: top;
+  border-bottom: 1px solid var(--oak-line); /* 每行仅保留下线，避免密集网格抢占注意力。 */
+}
+.oak-comparison-table thead th {
+  font-size: 12px; /* 表头小于正文，突出数据内容而非框架。 */
+  font-weight: 500;
+  border-top: 1px solid var(--oak-line); /* 顶部边线与行分隔共同定义表格范围。 */
+}
+.oak-comparison-table th:first-child {
+  width: 19%; /* 首列为对比主题保留窄列。 */
+  padding-left: 0;
+  font-weight: 500; /* 中等字重便于跨行扫描主题。 */
+}
+.oak-comparison-table td {
+  width: 40%; /* 两种方案近似等宽，便于并排比较。 */
+  color: var(--oak-muted); /* 普通数据列用辅助色，重点列另行覆盖。 */
+}
+.oak-comparison-table :is(td, th):last-child {
+  background: color-mix(
+    in srgb,
+    var(--oak-panel),
+    transparent 35%
+  ); /* 最后一列用面板底色标识本平台。 */
+  color: var(--oak-ink); /* 重点列恢复墨色，提高与直连方案的区分。 */
+}
+.oak-comparison-note {
+  margin-top: 22px; /* 说明紧随表格，交代独立服务与官方订阅边界。 */
+  font-size: 11px;
+  line-height: 1.85;
+  color: var(--oak-muted); /* 小字仍用宽行高，保证长译文可读。 */
+}
+.oak-payment-options {
+  display: grid; /* 采购方案在桌面并列，区分现有与定制方案。 */
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 40px; /* 与下方开票支持保留独立间距。 */
+}
+.oak-payment-options article {
+  padding: 24px 36px 22px 0; /* 方案顶部边线对齐，形成并排阅读起点。 */
+  border-top: 1px solid var(--oak-line); /* 首列无左框，避免内容区出现多余外框。 */
+}
+.oak-payment-options article + article {
+  padding-inline: 36px 0; /* 第二方案通过左右留白与首列分开。 */
+  border-left: 1px solid var(--oak-line); /* 只增加中间边线，保持外侧边界简洁。 */
+}
+.oak-plan-heading {
+  display: flex; /* 方案名称与状态徽标共用行内布局。 */
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px; /* 徽标允许换行，长语言不会挤压方案标题。 */
+}
+.oak-plan-heading h3 {
+  font-size: 20px; /* 方案标题低于板块主标题层级。 */
+  font-weight: 500; /* 中等字重保持官网文字节奏。 */
+}
+.oak-status {
+  font-size: 10px; /* 状态以小徽标呈现，区别按钮与链接。 */
+  padding: 4px 8px;
+  border-radius: 2px;
+  background: var(--oak-panel);
+  color: var(--oak-green); /* 品牌绿将可用状态纳入统一主题。 */
+}
+.oak-status-contact {
+  background: transparent; /* 定制方案不使用实底，与立即可用方案区分。 */
+  border: 1px solid var(--oak-line);
+  color: var(--oak-green); /* 用边框和文字提示状态，不使用警告色。 */
+}
+.oak-payment-options article > p {
+  margin: 17px 0; /* 方案说明连接标题与详情入口。 */
+  font-size: 13px;
+  color: var(--oak-muted);
+  line-height: 1.95; /* 宽行高承载采购长文案，便于扫描。 */
+}
+.oak-procurement-support {
+  display: flex; /* 开票与联系卡片在桌面横向组合。 */
+  align-items: stretch; /* 两侧等高，让边框与深色板块完整衔接。 */
+}
+.oak-invoice-panel {
+  flex: 1 1 auto; /* 开票区优先占据联系人之外的剩余空间。 */
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  background: #2b4335;
+  color: #f1f1e5;
+  padding: 44px; /* 内边距容纳介绍与清单，内容不贴深色底边。 */
+}
+.oak-invoice-intro > svg {
+  margin-bottom: 24px; /* 开票图标与眉题分开，避免视觉粘连。 */
+  color: #c8d3bd; /* 专属浅色始终与固定深绿底板配对。 */
+}
+.oak-invoice-panel .oak-eyebrow {
+  color: #c1cdb9; /* 深色板块使用专属眉题色，避免继承低对比辅助色。 */
+}
+.oak-invoice-intro h3 {
+  font:
+    400 29px/1.5 Georgia,
+    'Songti SC',
+    'SimSun',
+    serif; /* 开票标题保持衬线字族，与其他大标题一致。 */
+  margin: 12px 0 17px; /* 上下间距区分栏目标签和正文。 */
+}
+.oak-invoice-intro > p:last-child {
+  font-size: 13px; /* 开票说明使用较小正文，不挤占清单列宽。 */
+  line-height: 1.95;
+  color: #cbd5c6; /* 浅色正文始终与固定深绿底配对。 */
+}
+.oak-invoice-checklist {
+  align-self: center; /* 清单在开票介绍旁居中，短列表不会贴顶。 */
+}
+.oak-invoice-checklist > p {
+  font-size: 13px; /* 清单提示稍突出，明确购买前要准备的资料。 */
+  font-weight: 500; /* 中等字重即可提示层级，无需额外图标。 */
+}
+.oak-invoice-checklist ul {
+  padding: 18px 0 26px; /* 清单上下留白分离提示行和复制按钮。 */
+}
+.oak-invoice-checklist li {
+  font-size: 12px; /* 清单条目保持紧凑字号，让长机构要求能换行。 */
+  line-height: 1.8;
+  padding-block: 10px;
+  border-bottom: 1px solid #526653;
+  color: #cbd5c6; /* 文字与分隔线针对深色板块单独配色。 */
+}
+.oak-invoice-copy {
+  background: transparent; /* 复制按钮保持透明底，作为开票区次要行动。 */
+  border: 1px solid #849980;
+  color: #eef2e7; /* 文字色与深色板块配对，不继承普通浅色页按钮。 */
+}
+.oak-invoice-copy:hover {
+  background: #3b5541; /* 悬停增加轻微底色，提示可交互。 */
+  color: #fff; /* 悬停文字保持高对比，避免基础主题造成暗字。 */
+}
+.oak-contact {
+  flex: 0 0 325px; /* 联系人保留桌面基准宽度，避免挤压开票内容。 */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 28px;
+  padding: 34px 30px;
+  border: 1px solid var(--oak-line);
+  border-left: 0; /* 移除左框，避免与开票区接缝形成双线。 */
+}
+.oak-contact-details > p:nth-child(2) {
+  font-size: 13px; /* 联系人介绍区别于栏目标签。 */
+  line-height: 1.8;
+  margin: 12px 0 18px;
+  color: var(--oak-muted); /* 辅助色跟随页面主题，支持暗色显示。 */
+}
+.oak-contact dl > div {
+  display: flex; /* 字段按基线对齐，长微信号不会错位到标签上方。 */
+  align-items: baseline;
+  gap: 20px;
+  font-size: 13px;
+  line-height: 2.1; /* 行高给复制按钮及多行值预留空间。 */
+}
+.oak-contact dt {
+  color: var(--oak-muted); /* 字段标签弱化，联系方式的值优先被读到。 */
+  flex-shrink: 0; /* 标签禁止收缩，长值应在右侧换行。 */
+}
+.oak-contact dd {
+  overflow-wrap: anywhere; /* 长微信号允许任意断行，避免撑宽联系人卡片。 */
+}
+.oak-contact-copy {
+  margin-left: 10px; /* 复制入口与微信号分开，避免被当作账号内容。 */
+  color: var(--oak-green);
+  font-size: 11px; /* 较小字号维持微信号本身的视觉优先级。 */
+}
+.oak-contact-qr {
+  flex-shrink: 0; /* 二维码不参与压缩，避免变成难扫描的窄图。 */
+  width: 144px;
+  align-self: center; /* 在卡片内独立居中，不依赖字段列宽。 */
+}
+.oak-contact-qr img {
+  padding: 8px; /* 图像内边距保留二维码静区，方便扫码。 */
+  background: white;
+  width: 144px;
+  height: 144px;
+  object-fit: contain; /* 完整容纳不同图片比例，不裁切二维码。 */
+}
+.oak-contact-qr > p {
+  font-size: 12px; /* 加载失败提示使用可读正文大小。 */
+  line-height: 1.8;
+  padding: 12px;
+  border: 1px solid var(--oak-line); /* 失败提示保留边框，继续占用清楚的提示区域。 */
+}
+.oak-contact-qr figcaption {
+  margin-top: 8px; /* 图注与二维码分开，避免贴住图片。 */
+  font-size: 10px;
+  color: var(--oak-muted);
+  text-align: center; /* 图注独立居中，区别联系人正文。 */
+}
+.oak-start-section {
+  background: var(--oak-panel); /* 接入区域使用面板底，与采购正文分开。 */
+  border-block: 1px solid var(--oak-line);
+  padding-block: 80px; /* 上下留白容纳步骤和代码，形成完整区块。 */
+}
+.oak-start-grid {
+  display: grid; /* 步骤与代码不等宽，代码分配更多显示空间。 */
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: 72px;
+  align-items: center; /* 两列垂直居中，步骤数量不改变窗口对齐关系。 */
+}
+.oak-start-description {
+  font-size: 14px; /* 接入导语先解释工具关系，再进入步骤。 */
+  line-height: 1.9;
+  color: var(--oak-muted);
+  margin-top: 20px; /* 与标题分开，避免形成长标题块。 */
+}
+.oak-steps {
+  padding-top: 24px; /* 步骤列表与导语分开，不挤入标题阅读区域。 */
+}
+.oak-steps li {
+  display: flex; /* 步骤编号和说明横向组合，便于逐项扫描。 */
+  gap: 19px;
+  margin-top: 24px; /* 上边距独立控制，不依赖固定步骤数量。 */
+}
+.oak-steps li > span {
+  font:
+    11px/1.8 ui-monospace,
+    monospace; /* 编号等宽排版，位数变化不破坏对齐。 */
+  color: var(--oak-muted); /* 辅助色让操作名称保持主要层级。 */
+}
+.oak-steps h3 {
+  font-size: 14px; /* 步骤名称低于板块主标题层级。 */
+  font-weight: 500; /* 中等字重提示操作入口，与说明正文区分。 */
+}
+.oak-steps h3 a {
+  display: flex; /* 操作链接与跳转箭头共享垂直中心。 */
+  align-items: center;
+  gap: 7px; /* 图标与文字保留空隙，长标题仍可辨识。 */
+}
+.oak-steps li p {
+  font-size: 12px; /* 步骤说明使用辅助字号，不盖过操作入口。 */
+  line-height: 1.8;
+  color: var(--oak-muted);
+  margin-top: 6px; /* 与名称分开，形成稳定两级阅读顺序。 */
+}
+.oak-code-window {
+  min-width: 0; /* 代码容器可在网格中收缩，长代码交给内部滚动。 */
+  border: 1px solid var(--oak-line);
+  background: var(--oak-paper); /* 纸色底与外层面板色区分，形成编辑器窗口。 */
+}
+.oak-code-heading {
+  display: flex; /* 窗口标题横排，路径与示例标记分居两端。 */
+  align-items: center;
+  justify-content: space-between;
+  padding: 17px 22px;
+  border-bottom: 1px solid var(--oak-line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--oak-muted); /* 辅助颜色弱化标题栏，代码保持主要权重。 */
+}
+.oak-code-heading > span:first-child {
+  display: flex; /* 路径标记与圆点通过弹性布局对齐。 */
+  align-items: center;
+  gap: 9px; /* 圆点不贴路径，避免被误读为文本标点。 */
+}
+.oak-ink-dot {
+  width: 5px; /* 圆点固定尺寸，属于状态装饰而非控件。 */
+  height: 5px;
+  background: var(--oak-green);
+  border-radius: 50%; /* 圆形由圆角生成，无需额外图片资源。 */
+}
+.oak-code-toolbar {
+  display: flex; /* 语言选择与复制入口分置工具栏两端。 */
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--oak-line); /* 下边线区分操作区与可滚动代码。 */
+}
+.oak-code-toolbar [role='tab'] {
+  font:
+    11px ui-monospace,
+    monospace; /* 语言标签采用等宽字族，与代码窗口一致。 */
+}
+.oak-copy-button {
+  color: var(--oak-muted); /* 代码复制入口用辅助色，保持工具栏次要层级。 */
+  font-size: 10px; /* 只缩小文字，不缩减基础按钮的点击尺寸。 */
+}
+.oak-code {
+  font:
+    11px/1.95 ui-monospace,
+    'SFMono-Regular',
+    monospace; /* 等宽字族保留缩进和命令续行含义。 */
+  padding: 21px 23px;
+  overflow-x: auto;
+  margin: 0;
+  min-height: 286px; /* 最小高度减少示例切换时的页面跳动。 */
+}
+.oak-code-note {
+  padding: 14px 22px; /* 示例说明与代码内容保持独立内边距。 */
+  border-top: 1px solid var(--oak-line);
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--oak-muted); /* 辅助色说明示例只展示用法，并未执行请求。 */
+}
+.oak-closing {
+  display: flex; /* 结尾文案与行动在桌面横向分布。 */
+  align-items: center;
+  justify-content: space-between;
+  gap: 64px;
+  padding-block: 82px; /* 独立留白将行动入口与页脚版权分开。 */
+}
+.oak-closing > div:first-child {
+  max-width: 690px; /* 结尾文案限宽，为右侧行动区保留空间。 */
+}
+.oak-closing h2 {
+  font-size: 33px; /* 结尾标题不用首屏的大字号，避免重复制造视觉重心。 */
+}
+.oak-closing p:last-child {
+  color: var(--oak-muted); /* 结尾说明用辅助色，与行动按钮区分。 */
+  font-size: 13px;
+  line-height: 1.8;
+  margin-top: 17px; /* 段落上间距连接标题与操作建议。 */
+}
+.oak-closing .oak-actions {
+  flex-shrink: 0; /* 行动区不可被长文案压窄。 */
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0;
+  gap: 20px; /* 按钮和采购入口留独立间距，防止相邻误触。 */
+}
+.oak-footer {
+  background: var(
+    --oak-paper
+  ) !important; /* 官网纸色覆盖公共页脚背景，维持整页连续。 */
+  border-color: var(
+    --oak-line
+  ) !important; /* 边框沿用官网分隔线，避免基础样式形成断层。 */
+}
+@media (min-width: 1450px) {
+  .oak-hero-inner {
+    min-height: 740px; /* 超宽屏增加首屏高度，维持树冠与标题的构图留白。 */
+  }
+}
+@media (max-width: 1050px) {
+  .oak-container {
+    width: calc(100% - 64px); /* 平板减少左右边距，给正文更多可用宽度。 */
+  }
+  .oak-research-sketch {
+    right: -145px; /* 平板插画继续向右出血，优先保留正文。 */
+    width: 570px;
+    top: 80px; /* 插画下移避开页眉和标题起始行。 */
+  }
+  .oak-hero-copy {
+    width: 62%; /* 平板正文略增宽度，减少标题过早折行。 */
+  }
+  .oak-section-heading {
+    gap: 28px; /* 平板收紧标题与导语间距，优先保持可读行宽。 */
+  }
+  .oak-section-heading > p {
+    max-width: 250px; /* 平板导语同步缩窄，为左侧标题腾出空间。 */
+  }
+  .oak-ecosystem-inner {
+    flex-wrap: wrap; /* 平板生态区允许整组换行，入口不会挤出容器。 */
+  }
+  .oak-ecosystem-inner > div {
+    gap: 21px; /* 平板收紧品牌间距，尽量保留自然分组。 */
+  }
+  .oak-scenario-panel,
+  .oak-start-grid,
+  .oak-invoice-panel {
+    gap: 32px; /* 多种双列内容同步收紧间距，保持跨板块节奏。 */
+  }
+  .oak-procurement-support {
+    flex-direction: column; /* 平板即将采购区上下排列，防止联系人挤压开票文字。 */
+  }
+  .oak-contact {
+    flex: 0 0 auto; /* 上下布局取消桌面固定联系人宽度。 */
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    border-left: 1px solid var(--oak-line);
+    border-top: 0; /* 补左框去顶框，避免与开票区产生重复分隔。 */
+  }
+}
+@media (max-width: 760px) {
+  .oak-container {
+    width: calc(100% - 40px); /* 手机边距进一步缩小，正文仍与其他区块对齐。 */
+  }
+  .oak-hero-inner {
+    padding-top: 55px; /* 手机首屏回到内容撑高，释放桌面插画留白。 */
+    padding-bottom: 28px;
+    min-height: 0; /* 清除最小高度，短屏不会出现大块空白。 */
+  }
+  .oak-hero-copy {
+    width: 100%; /* 手机文案占满可用宽度，插画移到后续文档流。 */
+    max-width: 560px; /* 较宽手机仍保留最大行长，避免导语过长。 */
+  }
+  .oak-audience {
+    margin-top: 24px; /* 手机受众标签缩短上间距，节省首屏纵向空间。 */
+  }
+  .oak-home h1 {
+    font-size: clamp(
+      36px,
+      7.5vw,
+      52px
+    ); /* 手机标题按视口缩放，保留上下限避免极端字号。 */
+    letter-spacing: -0.04em; /* 手机字距略放松，保证多行中文可读。 */
+  }
+  .oak-hero-description {
+    font-size: 14px; /* 手机导语略缩字号，与主标题保持层级。 */
+  }
+  .oak-actions {
+    gap: 10px; /* 手机行动入口收紧间距，减少不必要换行。 */
+    margin-top: 26px; /* 仍与导语分开，不牺牲按钮辨识度。 */
+  }
+  .oak-button {
+    padding-inline: 16px; /* 手机减少按钮横向内边距，容纳长翻译。 */
+    font-size: 12px; /* 仅调整文字，不缩减最小点击高度。 */
+  }
+  .oak-research-sketch {
+    position: relative; /* 手机插画恢复正常文档流，不再压在标题旁。 */
+    width: min(510px, 130%);
+    margin: -5px -15% -28px auto;
+    top: auto;
+    right: auto; /* 清除桌面偏移，出血由宽度和负边距控制。 */
+  }
+  .oak-study-caption {
+    right: 12%; /* 手机树种标注向内收，避免被出血裁切。 */
+  }
+  .oak-hero-baseline {
+    position: relative; /* 手机首屏底线回到正常流，随插画自然下移。 */
+    bottom: auto;
+    font-size: 10px;
+    align-items: center; /* 说明和跳转入口垂直居中，允许自然换行。 */
+  }
+  .oak-hero-baseline > span {
+    max-width: 58%; /* 说明限宽，为右侧场景跳转保留位置。 */
+    line-height: 1.7; /* 宽行高使多行小字不挤在一起。 */
+  }
+  .oak-ecosystem-inner {
+    gap: 19px; /* 手机生态区缩减组间距，允许列表与入口分行。 */
+    padding-block: 24px; /* 上下留白维持品牌区独立性。 */
+  }
+  .oak-ecosystem-inner > p {
+    width: 100%; /* 生态标签独占一行，后续品牌不会挤在标签旁。 */
+  }
+  .oak-ecosystem-inner > div {
+    gap: 15px 23px; /* 手机品牌列表分别控制横纵间距。 */
+    font-size: 15px; /* 品牌不跟随辅助标签缩小，保持辨识度。 */
+  }
+  .oak-section {
+    padding-block: 60px; /* 手机统一缩短板块纵向留白，减少无效滚动。 */
+  }
+  .oak-section-heading {
+    flex-direction: column; /* 手机标题和导语上下排列，避免双列过窄。 */
+    align-items: flex-start;
+    gap: 18px;
+    margin-bottom: 28px; /* 底部留白同步缩小，正文仍有明确起点。 */
+  }
+  .oak-section-heading > p {
+    max-width: 100%; /* 手机导语取消桌面限宽，用足容器宽度。 */
+  }
+  .oak-home h2 {
+    font-size: 29px; /* 手机二级标题固定可读字号，避免桌面规则缩得过小。 */
+  }
+  .oak-scenario-tabs {
+    gap: 18px; /* 手机导航收紧标签间距，保持三类入口可触达。 */
+  }
+  .oak-scenario-tabs [role='tab'] {
+    font-size: 12px; /* 手机编号置于名称上方，减少单个标签的横向占用。 */
+    gap: 5px;
+    flex-direction: column;
+    align-items: flex-start; /* 左对齐保持编号和多行名称的对应。 */
+  }
+  .oak-scenario-panel {
+    grid-template-columns: 1fr; /* 手机正文与示例改为单列，避免过窄阅读列。 */
+    gap: 25px;
+    padding-top: 27px; /* 上间距缩短，切换后内容紧随导航。 */
+  }
+  .oak-scenario-copy h3 {
+    font-size: 21px; /* 手机场景标题缩字号，长译文能完整展示。 */
+  }
+  .oak-task-example {
+    padding: 24px; /* 手机示例缩内边距，为引用提供更多行宽。 */
+  }
+  .oak-task-example blockquote {
+    font-size: 18px; /* 手机引用字号略缩，仍与场景正文区分。 */
+    margin-block: 16px 24px; /* 上下留白减小，避免把流程推得过远。 */
+  }
+  .oak-comparison-table {
+    min-width: 590px; /* 手机表格保留最小列宽，通过局部横滚完整阅读。 */
+    font-size: 12px; /* 略缩字号减少行数，不强压所有对比列。 */
+  }
+  .oak-comparison-table th,
+  .oak-comparison-table td {
+    padding: 18px; /* 手机单元格减少内边距，扩大真正文字显示空间。 */
+  }
+  .oak-payment-options {
+    grid-template-columns: 1fr; /* 手机采购方案单列，先按量再定制。 */
+    margin-bottom: 28px; /* 与下方开票区保持紧凑但明确的间隔。 */
+  }
+  .oak-payment-options article,
+  .oak-payment-options article + article {
+    border-left: 0; /* 单列方案去掉桌面中线，避免错误分栏视觉。 */
+    padding: 24px 0; /* 左右归零，让方案正文与板块标题对齐。 */
+  }
+  .oak-invoice-panel {
+    grid-template-columns: 1fr; /* 手机开票介绍和清单上下排列。 */
+    gap: 32px;
+    padding: 27px 24px; /* 横向留白匹配联系人卡片，采购组保持对齐。 */
+  }
+  .oak-invoice-intro h3 {
+    font-size: 26px; /* 手机开票标题缩字号，避免深色面板中的孤字换行。 */
+  }
+  .oak-contact {
+    padding: 26px 24px; /* 手机联系卡片缩内边距，给字段和二维码腾出宽度。 */
+    gap: 24px; /* 仍保留内容间距，换行时不会粘连。 */
+  }
+  .oak-start-section {
+    padding-block: 55px; /* 手机接入区减少上下留白，保持相邻板块节奏。 */
+  }
+  .oak-start-grid {
+    grid-template-columns: 1fr; /* 手机步骤与代码单列，代码不再被压成窄列。 */
+    gap: 36px; /* 上下间距区分操作说明和请求示例。 */
+  }
+  .oak-code {
+    font-size: 10px; /* 手机代码缩字形，减少短命令也需要横滚的情况。 */
+    padding: 17px; /* 缩内边距后仍由代码区承担横向滚动。 */
+  }
+  .oak-closing {
+    flex-direction: column; /* 手机结尾文案和行动上下排列。 */
+    align-items: flex-start;
+    gap: 28px;
+    padding-block: 60px; /* 上下留白与手机正文板块一致。 */
+  }
+  .oak-closing .oak-actions {
+    flex-direction: row; /* 手机行动恢复横排，入口按可用空间自然换行。 */
+    flex-wrap: wrap;
+    align-items: center; /* 按钮与文本链接居中对齐，避免视觉错位。 */
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .oak-hero-copy,
+  .oak-research-sketch {
+    animation: oak-appear 0.7s ease-out both; /* 仅在用户允许动态时播放入场效果，尊重系统减少动态偏好。 */
+  }
+  @keyframes oak-appear {
+    from {
+      opacity: 0; /* 入场从透明开始，减少首屏元素突现感。 */
+      transform: translateY(6px); /* 仅轻微位移，不改变正常文档流占位。 */
+    }
+    to {
+      opacity: 1; /* 结束恢复不透明，保证最终文字完整可读。 */
+      transform: translateY(0); /* 终态回到原位，不残留视觉偏移。 */
+    }
+  }
+}

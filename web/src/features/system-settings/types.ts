@@ -39,6 +39,13 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+/** 二维码上传成功后返回公开预览地址，失败沿用设置接口错误契约。 */
+export type ProcurementQRCodeResponse = UpdateOptionResponse & {
+  data?: {
+    url: string
+  }
+}
+
 export interface PasskeyDomainChange {
   rp_id: string
   legacy_rp_ids: string
@@ -147,6 +154,10 @@ export type SiteSettings = {
   Footer: string
   About: string
   HomePageContent: string
+  // 采购信息独立于微信登录配置，空字段在首页隐藏。
+  ProcurementContactName: string
+  ProcurementWeChatID: string
+  ProcurementWeChatQRCodeURL: string
   ServerAddress: string
   TaskPublicAddress: string
   'general_setting.docs_link': string

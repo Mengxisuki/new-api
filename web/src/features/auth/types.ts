@@ -93,6 +93,9 @@ export interface SystemStatus {
   data?: {
     version?: string
     system_name?: string
+    procurement_contact_name?: string
+    procurement_wechat_id?: string
+    procurement_wechat_qr_url?: string
     logo?: string
     github_oauth?: boolean
     github_client_id?: string
@@ -140,6 +143,10 @@ export interface SystemStatus {
   // Allow direct access to common properties
   version?: string
   system_name?: string
+  // 公开采购联系信息；未配置时不渲染联系人卡片。
+  procurement_contact_name?: string
+  procurement_wechat_id?: string
+  procurement_wechat_qr_url?: string
   logo?: string
   github_oauth?: boolean
   github_client_id?: string

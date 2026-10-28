@@ -66,12 +66,17 @@ func GetStatus(c *gin.Context) {
 		"logo":                        common.Logo,
 		"footer_html":                 common.Footer,
 		"wechat_qrcode":               common.WeChatAccountQRCodeImageURL,
-		"wechat_login":                common.WeChatAuthEnabled,
-		"server_address":              system_setting.ServerAddress,
-		"turnstile_check":             common.TurnstileCheckEnabled,
-		"turnstile_site_key":          common.TurnstileSiteKey,
-		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
-		"quota_per_unit":              common.QuotaPerUnit,
+		// 首页采购联系方式为公开配置，与微信登录二维码保持独立。
+		// 读取沿用外层配置锁；空值由首页隐藏对应字段。
+		"procurement_contact_name":  common.OptionMap["ProcurementContactName"],
+		"procurement_wechat_id":     common.OptionMap["ProcurementWeChatID"],
+		"procurement_wechat_qr_url": common.OptionMap["ProcurementWeChatQRCodeURL"],
+		"wechat_login":              common.WeChatAuthEnabled,
+		"server_address":            system_setting.ServerAddress,
+		"turnstile_check":           common.TurnstileCheckEnabled,
+		"turnstile_site_key":        common.TurnstileSiteKey,
+		"docs_link":                 operation_setting.GetGeneralSetting().DocsLink,
+		"quota_per_unit":            common.QuotaPerUnit,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type
 		"display_in_currency":           operation_setting.IsCurrencyDisplay(),
 		"quota_display_type":            operation_setting.GetQuotaDisplayType(),

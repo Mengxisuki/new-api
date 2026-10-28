@@ -28,6 +28,10 @@ import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
+  // 保存采购信息后刷新公开状态，使首页读取到新配置。
+  'ProcurementContactName',
+  'ProcurementWeChatID',
+  'ProcurementWeChatQRCodeURL',
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',

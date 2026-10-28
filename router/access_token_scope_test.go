@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,6 +27,8 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/setup",
 	"POST /api/setup",
 	"GET /api/status",
+	// 采购二维码是首页公开资源，不进入控制台个人令牌认证。
+	"GET /api/status/procurement-wechat-qr",
 	"GET /api/uptime/status",
 	"GET /api/notice",
 	"GET /api/user-agreement",
@@ -160,6 +164,42 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 	for resource, count := range resources {
 		assert.Equal(t, 1, count, "resource %s appears in more than one catalog entry", resource)
+	}
+}
+
+// 采购图片只读入口公开；上传和删除必须继续经过超级管理员认证。
+// 与通用设置相同，个人访问令牌还须携带 option:write，不能缺省放行。
+// 本测试使用真实路由和中间件，不直接调用控制器绕过权限边界。
+// 进程级配置在结束后完整恢复，因此此测试不与其他配置测试并行。
+func TestProcurementQRCodeRouteAccessContract(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	// 独立空配置保证公开 GET 返回未配置的 404，而非认证失败。
+	common.OptionMapRWMutex.Lock()
+	// 保留整个映射，避免清理时丢失测试前已有的其他设置。
+	previous := common.OptionMap
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	// 在发送请求前注册清理，断言失败也不会留下替换后的状态。
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previous
+		common.OptionMapRWMutex.Unlock()
+	})
+	// 空图片路径仍是公开资源，匿名请求不应被重定向到登录流程。
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/status/procurement-wechat-qr", nil))
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		// 先验证声明完整，再验证真实匿名写请求被拒绝。
+		rule, declared := middleware.AccessTokenRouteRule(method + " /api/option/procurement-wechat-qr")
+		require.True(t, declared, method)
+		assert.Equal(t, "scope", rule.Kind())
+		// 写接口必须要求写范围，不能误用只读权限。
+		assert.Equal(t, "option:write", rule.Scope())
+		response := httptest.NewRecorder()
+		// 匿名写请求应在文件解析或删除之前由现有认证中间件拒绝。
+		engine.ServeHTTP(response, httptest.NewRequest(method, "/api/option/procurement-wechat-qr", nil))
+		assert.Equal(t, http.StatusUnauthorized, response.Code)
 	}
 }
 

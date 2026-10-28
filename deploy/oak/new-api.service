@@ -1,0 +1,33 @@
+# Native deployment for the small Ubuntu server.
+[Unit]
+Description=New API gateway for oak.qingshukeji.top
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+# Secrets stay outside the source checkout, readable only by root.
+EnvironmentFile=/etc/new-api/new-api.env
+User=new-api
+Group=new-api
+WorkingDirectory=/var/lib/new-api
+ExecStart=/opt/new-api/current/new-api --log-dir /var/log/new-api
+# Preserve data and logs across releases and service restarts.
+StateDirectory=new-api
+LogsDirectory=new-api
+UMask=0077
+# Recover automatically while allowing requests to finish on shutdown.
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+LimitNOFILE=65535
+# Run without root privileges or write access to system files.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/new-api /var/log/new-api
+
+[Install]
+# Start the gateway automatically after reboot.
+WantedBy=multi-user.target

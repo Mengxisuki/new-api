@@ -282,6 +282,18 @@ bun run dev -- --port 5173
 | `web/` | Web 控制台，参阅[前端开发约定](./web/AGENTS.md) |
 | [electron/](./electron/README.md) | 桌面封装与打包 |
 
+### Oak 官网与采购联系配置
+
+默认首页位于 `web/src/features/home/components/oak-landing.tsx`，局部主题和响应式样式位于 `web/src/styles/oak-home.css`。后台配置的自定义首页内容仍优先显示。
+
+超级管理员可在「系统设置 → 站点设置 → 系统信息」维护采购联系人、微信号和二维码。联系文字通过页面保存按钮提交；二维码上传或删除立即保存。图片支持 PNG、JPEG、WebP，最大 1 MiB，宽高均不超过 4096 像素；空字段在首页隐藏，此配置与微信登录二维码独立。
+
+首页通过共享 `/api/status` 获取联系信息，图片由 `/api/status/procurement-wechat-qr` 公开读取，后端实现位于 `controller/procurement_contact.go`，存储复用现有系统选项。接手背景见 [项目记忆](./docs/memory/product.md)。
+
+定向验证：在仓库根目录运行 `go test ./controller ./router -run TestProcurementContactOptions -count=1`；在 `web/` 下运行 `bun run test src/features/home/__tests__ src/features/system-settings/general/__tests__/procurement-contact-upload.test.tsx src/features/system-settings/general/__tests__/procurement-contact-schema.test.ts`。
+
+服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
+
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。
 
 <a id="documentation"></a>

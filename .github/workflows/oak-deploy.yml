@@ -1,0 +1,174 @@
+name: Oak 手动构建与发布
+
+# 只接受仓库维护者手动触发，推送代码不会改变线上版本。
+# 默认只构建；明确勾选 deploy 才会进入生产发布任务。
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: '将通过检查的版本发布到 oak.qingshukeji.top'
+        type: boolean
+        required: true
+        default: false
+
+# 构建无需仓库写权限，部署凭据只在独立任务中提供。
+permissions:
+  contents: read
+
+# 同一站点的发布不可重叠，也不能中断正在备份或切换的任务。
+concurrency:
+  group: oak-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 检查并构建 Linux 发布包
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      revision: ${{ steps.version.outputs.revision }}
+    env:
+      GOWORK: 'off'
+
+    steps:
+      # 官方跟踪分支保持纯净；定制构建和发布只允许来自 oak。
+      - name: 检查发布分支
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/oak ]]; then
+            echo '::error::Oak 工作流只允许从 oak 分支运行'
+            exit 1
+          fi
+      # 检出本次手动选择的确切提交，构建与部署使用同一个版本。
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: 确定唯一发布标识
+        id: version
+        shell: bash
+        run: |
+          printf 'release=oak-%s-%s-%s\n' "${GITHUB_SHA:0:12}" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      # 版本与现有 CI、Dockerfile 保持一致，不改变项目工具链。
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+
+      - name: 安装冻结的前端依赖
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: 检查前端类型与测试
+        working-directory: web
+        run: |
+          bun check -b
+          # 限制模拟浏览器测试并行度，避免大型表单测试争抢内存与 CPU。
+          bun run test --maxWorkers=4
+      # 真正生成嵌入资源，不使用后端 CI 的空白首页占位文件。
+      - name: 构建前端
+        working-directory: web
+        env:
+          VITE_REACT_APP_VERSION: ${{ steps.version.outputs.release }}
+        run: bun run build
+
+      - name: 运行后端回归测试
+        run: make test
+      - name: 验证发布脚本
+        run: |
+          bash -n deploy/oak/package-release.sh deploy/oak/ci-deploy.sh
+          python3 -B -m unittest discover -s deploy/oak/tests -v
+
+      # 与当前服务器原生部署一致，保留 PGO 和应用版本链接信息。
+      - name: 构建静态 Linux amd64 二进制
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+          GOEXPERIMENT: greenteagc
+          RELEASE_ID: ${{ steps.version.outputs.release }}
+        run: |
+          mkdir -p build/oak-ci
+          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" \
+            -ldflags "-s -w -X github.com/QuantumNous/new-api/common.Version=$RELEASE_ID" \
+            -o build/oak-ci/new-api .
+
+      - name: 打包并核对发布内容
+        env:
+          RELEASE_ID: ${{ steps.version.outputs.release }}
+          REVISION: ${{ steps.version.outputs.revision }}
+        run: bash deploy/oak/package-release.sh build/oak-ci/new-api "$RELEASE_ID" "$REVISION" build/oak-package
+
+      # 发布包只含程序、许可证和版本信息，不上传 env、数据库或密钥。
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: oak-release
+          path: |
+            build/oak-package/release.tar.gz
+            build/oak-package/release.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: 发布到 wdm
+    if: inputs.deploy
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # 生产私钥放在该环境中，构建任务和外部分叉 PR 均不接收。
+    environment:
+      name: oak-production
+      url: https://oak.qingshukeji.top
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: oak-release
+          path: release
+
+      - name: 预检并发送发布包
+        shell: bash
+        env:
+          OAK_DEPLOY_SSH_KEY: ${{ secrets.OAK_DEPLOY_SSH_KEY }}
+          RELEASE_ID: ${{ needs.build.outputs.release }}
+          REVISION: ${{ needs.build.outputs.revision }}
+        run: |
+          set -euo pipefail
+          # 私钥只写入本次 runner 的临时目录，退出时立即删除。
+          test -n "$OAK_DEPLOY_SSH_KEY"
+          ssh_dir=$(mktemp -d "$RUNNER_TEMP/oak-ssh.XXXXXX")
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          chmod 700 "$ssh_dir"
+          printf '%s\n' "$OAK_DEPLOY_SSH_KEY" > "$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+          unset OAK_DEPLOY_SSH_KEY
+          # 主机公钥已通过现有受信 ssh wdm 连接核对；禁止即时扫描后盲目信任。
+          ssh_options=(-i "$ssh_dir/key" -o IdentitiesOnly=yes -o BatchMode=yes
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile=deploy/oak/known_hosts
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+          (cd release && sha256sum -c release.tar.gz.sha256)
+          digest=$(sha256sum release/release.tar.gz)
+          digest=${digest%% *}
+          # 专用 SSH 公钥受限于服务端固定处理器，不授予交互 Shell。
+          ssh "${ssh_options[@]}" root@172.96.16.93 check
+          ssh "${ssh_options[@]}" root@172.96.16.93 \
+            "deploy $RELEASE_ID $REVISION $digest" < release/release.tar.gz
+
+      - name: 核对公网发布版本
+        env:
+          RELEASE_ID: ${{ needs.build.outputs.release }}
+        run: |
+          curl --fail --silent --show-error --max-time 15 https://oak.qingshukeji.top/api/status > release/status.json
+          python3 -c 'import json,os; d=json.load(open("release/status.json")); assert d.get("success") and d.get("data",{}).get("version")==os.environ["RELEASE_ID"], "公网版本不匹配"'

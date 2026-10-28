@@ -1,0 +1,14 @@
+# Caddy obtains and renews the public TLS certificate automatically.
+oak.qingshukeji.top {
+	# Compress ordinary responses; streaming responses flush immediately below.
+	encode zstd gzip
+
+	# Keep the gateway behind the local reverse proxy.
+	reverse_proxy 127.0.0.1:3000 {
+		# Preserve token streaming without proxy buffering.
+		flush_interval -1
+	}
+
+	# Record proxy diagnostics in the systemd journal.
+	log
+}

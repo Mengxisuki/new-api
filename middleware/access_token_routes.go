@@ -149,6 +149,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PATCH /api/option/request_policy": accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                 accessTokenScopeRule("option:write"),
 	// 采购图片写入沿用设置权限；RootAuth 仍要求超级管理员身份。
+	"POST /api/option/logo":                                      accessTokenScopeRule("option:write"),
+	"DELETE /api/option/logo":                                    accessTokenScopeRule("option:write"),
 	"POST /api/option/procurement-wechat-qr":                     accessTokenScopeRule("option:write"),
 	"DELETE /api/option/procurement-wechat-qr":                   accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),

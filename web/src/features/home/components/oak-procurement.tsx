@@ -16,17 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link } from '@tanstack/react-router'
-import { ArrowRight, ReceiptText } from 'lucide-react'
+import { ReceiptText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 
 import { OakContact } from './oak-contact'
 
-// 采购节组合方案说明、开票准备清单和公开联系卡片。
+// 采购节组合开票准备清单和公开联系卡片，服务选型由 OakServices 展示。
 // 内容说明现有流程，不在官网直接创建订单或调用付款接口。
-// 按量使用与定制方案分别展示，不能把待沟通方案标成已可购买。
+// 四类服务统一通过本节确认采购要求，不在这里重复维护方案介绍。
 // 实际模型价格仍从既有定价页查询，不在此复制价格表。
 // 开票清单只有准备项，不收集税号、邮箱或项目敏感信息。
 // 可见清单与剪贴板内容使用同一数组，避免两份规则逐渐分叉。
@@ -54,7 +53,7 @@ export function OakProcurement() {
       <div /* 章节标题与采购范围说明保持分组 */ className='oak-section-heading'>
         <div>
           <p /* 编号与官网内容顺序对应 */ className='oak-eyebrow'>
-            03 / {t('LAB PROCUREMENT')}
+            04 / {t('LAB PROCUREMENT')}
           </p>
           <h2 /* 可见标题作为采购节可访问名称 */ id='oak-procurement-title'>
             {t('Plan for the lab. Account for the funding.')}
@@ -62,60 +61,9 @@ export function OakProcurement() {
         </div>
         <p>
           {t(
-            'We focus on research-group procurement, with payment options planned around different team sizes and usage patterns.'
+            'For monthly plans, account hosting or recharge cards, discuss your needs with us before purchasing. Lab teams can also confirm procurement and invoice requirements here.'
           )}
         </p>
-      </div>
-      <div
-        /* 两类方案在宽屏比较，窄屏纵向排列 */ className='oak-payment-options'
-      >
-        <article /* 按量方案只指向现有模型价格目录 */>
-          <div className='oak-plan-heading'>
-            <h3 /* 方案标题与实际开通状态分开表达 */>{t('Pay as you go')}</h3>
-            <span /* 现有可用能力与待沟通方案状态区分 */ className='oak-status'>
-              {t('Available now')}
-            </span>
-          </div>
-          <p>
-            {t(
-              'Top up your platform balance and pay for actual model usage. Suitable for pilot projects, variable workloads and teams that want to understand costs before scaling.'
-            )}
-          </p>
-          <Link
-            /* 价格查询复用当前应用的定价路由 */ className='oak-text-link'
-            to='/pricing'
-          >
-            {t('Explore models and pricing')}
-            <ArrowRight
-              /* 装饰图标不改变链接的朗读名称 */ size={14}
-              aria-hidden='true'
-            />
-          </Link>
-        </article>
-        <article>
-          <div className='oak-plan-heading'>
-            <h3 /* 保留需要另行沟通的采购方案范围 */>
-              {t('Subscriptions and other plans')}
-            </h3>
-            <span
-              /* 定制状态不能被误读为可立即购买 */ className='oak-status oak-status-contact'
-            >
-              {t('Contact for a tailored plan')}
-            </span>
-          </div>
-          <p>
-            {t(
-              'Pay-as-you-go is available now. For subscriptions and other procurement arrangements, contact us to discuss a tailored plan based on your team size, expected usage and institutional requirements.'
-            )}
-          </p>
-          <a /* 联系入口使用原生锚点，不触发订单请求 */
-            className='oak-text-link oak-plan-contact-link' // 定制方案引导至联系卡片
-            href='#oak-procurement-contact' // 联系锚点由 OakContact 提供
-          >
-            {t('Discuss a tailored plan')}
-            <ArrowRight size={14} aria-hidden='true' />
-          </a>
-        </article>
       </div>
       <div
         /* 开票与联系方式共享断点重排容器 */ className='oak-procurement-support'

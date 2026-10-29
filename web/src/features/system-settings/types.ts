@@ -39,8 +39,8 @@ export type UpdateOptionResponse = {
   message: string
 }
 
-/** 二维码上传成功后返回公开预览地址，失败沿用设置接口错误契约。 */
-export type ProcurementQRCodeResponse = UpdateOptionResponse & {
+/** 站点图片上传成功返回预览地址；徽标与采购二维码使用相同响应。 */
+export type SettingsImageResponse = UpdateOptionResponse & {
   data?: {
     url: string
   }

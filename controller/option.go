@@ -89,7 +89,7 @@ func GetOptions(c *gin.Context) {
 	for k, v := range common.OptionMap {
 		// 图片编码通过专用图片接口读取，不放进通用配置 JSON。
 		// 保留当前分支既有隐藏键，避免影响其他设置。
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == procurementQRCodeDataOption {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == procurementQRCodeDataOption || k == logoImageDataOption {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -202,6 +202,12 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	// 徽标由图片专用入口管理，普通 JSON 设置不能绕过文件内容校验。
+	// 旧地址仍可读取和替换，但不能再通过配置接口写入任意 URL。
+	if option.Key == "Logo" || option.Key == logoImageDataOption {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
 	}
 	switch option.Key {
 	case "QuotaForInviter", "QuotaForInvitee":

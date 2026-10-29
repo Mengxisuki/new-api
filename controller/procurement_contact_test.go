@@ -39,6 +39,7 @@ func TestProcurementContactOptions(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalRedis := common.RedisEnabled
+	originalLogo := common.Logo
 	// 禁用外部 Redis，使配置和审计路径只使用测试内存数据库。
 	common.RedisEnabled = false
 	model.LOG_DB = db
@@ -55,6 +56,7 @@ func TestProcurementContactOptions(t *testing.T) {
 		model.DB = originalDB
 		model.LOG_DB = originalLogDB
 		common.RedisEnabled = originalRedis
+		common.Logo = originalLogo
 		common.OptionMapRWMutex.Lock()
 		common.OptionMap = originalOptions
 		common.OptionMapRWMutex.Unlock()
@@ -297,4 +299,92 @@ func TestProcurementContactOptions(t *testing.T) {
 			common.OptionMapRWMutex.RUnlock()
 		})
 	}
+	// 徽标和采购二维码共用图片约束，业务配置必须互相独立。
+	t.Run("logo upload, replace, reject and remove", func(t *testing.T) {
+		var imageBody bytes.Buffer
+		require.NoError(t, png.Encode(&imageBody, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+		// 不同像素尺寸产生不同图片，验证替换会更新公开缓存版本。
+		var replacement bytes.Buffer
+		require.NoError(t, png.Encode(&replacement, image.NewRGBA(image.Rect(0, 0, 3, 2))))
+		// 用真实 multipart 输入依次覆盖新图、坏图和替换图片。
+		for _, data := range [][]byte{imageBody.Bytes(), []byte("not an image"), replacement.Bytes()} {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			part, err := writer.CreateFormFile("file", "logo.png")
+			require.NoError(t, err)
+			_, err = part.Write(data)
+			require.NoError(t, err)
+			require.NoError(t, writer.Close())
+			previous := common.Logo
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set("role", common.RoleRootUser)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/option/logo", &body)
+			ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+			UploadLogo(ctx)
+			var response struct {
+				Success bool `json:"success"`
+				Data    struct {
+					URL string `json:"url"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			if bytes.Equal(data, []byte("not an image")) {
+				// 上传失败必须保留最后一次已保存徽标，不能伪造成功。
+				assert.False(t, response.Success)
+				assert.Equal(t, previous, common.Logo)
+				continue
+			}
+			require.True(t, response.Success, recorder.Body.String())
+			assert.Contains(t, response.Data.URL, "/api/status/logo?v=")
+			assert.Equal(t, response.Data.URL, common.Logo)
+			if strings.HasPrefix(previous, "/api/status/logo?v=") {
+				assert.NotEqual(t, previous, common.Logo)
+			}
+			// 公开状态与持久化配置都使用上传结果，而非本地临时预览。
+			var stored model.Option
+			require.NoError(t, db.First(&stored, model.Option{Key: "Logo"}).Error)
+			assert.Equal(t, common.Logo, stored.Value)
+			imageRecorder := httptest.NewRecorder()
+			imageCtx, _ := gin.CreateTestContext(imageRecorder)
+			imageCtx.Request = httptest.NewRequest(http.MethodGet, response.Data.URL, nil)
+			GetLogo(imageCtx)
+			assert.Equal(t, http.StatusOK, imageRecorder.Code)
+			assert.Equal(t, data, imageRecorder.Body.Bytes())
+			assert.Equal(t, "image/png", imageRecorder.Header().Get("Content-Type"))
+			assert.Equal(t, "nosniff", imageRecorder.Header().Get("X-Content-Type-Options"))
+		}
+		// 内部图片编码不能通过通用配置列表暴露或被普通 JSON 写入绕过校验。
+		optionsRecorder := httptest.NewRecorder()
+		optionsCtx, _ := gin.CreateTestContext(optionsRecorder)
+		GetOptions(optionsCtx)
+		assert.NotContains(t, optionsRecorder.Body.String(), "LogoImageData")
+		for _, key := range []string{"Logo", "LogoImageData"} {
+			payload, err := common.Marshal(map[string]string{"key": key, "value": "https://example.org/new.png"})
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPut, "/api/option/", bytes.NewReader(payload))
+			UpdateOption(ctx)
+			var response struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.False(t, response.Success)
+		}
+		// 删除只清空徽标，不修改采购信息；公开旧地址随后返回未配置。
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Set("role", common.RoleRootUser)
+		ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/option/logo", nil)
+		DeleteLogo(ctx)
+		assert.Empty(t, common.Logo)
+		assert.Equal(t, "采购支持", common.OptionMap["ProcurementContactName"])
+		missingRecorder := httptest.NewRecorder()
+		missingCtx, _ := gin.CreateTestContext(missingRecorder)
+		missingCtx.Request = httptest.NewRequest(http.MethodGet, "/api/status/logo", nil)
+		GetLogo(missingCtx)
+		assert.Equal(t, http.StatusNotFound, missingCtx.Writer.Status())
+	})
+
 }

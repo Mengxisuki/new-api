@@ -472,7 +472,7 @@ For commercial licensing, please contact support@quantumnous.com
   color: var(--oak-muted); /* 小字仍用宽行高，保证长译文可读。 */
 }
 .oak-payment-options {
-  display: grid; /* 采购方案在桌面并列，区分现有与定制方案。 */
+  display: grid; /* 四类服务在桌面按两列排列，手机沿用下方单列断点。 */
   grid-template-columns: 1fr 1fr;
   margin-bottom: 40px; /* 与下方开票支持保留独立间距。 */
 }
@@ -490,21 +490,30 @@ For commercial licensing, please contact support@quantumnous.com
   flex-wrap: wrap;
   gap: 14px; /* 徽标允许换行，长语言不会挤压方案标题。 */
 }
+/* 服务沿用采购区双列排版；第二行恢复相同的左右分栏，手机由原断点收为单列。 */
+.oak-services .oak-payment-options {
+  margin-bottom: 0; /* 服务区无附属开票面板，不保留采购专用的尾部间距。 */
+}
+.oak-services article:nth-child(odd) {
+  border-left: 0; /* 每行左列保持开放边缘，避免第三项继承右列分隔线。 */
+  padding-inline: 0 36px;
+}
+.oak-services article:nth-child(even) {
+  padding-inline: 36px 0; /* 每行右列与原采购布局共用留白节奏。 */
+}
+.oak-services article > .oak-service-label {
+  color: var(--oak-green); /* 使用场景标签沿用品牌色，兼容现有暗色变量。 */
+  font-size: 11px;
+  margin-top: 0; /* 标签作为每项起点，与模型名称分层阅读。 */
+}
+.oak-services article > .oak-service-detail {
+  font-size: 12px; /* 计费边界比主说明低一级，保持完整可读。 */
+  padding-left: 13px;
+  border-left: 2px solid var(--oak-line); /* 与已有场景说明使用相同的细线语汇。 */
+}
 .oak-plan-heading h3 {
   font-size: 20px; /* 方案标题低于板块主标题层级。 */
   font-weight: 500; /* 中等字重保持官网文字节奏。 */
-}
-.oak-status {
-  font-size: 10px; /* 状态以小徽标呈现，区别按钮与链接。 */
-  padding: 4px 8px;
-  border-radius: 2px;
-  background: var(--oak-panel);
-  color: var(--oak-green); /* 品牌绿将可用状态纳入统一主题。 */
-}
-.oak-status-contact {
-  background: transparent; /* 定制方案不使用实底，与立即可用方案区分。 */
-  border: 1px solid var(--oak-line);
-  color: var(--oak-green); /* 用边框和文字提示状态，不使用警告色。 */
 }
 .oak-payment-options article > p {
   margin: 17px 0; /* 方案说明连接标题与详情入口。 */
@@ -933,11 +942,12 @@ For commercial licensing, please contact support@quantumnous.com
     padding: 18px; /* 手机单元格减少内边距，扩大真正文字显示空间。 */
   }
   .oak-payment-options {
-    grid-template-columns: 1fr; /* 手机采购方案单列，先按量再定制。 */
+    grid-template-columns: 1fr; /* 手机服务改为单列，维持量贩、包月、挂靠、代充值的阅读顺序。 */
     margin-bottom: 28px; /* 与下方开票区保持紧凑但明确的间隔。 */
   }
   .oak-payment-options article,
-  .oak-payment-options article + article {
+  .oak-payment-options article + article,
+  .oak-services article:nth-child(n) {
     border-left: 0; /* 单列方案去掉桌面中线，避免错误分栏视觉。 */
     padding: 24px 0; /* 左右归零，让方案正文与板块标题对齐。 */
   }

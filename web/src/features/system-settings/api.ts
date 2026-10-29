@@ -22,7 +22,7 @@ import type {
   ConfirmPaymentComplianceResponse,
   FetchUpstreamRatiosRequest,
   LogCleanupTask,
-  ProcurementQRCodeResponse,
+  SettingsImageResponse,
   SystemOptionsResponse,
   SystemTaskListResponse,
   SystemTaskFilters,
@@ -45,29 +45,32 @@ export async function updateSystemOption(request: UpdateOptionRequest) {
   return res.data
 }
 
-// 上传采购图片并立即持久化，独立于整页设置的保存按钮。
+// 上传设置图片并立即持久化，独立于整页设置的保存按钮。
 // 使用浏览器生成 multipart 边界，不手动指定 Content-Type。
 // 统一 API 实例继续提供认证、错误来源与请求策略。
 // 此处只传输响应，业务成功状态由表单入口统一判断。
 // 成功响应只公开图片地址，不向前端返回内部图片编码。
-export async function uploadProcurementQRCode(file: File) {
+export async function uploadSettingsImage(
+  image: 'logo' | 'procurement-wechat-qr',
+  file: File
+) {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await api.post<ProcurementQRCodeResponse>(
-    '/api/option/procurement-wechat-qr',
+  const res = await api.post<SettingsImageResponse>(
+    `/api/option/${image}`,
     formData
   )
   return res.data
 }
 
-// 删除服务端采购图片及公开地址，保留联系人和微信号。
+// 删除服务端设置图片及公开地址，保留其他设置。
 // 仍使用超级管理员设置接口，匿名首页只有图片读取权限。
 // 返回真实业务响应，由调用方在成功后清空本地预览。
 // 网络拒绝向上传播，不能伪装成删除成功。
-export async function deleteProcurementQRCode() {
-  const res = await api.delete<UpdateOptionResponse>(
-    '/api/option/procurement-wechat-qr'
-  )
+export async function deleteSettingsImage(
+  image: 'logo' | 'procurement-wechat-qr'
+) {
+  const res = await api.delete<UpdateOptionResponse>(`/api/option/${image}`)
   return res.data
 }
 

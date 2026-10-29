@@ -28,6 +28,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/status", controller.GetStatus)
 		// 首页公开二维码；修改入口仍位于下方超级管理员路由组。
 		apiRouter.GET("/status/procurement-wechat-qr", controller.GetProcurementQRCode)
+		apiRouter.GET("/status/logo", controller.GetLogo)
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
@@ -220,6 +221,8 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.PUT("/", controller.UpdateOption)
 			// 采购图片复用 RootAuth；匿名访客只有读取权限。
 			optionRoute.POST("/procurement-wechat-qr", controller.UploadProcurementQRCode)
+			optionRoute.POST("/logo", controller.UploadLogo)
+			optionRoute.DELETE("/logo", controller.DeleteLogo)
 			optionRoute.DELETE("/procurement-wechat-qr", controller.DeleteProcurementQRCode)
 			optionRoute.PUT("/passkey/domains", controller.UpdatePasskeyDomains)
 			optionRoute.GET("/model_pricing", controller.GetModelPricingConfig)

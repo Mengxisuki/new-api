@@ -29,6 +29,8 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/status",
 	// 采购二维码是首页公开资源，不进入控制台个人令牌认证。
 	"GET /api/status/procurement-wechat-qr",
+	// 站点徽标同属公开资源，上传和删除仍走设置写权限。
+	"GET /api/status/logo",
 	"GET /api/uptime/status",
 	"GET /api/notice",
 	"GET /api/user-agreement",
@@ -167,7 +169,7 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 }
 
-// 采购图片只读入口公开；上传和删除必须继续经过超级管理员认证。
+// 采购图片与站点徽标只读入口公开；上传和删除继续经过超级管理员认证。
 // 与通用设置相同，个人访问令牌还须携带 option:write，不能缺省放行。
 // 本测试使用真实路由和中间件，不直接调用控制器绕过权限边界。
 // 进程级配置在结束后完整恢复，因此此测试不与其他配置测试并行。
@@ -185,21 +187,37 @@ func TestProcurementQRCodeRouteAccessContract(t *testing.T) {
 		common.OptionMap = previous
 		common.OptionMapRWMutex.Unlock()
 	})
-	// 空图片路径仍是公开资源，匿名请求不应被重定向到登录流程。
-	response := httptest.NewRecorder()
-	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/status/procurement-wechat-qr", nil))
-	assert.Equal(t, http.StatusNotFound, response.Code)
-	for _, method := range []string{http.MethodPost, http.MethodDelete} {
-		// 先验证声明完整，再验证真实匿名写请求被拒绝。
-		rule, declared := middleware.AccessTokenRouteRule(method + " /api/option/procurement-wechat-qr")
-		require.True(t, declared, method)
-		assert.Equal(t, "scope", rule.Kind())
-		// 写接口必须要求写范围，不能误用只读权限。
-		assert.Equal(t, "option:write", rule.Scope())
-		response := httptest.NewRecorder()
-		// 匿名写请求应在文件解析或删除之前由现有认证中间件拒绝。
-		engine.ServeHTTP(response, httptest.NewRequest(method, "/api/option/procurement-wechat-qr", nil))
-		assert.Equal(t, http.StatusUnauthorized, response.Code)
+	// 两种图片共享权限边界，参数化路径避免复制整份全局配置 fixture。
+	for _, imagePath := range []string{"procurement-wechat-qr", "logo"} {
+		t.Run(imagePath, func(t *testing.T) {
+			publicPath := "/api/status/" + imagePath
+			// 先确认路由真实存在，避免未注册路由的默认 404 伪装成公开读取成功。
+			registered := false
+			for _, route := range engine.Routes() {
+				if route.Method == http.MethodGet && route.Path == publicPath {
+					registered = true
+					break
+				}
+			}
+			require.True(t, registered, publicPath)
+			// 空图片路径仍是公开资源，匿名请求不应被重定向到登录流程。
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, publicPath, nil))
+			assert.Equal(t, http.StatusNotFound, response.Code)
+			for _, method := range []string{http.MethodPost, http.MethodDelete} {
+				writePath := "/api/option/" + imagePath
+				// 先验证声明完整，再验证真实匿名写请求被拒绝。
+				rule, declared := middleware.AccessTokenRouteRule(method + " " + writePath)
+				require.True(t, declared, method)
+				assert.Equal(t, "scope", rule.Kind())
+				// 写接口必须要求写范围，不能误用只读权限。
+				assert.Equal(t, "option:write", rule.Scope())
+				response := httptest.NewRecorder()
+				// 匿名写请求应在文件解析或删除之前由现有认证中间件拒绝。
+				engine.ServeHTTP(response, httptest.NewRequest(method, writePath, nil))
+				assert.Equal(t, http.StatusUnauthorized, response.Code)
+			}
+		})
 	}
 }
 

@@ -23,11 +23,13 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { ThemeProvider } from '@/context/theme-provider'
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
@@ -107,12 +109,13 @@ beforeEach(() => {
   vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true } })
 })
 
-afterEach(() => {
+afterEach(async () => {
   // 完整恢复全局状态，保证登录态测试不会影响后续匿名场景。
   clients.splice(0).forEach((client) => client.clear())
   useAuthStore.getState().auth.reset('complete')
   localStorage.clear()
   document.documentElement.classList.remove('light', 'dark')
+  await i18next.changeLanguage('en')
 })
 
 test('匿名访问默认首页时展示Oak官网且开始入口指向注册', async () => {
@@ -141,6 +144,74 @@ test('已登录访问首页时行动入口指向控制台', async () => {
   expect(
     screen.queryByRole('button', { name: 'Get Started' })
   ).not.toBeInTheDocument()
+})
+
+// 从真实入口核对服务分组，防止说明组件未接入首页。
+// 价格目录与采购说明是现有入口，不应生成尚未实现的购买路由。
+// 周额度示例必须保留示例语义，避免被误读为现售套餐价格。
+// 外部账户充值与平台余额分开说明，不能导向钱包兑换入口。
+test('首页展示四类服务并将咨询入口定位到实际存在的采购说明', async () => {
+  await renderHome()
+  const services = screen.getByRole('region', {
+    name: 'Four ways to access the models you need.',
+  })
+  expect(within(services).getAllByRole('article')).toHaveLength(4)
+  for (const name of [
+    'Token usage',
+    'Monthly plans',
+    'Account hosting',
+    'Account top-ups',
+  ]) {
+    expect(
+      within(services).getByRole('heading', { name, level: 3 })
+    ).toBeVisible()
+  }
+  expect(
+    within(services).getByRole('link', { name: 'Explore models and pricing' })
+  ).toHaveAttribute('href', '/pricing')
+  const consultations = within(services).getAllByRole('link', {
+    name: /Discuss|Ask about/,
+  })
+  expect(consultations).toHaveLength(3)
+  for (const link of consultations) {
+    expect(link).toHaveAttribute('href', '#oak-procurement')
+    expect(document.querySelector('#oak-procurement')).toBeVisible()
+  }
+  expect(services).toHaveTextContent(
+    'Example allowance: CNY 150 per week. Actual limits and renewal rules depend on your plan.'
+  )
+  expect(services).toHaveTextContent(
+    'The credit goes to your provider account, separately from your Oak balance. Check the supported service and redemption instructions before buying.'
+  )
+  // 阅读服务与导航链接不应触发下单或模型请求。
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+// 加载真实中文词条，覆盖上线后的展示而不是模拟 t() 返回值。
+// 语言切换应即时更新服务说明，不能把翻译冻结在模块常量中。
+// 示例额度和到账账户是本次说明的关键边界，按可见文案核对。
+test('首页切换为中文时展示四类服务并明确额度示例与充值账户', async () => {
+  await renderHome()
+  i18next.addResourceBundle('zhCN', 'translation', zh.translation)
+  await act(async () => {
+    await i18next.changeLanguage('zhCN')
+  })
+  const services = screen.getByRole('region', {
+    name: '四种方式，让模型为你所用。',
+  })
+  // 四种标题属于同一选型章节，不是四档订阅套餐。
+  for (const name of ['量贩 Token', '包月订阅', '账号挂靠', '代充值']) {
+    expect(
+      within(services).getByRole('heading', { name, level: 3 })
+    ).toBeVisible()
+  }
+  expect(services).toHaveTextContent('额度示例：每周 150 元。')
+  expect(services).toHaveTextContent('与 Oak 平台余额独立。')
+  // 首屏次按钮应能直接定位新增的服务选型区。
+  expect(screen.getByRole('button', { name: '了解服务方式' })).toHaveAttribute(
+    'href',
+    '#oak-services'
+  )
 })
 
 test('切换科研场景和代码语言后显示对应内容并复制当前示例', async () => {

@@ -286,11 +286,15 @@ bun run dev -- --port 5173
 
 默认首页位于 `web/src/features/home/components/oak-landing.tsx`，局部主题和响应式样式位于 `web/src/styles/oak-home.css`。后台配置的自定义首页内容仍优先显示。
 
+服务选型区位于 `web/src/features/home/components/oak-services.tsx`，依次介绍量贩 Token、包月订阅、账号挂靠与卡密代充值。量贩入口沿用 `/pricing`，其他服务定位到采购咨询区；每周 150 元仅为额度示例，不代表已配置的套餐或月费。挂靠及外部账户充值的说明不等于已实现自助开通，代充值卡密也不等同于平台余额兑换码。
+
 超级管理员可在「系统设置 → 站点设置 → 系统信息」维护采购联系人、微信号和二维码。联系文字通过页面保存按钮提交；二维码上传或删除立即保存。图片支持 PNG、JPEG、WebP，最大 1 MiB，宽高均不超过 4096 像素；空字段在首页隐藏，此配置与微信登录二维码独立。
 
-首页通过共享 `/api/status` 获取联系信息，图片由 `/api/status/procurement-wechat-qr` 公开读取，后端实现位于 `controller/procurement_contact.go`，存储复用现有系统选项。接手背景见 [项目记忆](./docs/memory/product.md)。
+“徽标图片”也使用上传、预览、替换和删除控件，不再填写图片 URL，限制与采购二维码相同；上传和删除立即保存，普通设置保存不会回写旧图片。徽标写入接口为 `POST/DELETE /api/option/logo`（仅超级管理员），公开图片通过 `GET /api/status/logo` 读取。现有页头、页脚及 favicon 继续从公开状态获取徽标；删除后恢复默认展示。
 
-定向验证：在仓库根目录运行 `go test ./controller ./router -run TestProcurementContactOptions -count=1`；在 `web/` 下运行 `bun run test src/features/home/__tests__ src/features/system-settings/general/__tests__/procurement-contact-upload.test.tsx src/features/system-settings/general/__tests__/procurement-contact-schema.test.ts`。
+首页通过共享 `/api/status` 获取联系信息，图片由 `/api/status/procurement-wechat-qr` 公开读取，后端资源入口位于 `controller/procurement_contact.go`、`controller/logo.go`，共用 `controller/option_image.go` 校验与图片存储，复用现有系统选项。接手背景见 [项目记忆](./docs/memory/product.md)。
+
+定向验证：在仓库根目录运行 `go test ./controller ./router -run TestProcurementContactOptions -count=1`；在 `web/` 下运行 `bun run test src/features/home/__tests__ src/features/system-settings/general/__tests__/procurement-contact-upload.test.tsx src/features/system-settings/general/__tests__/procurement-contact-schema.test.ts src/features/system-settings/general/__tests__/logo-upload.test.tsx`。
 
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 

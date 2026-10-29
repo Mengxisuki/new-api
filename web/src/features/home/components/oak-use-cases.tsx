@@ -107,7 +107,7 @@ export function OakUseCases() {
       <div /* 标题与用途说明构成同一区域头部 */ className='oak-section-heading'>
         <div>
           <p /* 编号表示默认官网第一内容节 */ className='oak-eyebrow'>
-            01 / {t('RESEARCH IN PRACTICE')}
+            02 / {t('RESEARCH IN PRACTICE')}
           </p>
           <h2 /* 可见标题用于此节可访问名称 */ id='oak-use-cases-title'>
             {t('From coding assistance to sustained research work.')}

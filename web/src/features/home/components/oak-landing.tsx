@@ -28,6 +28,7 @@ import { OakComparison } from './oak-comparison'
 import { OakProcurement } from './oak-procurement'
 import { OakQuickStart } from './oak-quick-start'
 import { OakResearchSketch } from './oak-research-sketch'
+import { OakServices } from './oak-services'
 import { OakUseCases } from './oak-use-cases'
 
 import '@/styles/oak-home.css'
@@ -53,12 +54,12 @@ const modelFamilies = [
 // 移动端布局由 oak-home.css 接管，不在渲染中判断屏幕宽度。
 // 模型品牌仅表示兼容生态，实时可用模型以定价目录为准。
 // 所有非品牌文案订阅当前语言，切换语言后重新渲染。
-// 官网保持旧分支的内容顺序，以恢复既有页面而非重新设计。
+// 服务选型放在科研场景前，先解释四种使用方式，再说明具体用途。
 // 章节组件各自维护数据和交互；此处只决定页面组合关系。
 // 不请求模型服务，也不在营销页面生成账户密钥。
 // 首屏和收尾提供相同的账户入口，修改时应保持目标一致。
 // 按钮通过 Link 的 render 插槽组合，保留客户端路由导航。
-// 采购次按钮使用页内锚点，访客无需登录即可阅读采购说明。
+// 服务次按钮使用页内锚点，访客无需登录即可比较使用方式。
 // 开票提示定位到采购节内部，目标必须在同一默认页面存在。
 // 模型目录链接继续使用现有定价页，不维护另一份价格列表。
 // 装饰树图是本地 SVG，页面无新增外部图片加载依赖。
@@ -103,7 +104,7 @@ export function OakLanding(props: { isAuthenticated: boolean }) {
                   /* 描述模型接入与团队管理的范围 */ className='oak-hero-description'
                 >
                   {t(
-                    'Connect Claude Code, Codex and research scripts to a shared model gateway. Manage project quotas and usage, support sustained coding work, and simplify procurement for your lab.'
+                    'Connect your coding tools and research scripts to the models you need. Choose token billing, a monthly plan, account hosting or recharge cards to suit your workflow.'
                   )}
                 </p>
                 <div
@@ -125,11 +126,11 @@ export function OakLanding(props: { isAuthenticated: boolean }) {
                     />
                   </Button>
                   <Button
-                    variant='outline' // 采购次动作保留共享按钮的轮廓变体
+                    variant='outline' // 服务次动作保留共享按钮的轮廓变体
                     className='oak-button oak-button-secondary' // 次动作与主转化维持视觉层级
-                    render={<a href='#oak-procurement' />}
+                    render={<a href='#oak-services' />}
                   >
-                    {t('Lab procurement and invoicing')}
+                    {t('Explore our services')}
                   </Button>
                 </div>
                 <a
@@ -193,6 +194,7 @@ export function OakLanding(props: { isAuthenticated: boolean }) {
               </Link>
             </div>
           </section>
+          <OakServices /* 四类服务选型先于具体科研场景展示 */ />
           <OakUseCases /* 使用场景先说明科研任务与客户端边界 */ />
           <OakComparison /* 比较区解释共享网关的实际差异 */ />
           <OakProcurement /* 采购说明包含开票清单与可配置联系信息 */ />

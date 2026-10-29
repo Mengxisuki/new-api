@@ -34,7 +34,7 @@ import type { ProcurementContactValues } from '../procurement-contact-schema'
 // 该表单将公开联系人二维码与登录微信二维码分离。
 // 图片上传和删除由独立接口立即保存，不能只更新浏览器预览。
 // 因此测试保留真实 API 封装，仅替换共享 HTTP 客户端请求。
-// 不能模拟 uploadProcurementQRCode 后再宣称载荷接线正确。
+// 不能模拟 uploadSettingsImage 后再宣称载荷接线正确。
 // POST 的 FormData 必须包含约定的 file 字段。
 // 文件对象来自真实用户输入，不能在请求层替换成任意字符串。
 // 成功结果中的 URL 是服务端返回值，不由前端猜测生成。

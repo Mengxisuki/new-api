@@ -76,7 +76,7 @@ export function OakComparison() {
         >
           <div>
             <p /* 章节编号与完整页面顺序对应 */ className='oak-eyebrow'>
-              02 / {t('WHY A SHARED GATEWAY')}
+              03 / {t('WHY A SHARED GATEWAY')}
             </p>
             <h2 /* 可见标题同时作为区域名称 */ id='oak-comparison-title'>
               {t('What changes compared with going direct?')}

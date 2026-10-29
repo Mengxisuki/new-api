@@ -76,7 +76,7 @@ export function OakQuickStart(props: { isAuthenticated: boolean }) {
       >
         <div /* 操作说明与示例面板的职责分离 */ className='oak-start-copy'>
           <p /* 章节顺序与官网前三节衔接 */ className='oak-eyebrow'>
-            04 / {t('INTEGRATION')}
+            05 / {t('INTEGRATION')}
           </p>
           <h2 /* 标题同时命名此接入区域 */ id='oak-start-title'>
             {t('Connect your existing tools.')}

@@ -48,9 +48,11 @@ ssh wdm 'umask 077; runuser -u postgres -- pg_dump -Fc new_api > /root/new_api.d
 
 更新时在本机重新构建前后端，保留 LICENSE、NOTICE 和 THIRD-PARTY-LICENSES.md，上传至新的 `/opt/new-api/releases/<version>/`。先备份数据库、`/etc/new-api/new-api.env` 和 `/var/lib/new-api/`，再切换 `current` 符号链接并重启。不要覆盖持久密钥；新版本启动可能迁移数据库，不能仅凭切换旧二进制保证回滚。
 
-## GitHub Actions 手动发布
+## GitHub Actions 自动发布
 
-仓库的 `.github/workflows/oak-deploy.yml` 沿用以上原生部署，不安装服务器构建工具或自托管 Runner。只支持 `workflow_dispatch`：不勾选 `deploy` 时仅检查并生成发布包，勾选后才连接生产服务器。代码推送不会触发上线。
+仓库的 `.github/workflows/oak-deploy.yml` 沿用以上原生部署，不安装服务器构建工具或自托管 Runner。推送到 `oak` 后自动执行测试、构建、备份和发布；测试或构建失败不会执行部署。`upstream-main`、`main` 和标签推送不触发本工作流。
+
+仍保留 `workflow_dispatch` 手动入口：不勾选 `deploy` 时仅检查并生成发布包，勾选后才连接生产服务器。自动推送事件不需要也没有此复选框。
 
 构建在 GitHub 托管 Runner 上完成：冻结依赖安装、前端类型检查及测试、实际前端构建、后端回归测试、静态 Linux amd64 构建。`package-release.sh` 只打包二进制、LICENSE、NOTICE、THIRD-PARTY-LICENSES.md、VERSION 和 REVISION；服务器环境文件、数据库、管理员信息和私钥均不上传到构建产物。
 
@@ -76,9 +78,11 @@ ssh wdm 'umask 077; runuser -u postgres -- pg_dump -Fc new_api > /root/new_api.d
 4. 在 GitHub 仓库创建环境 `oak-production`，将专用私钥保存为该环境的 `OAK_DEPLOY_SSH_KEY` secret。不要把私钥放入聊天、仓库、workflow 明文或普通变量；通过浏览器录入新凭据时由用户接手完成。
 5. `known_hosts` 的 Ed25519 公钥已通过现有受信 `ssh wdm` 连接读取，并核对指纹 `SHA256:PEA/ySV7KRfOg+4Gkq2AeB1wGeVvvXucaGPt7rOa6bg`。如服务器重装导致密钥变化，先从可信管理通道核验新指纹再更新该文件，不能关闭主机校验或扫描后直接信任。
 
-### 手动发布流程
+### 自动与手动发布流程
 
-进入 GitHub Actions →「Oak 手动构建与发布」→「Run workflow」，选择 `oak` 分支。工作流和生产环境均限定为该分支。先不勾选发布验证完整构建，再明确勾选 `deploy` 发布到现有域名。
+日常只需 `git push origin oak`：GitHub 会自动运行「Oak 自动构建与发布」，检查和构建全部通过后才进入服务器部署任务。每次推送都触发，包括文档提交；同一站点的任务串行运行，正在部署的任务不会被新推送中断。
+
+需要仅构建或手动重发时，进入 GitHub Actions →「Oak 自动构建与发布」→「Run workflow」，选择 `oak` 分支。手动运行不勾选 `deploy` 只构建，勾选则发布。工作流和生产环境均限定为该分支。
 
 发布处理器在 `flock` 锁内校验包摘要、固定文件清单、ELF 架构与二进制版本；禁止目录、软/硬链接、路径穿越及额外文件。预检完成后才停止旧应用，将 PostgreSQL 归档、环境配置和运行数据保存到 root 专用备份目录，再原子切换 `current` 并启动。数据库与 Caddy、Redis 配置保持原样，发布时应用会有短暂停机。
 
@@ -108,7 +112,7 @@ ssh wdm 'bash -s -- check' < deploy/oak/ci-deploy.sh
 | 分支 | 职责 |
 | --- | --- |
 | `upstream-main` | 纯官方源码，跟踪 `upstream/main`；推送到个人仓库时使用 `origin`，不加入定制提交 |
-| `oak` | 官网、采购配置及 CI/CD；作为 GitHub 默认分支，手动构建和发布只运行该分支 |
+| `oak` | 官网、采购配置及 CI/CD；作为 GitHub 默认分支，推送后自动测试、构建和发布 |
 | `main` | 保留原有内容，不承担本次 CI/CD 入口 |
 
 获取官方更新时先快进纯跟踪分支，评估差异后再合入定制分支：
@@ -120,7 +124,7 @@ git merge --ff-only upstream/main
 git push origin upstream-main
 git switch oak
 git merge upstream-main
-# 解决冲突并验证后再推送；推送本身不会发布。
+# 解决冲突并验证后再推送；此推送会自动构建并发布。
 git push origin oak
 ```
 
@@ -135,17 +139,17 @@ git push origin oak
    pbcopy < ~/.ssh/oak_github_actions_ed25519
    ```
 
-3. 打开 [Oak 手动构建与发布](https://github.com/Mengxisuki/new-api/actions/workflows/oak-deploy.yml)，分支选 `oak`。先保持 `deploy` 不勾选验证仅构建，通过后再按需要手动勾选发布。不要把私钥填到普通 Variable 或聊天中。
+3. 保存后推送到 `oak` 即可自动发布，也可打开 [Oak 自动构建与发布](https://github.com/Mengxisuki/new-api/actions/workflows/oak-deploy.yml)手动运行。手动运行时不勾选 `deploy` 只构建，勾选才发布。不要把私钥填到普通 Variable 或聊天中。
 
-### 当前接入状态（2026-10-28）
+### 当前接入状态（2026-10-29）
 
-- 已在服务器安装 `/usr/local/sbin/oak-ci-deploy`，root:root、0755；服务器与本地 SHA-256 一致，只读 `check` 已通过。没有切换 `current`、重启线上应用或改写生产数据，线上仍为 `oak-01da3a55f`。
-- GitHub `oak-production` 已创建，部署分支规则限定 `oak`；专用密钥已生成并完成服务器授权与限制验证，环境 Secret 等待用户录入。
+- 已在服务器安装 `/usr/local/sbin/oak-ci-deploy`，root:root、0755；部署分支规则限定 `oak`，受限部署密钥已接通。
+- [手动发布运行 40666382821](https://github.com/Mengxisuki/new-api/actions/runs/40666382821)成功；本轮开始时服务器健康预检通过，线上为 `oak-2c47125b0ada-40666382821-1`，说明环境 Secret 和服务器发布链路已接通。
 - 官网/采购提交 `5edda9c46`、CI/CD 提交 `cd94d9a8c` 已分别提交并推送到 `oak`。`upstream-main` 已推送且保持纯官方内容，GitHub 默认分支已设为 `oak`，旧 `main` 未改。
 - [首次真实 GitHub 构建](https://github.com/Mengxisuki/new-api/actions/runs/40663034653)成功：全量测试、构建、发布包校验和产物上传通过，发布任务因 `deploy=false` 跳过。实际运行源码为 `cd94d9a8c`；后续文档提交不改变运行代码。
 - 本地干净源码快照使用冻结依赖验证：前端 205 文件、2468 用例通过，根 Go 模块、relaykit 和 tokenkit 的 `make test` 通过；11 个部署契约测试、actionlint、Bash 语法检查、真实 Linux 发布包校验通过。已补齐采购图片接口在当前分支中的个人访问令牌权限声明。
 - 本机原工作目录残留的被忽略旧源码和旧前端依赖曾造成全量检查失败；干净快照不包含这些内容，未通过删除用户文件或跳过失败测试来处理。
-- 尚未执行实际停机发布和备份恢复演练。GitHub 私钥由用户录入，操作步骤见上文。
+- 本轮将 `oak` 推送改为自动部署；每次提交的运行结果见 [GitHub 工作流](https://github.com/Mengxisuki/new-api/actions/workflows/oak-deploy.yml)。备份恢复演练尚未执行。
 
 参考：[GitHub 手动运行工作流](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)、[部署环境](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)、[OpenSSH 配置](https://man.openbsd.org/ssh_config)、[PostgreSQL pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html)。
 

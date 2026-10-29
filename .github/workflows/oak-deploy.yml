@@ -1,8 +1,11 @@
-name: Oak 手动构建与发布
+name: Oak 自动构建与发布
 
-# 只接受仓库维护者手动触发，推送代码不会改变线上版本。
-# 默认只构建；明确勾选 deploy 才会进入生产发布任务。
+# 推送到 oak 后自动完成检查、构建和发布，官方跟踪分支不触发。
+# 保留手动入口；手动运行时默认只构建，勾选 deploy 才发布。
 on:
+  push:
+    branches:
+      - oak
   workflow_dispatch:
     inputs:
       deploy:
@@ -40,7 +43,7 @@ jobs:
             echo '::error::Oak 工作流只允许从 oak 分支运行'
             exit 1
           fi
-      # 检出本次手动选择的确切提交，构建与部署使用同一个版本。
+      # 检出触发事件的确切提交，构建与部署使用同一个版本。
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.sha }}
@@ -120,7 +123,8 @@ jobs:
 
   deploy:
     name: 发布到 wdm
-    if: inputs.deploy
+    # 推送自动发布；手动运行仍由 deploy 开关决定是否发布。
+    if: github.event_name == 'push' || inputs.deploy
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15

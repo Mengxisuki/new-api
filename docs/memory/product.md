@@ -1,6 +1,6 @@
 # 产品现状
 
-更新时间：2026-10-28 09:31:00 +00:00。
+更新时间：2026-10-29 05:24:14 +00:00。
 
 New API 提供多模型 API 网关及控制台；本地 Oak 官网面向实验室与科研团队，介绍模型接入、项目用量管理、科研场景与采购开票支持。官网不会执行示例中的模型请求，也不代表包含模型厂商的官方客户端订阅。
 
@@ -18,8 +18,8 @@ New API 提供多模型 API 网关及控制台；本地 Oak 官网面向实验�
 
 ## 发布现状
 
-`ssh wdm` 对应现有 Oak 站点，使用原生 Go 二进制、systemd、Caddy、PostgreSQL 和 Redis。`oak` 承载官网定制和手动 CI/CD，并作为 GitHub 默认分支；`upstream-main` 纯跟踪官方 `upstream/main`，定制不进入该分支，原 `main` 保留。官方最新六个提交已跟踪，尚未合入当前定制基线。
+`ssh wdm` 对应现有 Oak 站点，使用原生 Go 二进制、systemd、Caddy、PostgreSQL 和 Redis。`oak` 承载官网定制和 CI/CD，并作为 GitHub 默认分支；`upstream-main` 纯跟踪官方 `upstream/main`，定制不进入该分支，原 `main` 保留。
 
-用户已授权本次提交推送和专用部署密钥接入，GitHub 私钥由用户自行录入环境 Secret。服务器处理器、受限公钥和生产环境已配置；默认仅构建，显式勾选才发布，没有推送即自动上线的触发器。
+2026-10-29 用户要求启用推送自动发布：推送到 `oak` 后自动测试、构建、备份、部署并检查健康。其他分支不触发。手动入口保留，手动运行时默认只构建，勾选 deploy 才发布。
 
-两个分支已推送、GitHub 默认分支已设为 oak，[首次真实 GitHub 构建](https://github.com/Mengxisuki/new-api/actions/runs/40663034653)成功，测试、构建和发布包上传通过，发布任务跳过。剩余私钥录入和首次发布见 [交接记录](../handoff.md)，操作说明见 [部署说明](../../deploy/oak/README.md)。生产版本尚未切换，CI 配置完成不代表已发布官网。
+服务器处理器、受限公钥和环境 Secret 已接通，[手动发布](https://github.com/Mengxisuki/new-api/actions/runs/40666382821)已成功，本轮开始时线上为 `oak-2c47125b0ada-40666382821-1`。每次自动运行结果见 [GitHub 工作流](https://github.com/Mengxisuki/new-api/actions/workflows/oak-deploy.yml)，操作说明见 [部署说明](../../deploy/oak/README.md)。失败后的数据库恢复仍需人工决策，不能盲目切回旧二进制。

@@ -26,10 +26,28 @@ import (
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
-	// 获取支付方式
-	payMethods := operation_setting.PayMethods
-	if !complianceConfirmed {
-		payMethods = []map[string]string{}
+	// 支付方式单独组装，避免 append 修改全局配置的底层切片。
+	// 用户端只接收渠道展示字段，商户密钥不会进入本接口。
+	payMethods := make([]map[string]string, 0, len(operation_setting.PayMethods)+4)
+	officialChannels := []operation_setting.OfficialPaymentChannel{}
+	if complianceConfirmed {
+		if isEpayTopUpEnabled() {
+			payMethods = append(payMethods, operation_setting.PayMethods...)
+		}
+		officialChannels = operation_setting.GetAvailableOfficialPaymentChannels()
+		for _, channel := range officialChannels {
+			method := map[string]string{
+				"name": channel.Name, "type": channel.ID,
+				"provider":         operation_setting.PaymentProviderOfficial,
+				"channel_type":     channel.ChannelType,
+				"interaction_mode": channel.InteractionMode,
+				"min_topup":        strconv.FormatInt(channel.MinTopUp, 10),
+			}
+			if channel.Icon != "" {
+				method["icon"] = channel.Icon
+			}
+			payMethods = append(payMethods, method)
+		}
 	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
@@ -98,7 +116,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	data := gin.H{
-		"enable_online_topup":              isEpayTopUpEnabled(),
+		"enable_online_topup":              isEpayTopUpEnabled() || len(officialChannels) > 0,
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
@@ -281,6 +299,10 @@ func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
 }
 
 func RequestEpay(c *gin.Context) {
+	// 所有收款渠道共享既有合规门禁，官方分支不能在易支付检查前绕过。
+	if !requirePaymentCompliance(c) {
+		return
+	}
 	var req EpayRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
@@ -304,6 +326,18 @@ func RequestEpay(c *gin.Context) {
 	payMoney := getPayMoney(req.Amount, group)
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
+		return
+	}
+
+	// 官方渠道与易支付共享现有额度和钱包容量校验。
+	// 渠道选择由服务端配置查找，不接受客户端提供的商户配置。
+	if channel, ok := operation_setting.GetOfficialPaymentChannel(req.PaymentMethod, true); ok {
+		creditedQuota, quotaErr := validateTopUpQuota(req.Amount)
+		if quotaErr != nil {
+			paymentError(c, quotaErr)
+			return
+		}
+		requestOfficialTopUp(c, *channel, req.Amount, creditedQuota, payMoney, id)
 		return
 	}
 

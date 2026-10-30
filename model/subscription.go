@@ -160,8 +160,6 @@ type SubscriptionPlan struct {
 	Enabled   bool `json:"enabled" gorm:"default:true"`
 	SortOrder int  `json:"sort_order" gorm:"type:int;default:0"`
 
-	AllowBalancePay *bool `json:"allow_balance_pay"`
-
 	// Allow falling back to wallet balance after subscription quota is exhausted (empty = true)
 	AllowWalletOverflow *bool `json:"allow_wallet_overflow"`
 
@@ -202,9 +200,6 @@ func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
 }
 
 func (p *SubscriptionPlan) NormalizeDefaults() {
-	if p.AllowBalancePay == nil {
-		p.AllowBalancePay = common.GetPointer(true)
-	}
 	if p.AllowWalletOverflow == nil {
 		p.AllowWalletOverflow = common.GetPointer(true)
 	}
@@ -410,17 +405,75 @@ func getSubscriptionPlanByIdTx(tx *gorm.DB, id int) (*SubscriptionPlan, error) {
 	return &plan, nil
 }
 
-func CountUserSubscriptionsByPlan(userId int, planId int) (int64, error) {
-	if userId <= 0 || planId <= 0 {
-		return 0, errors.New("invalid userId or planId")
+// CheckSubscriptionPurchaseLimit 在创建支付订单前检查套餐是否允许购买。
+// 活跃同套餐属于续期，不再占用一份订阅实例的购买名额。
+// 这里仅作提前提示；到账事务持有用户行锁后仍会执行相同规则。
+func CheckSubscriptionPurchaseLimit(userId int, plan *SubscriptionPlan) error {
+	if userId <= 0 || plan == nil || plan.Id <= 0 {
+		return errors.New("invalid userId or plan")
 	}
-	var count int64
-	if err := DB.Model(&UserSubscription{}).
-		Where("user_id = ? AND plan_id = ?", userId, planId).
-		Count(&count).Error; err != nil {
-		return 0, err
+	// 预检查不修改权益，最终结果以支付完成时的数据库状态为准。
+	_, err := subscriptionForPurchaseTx(DB, userId, plan, GetDBTimestamp())
+	return err
+}
+
+// subscriptionForPurchaseTx 返回可续期的实例，并统一检查首次开通限购。
+// 支付和管理员入口先锁定用户，避免同一用户并发购买创建两份权益。
+// 存量若已有多份订阅，仅延长最晚到期的一份，不合并或删除历史记录。
+// 返回 nil 表示本次要新开通；数据库错误不得伪装成无订阅。
+func subscriptionForPurchaseTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, now int64) (*UserSubscription, error) {
+	var sub UserSubscription
+	// 取消和已到期的实例不复用，避免恢复已撤销权限及旧用量。
+	// 使用当前读，避免 MySQL 在等待用户锁之前建立的旧快照漏掉新订阅。
+	query := lockForUpdate(tx).Where("user_id = ? AND plan_id = ? AND status = ? AND end_time > ?", userId, plan.Id, "active", now).
+		Order("end_time desc, id desc").Limit(1).Find(&sub)
+	if query.Error != nil {
+		return nil, query.Error
 	}
-	return count, nil
+	// 续期保留原额度，限购只约束新订阅实例，不阻止购买更多时长。
+	if query.RowsAffected > 0 {
+		return &sub, nil
+	}
+	// 无活跃同套餐时仍保留原来的历史实例限购规则。
+	if plan.MaxPurchasePerUser > 0 {
+		var count int64
+		if err := tx.Model(&UserSubscription{}).Where("user_id = ? AND plan_id = ?", userId, plan.Id).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count >= int64(plan.MaxPurchasePerUser) {
+			return nil, common.NewMessage("Purchase limit for this plan has been reached")
+		}
+	}
+	return nil, nil
+}
+
+// renewUserSubscriptionTx 从已有到期时间追加一个套餐周期。
+// 不刷新额度、起始时间、原分组或钱包回退策略，避免重复购买重置权益。
+// 仅保存到期和必要的重置时间，避免覆盖同一实例的并发用量更新。
+func renewUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *SubscriptionPlan) (*UserSubscription, error) {
+	// 调用方已按用户、订阅顺序持锁，传入的是当前行而不是事务旧快照。
+	endTime, err := calcPlanEndTime(time.Unix(sub.EndTime, 0), plan)
+	if err != nil {
+		return nil, err
+	}
+	// 沿用统一周期计算，按月套餐仍按日历月延长。
+	// 本次新增时长不从当前时间起算，避免提前续费损失剩余期限。
+	sub.EndTime = endTime
+	updates := map[string]any{"end_time": endTime} // 局部更新不覆盖已存在的用量和分组权益快照。
+	// 原到期时间可能截掉下一次重置；延长后恢复原节奏，不从购买时刻重排。
+	if sub.NextResetTime == 0 {
+		base := sub.LastResetTime
+		if base == 0 {
+			base = sub.StartTime
+		}
+		sub.NextResetTime = calcNextResetTime(time.Unix(base, 0), plan, endTime)
+		updates["next_reset_time"] = sub.NextResetTime
+	}
+	// GORM 钩子继续维护更新时间，其他权益快照不随套餐编辑而变化。
+	if err := tx.Model(sub).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return sub, nil
 }
 
 func getUserGroupByIdTx(tx *gorm.DB, userId int) (string, error) {
@@ -491,18 +544,16 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 	if userId <= 0 {
 		return nil, errors.New("invalid user id")
 	}
-	if plan.MaxPurchasePerUser > 0 {
-		var count int64
-		if err := tx.Model(&UserSubscription{}).
-			Where("user_id = ? AND plan_id = ?", userId, plan.Id).
-			Count(&count).Error; err != nil {
-			return nil, err
-		}
-		if count >= int64(plan.MaxPurchasePerUser) {
-			return nil, common.NewMessage("Purchase limit for this plan has been reached")
-		}
-	}
+	// 所有购买入口共享同一规则：活跃同套餐续期，其他情况按新开通处理。
 	nowUnix := GetDBTimestamp()
+	subscription, err := subscriptionForPurchaseTx(tx, userId, plan, nowUnix)
+	if err != nil {
+		return nil, err
+	}
+	// 续期提前返回，不进入重置用量和变更用户分组的新开通路径。
+	if subscription != nil {
+		return renewUserSubscriptionTx(tx, subscription, plan)
+	}
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -567,86 +618,149 @@ func refreshSubscriptionUserGroupCache(userId int, operation string) {
 // expectedPaymentProvider guards against cross-gateway callback attacks (empty skips the check).
 // actualPaymentMethod updates the order's PaymentMethod to reflect the real payment type used (empty skips update).
 func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string) error {
+	// 已有网关沿用原有签名及金额检查，统一复用到账事务。
+	return completeSubscriptionOrder(tradeNo, providerPayload, expectedPaymentProvider, actualPaymentMethod, nil)
+}
+
+// CompleteOfficialSubscriptionOrder 兑现官方支付确认的订阅订单。
+// provider 和 channel 均来自服务端已验签的渠道，不能由买家自行指定。
+// 金额、渠道与幂等状态在同一个订单行锁内核对，避免检查后订单变化。
+func CompleteOfficialSubscriptionOrder(tradeNo, providerPayload, expectedProvider, expectedChannelID string, paidAmount decimal.Decimal) error {
+	if expectedChannelID == "" || (expectedProvider != PaymentProviderWechat && expectedProvider != PaymentProviderAlipay) {
+		return ErrPaymentMethodMismatch
+	}
+	// 官方支付必须提供正金额，不将缺失金额视作跳过检查。
+	if paidAmount.LessThanOrEqual(decimal.Zero) {
+		return errors.New("subscription payment amount mismatch")
+	}
+	return completeSubscriptionOrder(tradeNo, providerPayload, expectedProvider, expectedChannelID, &paidAmount)
+}
+
+// completeSubscriptionOrder 是所有网关唯一的事务到账路径。
+// 本函数保留较长的单事务主流程，明确按订单→用户→订阅更新并统一提交；
+// 不将关联状态写入拆成独立事务，否则付款和权益可能只成功一半。
+// 官方支付额外提供冻结金额匹配要求，验证失败不得改动订单或权益。
+func completeSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string, paidAmount *decimal.Decimal) error {
+	// 网关订单号是唯一幂等键，空值不能落入无条件查询。
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
-	refCol := "`trade_no`"
+	refCol := "`trade_no`" // 保留既有三数据库列名转义，官方入口共享同一查询。
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		refCol = `"trade_no"`
 	}
+	// 日志和缓存仅在事务成功提交后执行，回滚不产生成功记录。
 	var logUserId int
 	var logPlanTitle string
 	var logMoney float64
 	var logPaymentMethod string
 	var upgradeGroup string
+	// 订单、权益和账单必须原子提交；任一步失败都不得留下半次续期。
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		var order SubscriptionOrder
+		var order SubscriptionOrder // 锁的是持久订单，进程内状态不能保证多实例幂等。
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
+		// 先匹配网关再接受成功状态，避免跨网关通知误认同一订单号。
 		if expectedPaymentProvider != "" && order.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
 		}
+		// 已成功的重试也先检查渠道和金额，其他商户不能认领这笔订单。
+		if paidAmount != nil {
+			// 相同平台公钥可能对应多个商户配置，因此还需精确核对渠道 ID。
+			if order.PaymentMethod != actualPaymentMethod {
+				return ErrPaymentMethodMismatch
+			}
+			// 比较下单冻结金额，管理员后来修改套餐售价不会改变本笔应收款。
+			if !paidAmount.Equal(decimal.NewFromFloat(order.Money).Round(2)) {
+				return errors.New("subscription payment amount mismatch")
+			}
+		}
+		// 已完成订单直接确认，不再增加时长，也不重复写付款账单。
 		if order.Status == common.TopUpStatusSuccess {
 			return nil
 		}
+		// 取消或明确失效的订单不恢复，异常通知需要上游重新核对。
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
-		plan, err := GetSubscriptionPlanById(order.PlanId)
+		plan, err := GetSubscriptionPlanById(order.PlanId) // 权益关联下单时的套餐 ID，不能接受回调另行指定。
 		if err != nil {
 			return err
 		}
-		if !plan.Enabled {
-			// still allow completion for already purchased orders
-		}
+		// 套餐下架不否认已创建订单的付款，仍继续兑现对应权益。
 		// 锁定用户行：并发完成同一用户的不同订单（包括多实例部署下）时，
 		// 使 CreateUserSubscriptionFromPlanTx 的 MaxPurchasePerUser 检查按用户串行。
-		var userRow User
+		var userRow User // 首购与续费统一先锁用户，串行化该用户的不同订单。
 		if err := lockForUpdate(tx).Select("id").Where("id = ?", order.UserId).First(&userRow).Error; err != nil {
 			return err
 		}
+		// 续费下单时有效、到账时已过期的订阅，仍要兑现已收取的时长。
+		// 仅以本订单创建时用户实际持有的权益为依据，不放开取消或首次限购。
+		// 无实例限购时无需额外寻找过期记录，保持正常付款的最短路径。
+		if plan.MaxPurchasePerUser > 0 {
+			var expiredAtPayment UserSubscription // 已取消实例不属于自然到期，不能作为放宽限购依据。
+			query := lockForUpdate(tx).Where("user_id = ? AND plan_id = ? AND status IN ? AND start_time <= ? AND end_time > ? AND end_time <= ?",
+				order.UserId, plan.Id, []string{"active", "expired"}, order.CreateTime, order.CreateTime, GetDBTimestamp()).
+				Limit(1).Find(&expiredAtPayment)
+			// 数据库查询失败必须使到账事务回滚，不能当成无过期记录。
+			if query.Error != nil {
+				return query.Error
+			}
+			if query.RowsAffected > 0 { // 付款前已有权益才认定这是一笔被延迟确认的续费。
+				// 只在本次事务副本中豁免新实例限购，不改套餐或缓存中的配置。
+				paidPlan := *plan // 返回副本继续走统一开通路径，不恢复历史失效实例。
+				paidPlan.MaxPurchasePerUser = 0
+				plan = &paidPlan // 不能修改缓存指针，否则其他用户也会被意外免除限购。
+			}
+		}
+		// 共享规则选择延长原实例或重新开通，网关之间没有第二份续期实现。
 		subscription, err := CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
 		if err != nil {
 			return err
 		}
+		// 原订阅可能包含分组权益，提交后同步缓存但不改变认证会话。
 		if subscription.PrevUserGroup != "" {
 			upgradeGroup = strings.TrimSpace(subscription.UpgradeGroup)
 		}
+		// 账单记录仅表示这笔订阅收款；此处从不增加用户钱包额度。
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
 			return err
 		}
-		order.Status = common.TopUpStatusSuccess
-		order.CompleteTime = common.GetTimestamp()
+		order.Status = common.TopUpStatusSuccess   // 权益更新成功后再标记订单完成，统一随事务提交。
+		order.CompleteTime = common.GetTimestamp() // 仅记录服务端确认时刻，订单创建时刻保持可追溯。
+		// 保留网关交易引用便于对账，不把商户凭据写入订单载荷。
 		if providerPayload != "" {
 			order.ProviderPayload = providerPayload
 		}
+		// 官方渠道此前已严格匹配；其他网关保留真实支付方式写回行为。
 		if actualPaymentMethod != "" && order.PaymentMethod != actualPaymentMethod {
 			order.PaymentMethod = actualPaymentMethod
 		}
+		// 保存失败会回滚刚才的续期，后续重投通知可安全重新执行。
 		if err := tx.Save(&order).Error; err != nil {
 			return err
 		}
 		logUserId = order.UserId
 		logPlanTitle = plan.Title
-		logMoney = order.Money
+		logMoney = order.Money // 付款日志使用订单实付金额，不取可能已变动的当前售价。
 		logPaymentMethod = order.PaymentMethod
 		return nil
 	})
 	if err != nil {
-		return err
+		return err // 原始失败向回调传播，网关不能收到伪造的到账成功。
 	}
 	if upgradeGroup != "" && logUserId > 0 {
 		refreshSubscriptionUserGroupCache(logUserId, common.LogText("subscription payment completion"))
 	}
-	if logUserId > 0 {
+	if logUserId > 0 { // 幂等命中的已完成订单不会再次发出成功日志。
 		RecordLog(logUserId, LogTypeTopup, common.NewMessage("Subscription purchased, plan: {{plan}}, payment amount: {{amount}}, payment method: {{method}}", map[string]any{
 			"plan":   logPlanTitle,
 			"amount": fmt.Sprintf("%.2f", logMoney),
 			"method": logPaymentMethod,
 		}))
 	}
-	return nil
+	return nil // 只有事务和必要的提交后处理完成才向网关确认。
 }
 
 func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
@@ -742,114 +856,6 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (*common.M
 	return nil, nil
 }
 
-func calcSubscriptionBalanceQuota(priceAmount float64) (int, error) {
-	if priceAmount <= 0 {
-		return 0, nil
-	}
-	if common.QuotaPerUnit <= 0 {
-		return 0, common.NewMessage("Quota unit is misconfigured")
-	}
-	quota := decimal.NewFromFloat(priceAmount).
-		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
-		Ceil()
-	return common.WalletQuotaFromDecimalStrict(quota)
-}
-
-// PurchaseSubscriptionWithBalance creates a subscription by deducting the user's wallet quota.
-func PurchaseSubscriptionWithBalance(userId int, planId int) error {
-	if userId <= 0 || planId <= 0 {
-		return errors.New("invalid userId or planId")
-	}
-
-	var logPlanTitle string
-	var logMoney float64
-	var chargedQuota int
-	var upgradeGroup string
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		plan, err := getSubscriptionPlanByIdTx(tx, planId)
-		if err != nil {
-			return err
-		}
-		if !plan.Enabled {
-			return common.NewMessage("Subscription plan is not enabled")
-		}
-		if plan.PriceAmount < 0 {
-			return common.NewMessage("Price cannot be negative")
-		}
-		if plan.AllowBalancePay != nil && !*plan.AllowBalancePay {
-			return common.NewMessage("This plan does not allow balance redemption")
-		}
-
-		requiredQuota, err := calcSubscriptionBalanceQuota(plan.PriceAmount)
-		if err != nil {
-			return err
-		}
-
-		var user User
-		if err := lockForUpdate(tx).Where("id = ?", userId).First(&user).Error; err != nil {
-			return err
-		}
-		if requiredQuota > 0 && user.Quota < requiredQuota {
-			return common.NewMessage("Insufficient balance")
-		}
-		if requiredQuota > 0 {
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
-				return err
-			}
-		}
-
-		subscription, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, PaymentMethodBalance)
-		if err != nil {
-			return err
-		}
-
-		now := common.GetTimestamp()
-		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
-		order := &SubscriptionOrder{
-			UserId:          userId,
-			PlanId:          plan.Id,
-			Money:           plan.PriceAmount,
-			TradeNo:         tradeNo,
-			PaymentMethod:   PaymentMethodBalance,
-			PaymentProvider: PaymentProviderBalance,
-			Status:          common.TopUpStatusSuccess,
-			CreateTime:      now,
-			CompleteTime:    now,
-			ProviderPayload: fmt.Sprintf("charged_quota=%d", requiredQuota),
-		}
-		if err := tx.Create(order).Error; err != nil {
-			return err
-		}
-
-		logPlanTitle = plan.Title
-		logMoney = plan.PriceAmount
-		chargedQuota = requiredQuota
-		if subscription.PrevUserGroup != "" {
-			upgradeGroup = strings.TrimSpace(subscription.UpgradeGroup)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	if chargedQuota > 0 {
-		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
-			common.SysLog(common.LogText("failed to decrease user quota cache after subscription balance purchase: %s", err.Error()))
-		}
-	}
-	if upgradeGroup != "" {
-		refreshSubscriptionUserGroupCache(userId, common.LogText("subscription balance purchase"))
-	}
-	RecordLog(userId, LogTypeTopup, common.NewMessage("Subscription purchased with balance, plan: {{plan}}, payment amount: {{amount}}, quota deducted: {{quota}}", map[string]any{
-		"plan":   logPlanTitle,
-		"amount": fmt.Sprintf("%.2f", logMoney),
-		"quota":  chargedQuota,
-	}))
-	return nil
-}
-
 // GetAllActiveUserSubscriptions returns all active subscriptions for a user.
 func GetAllActiveUserSubscriptions(userId int) ([]SubscriptionSummary, error) {
 	if userId <= 0 {
@@ -929,6 +935,19 @@ func buildSubscriptionSummaries(subs []UserSubscription) []SubscriptionSummary {
 	return result
 }
 
+// lockSubscriptionOwnerTx 为取消、删除与付款统一取得用户锁。
+// 首次读取仅用于定位不可变的归属，实际权益仍由调用方随后锁行读取。
+// 已删除或不存在的记录明确报错，不把未完成取消伪装成成功。
+func lockSubscriptionOwnerTx(tx *gorm.DB, subscriptionId int) error {
+	var sub UserSubscription
+	if err := tx.Select("user_id").Where("id = ?", subscriptionId).First(&sub).Error; err != nil {
+		return err
+	}
+	// 与预扣仅锁订阅的操作不形成互等，生命周期操作始终先锁用户。
+	var user User
+	return lockForUpdate(tx).Select("id").Where("id = ?", sub.UserId).First(&user).Error
+}
+
 // AdminInvalidateUserSubscription marks a user subscription as cancelled and ends it immediately.
 func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, error) {
 	if userSubscriptionId <= 0 {
@@ -939,6 +958,10 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (*common.Message, e
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		// 先锁权益所有者，和付款续期统一为用户→订阅的锁顺序。
+		if err := lockSubscriptionOwnerTx(tx, userSubscriptionId); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
@@ -984,6 +1007,10 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (*common.Message, error
 	downgradeGroup := ""
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		// 先锁权益所有者，和付款续期统一为用户→订阅的锁顺序。
+		if err := lockSubscriptionOwnerTx(tx, userSubscriptionId); err != nil {
+			return err
+		}
 		var sub UserSubscription
 		if err := lockForUpdate(tx).
 			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
@@ -1168,6 +1195,11 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 	for userId := range userIds {
 		cacheGroup := ""
 		err := DB.Transaction(func(tx *gorm.DB) error {
+			// 到期降组同样先锁用户，避免与更新现有订阅的付款续期反向持锁。
+			var user User
+			if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&user).Error; err != nil {
+				return err
+			}
 			res := tx.Model(&UserSubscription{}).
 				Where("user_id = ? AND status = ? AND end_time > 0 AND end_time <= ?", userId, "active", now).
 				Updates(map[string]any{

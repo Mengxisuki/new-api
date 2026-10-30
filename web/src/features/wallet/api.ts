@@ -33,6 +33,7 @@ import type {
   AffiliateTransferResponse,
   BillingHistoryResponse,
   CompleteOrderRequest,
+  RetryOfficialPaymentRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
   WaffoPaymentRequest,
@@ -244,5 +245,16 @@ export async function completeOrder(
   request: CompleteOrderRequest
 ): Promise<ApiResponse> {
   const res = await api.post('/api/user/topup/complete', request)
+  return res.data
+}
+
+// 继续支付仅复用原订单；不在浏览器修改金额或判断最终到账。
+// 业务错误仍交给调用方统一显示，不能把失败响应当作二维码结果。
+export async function retryOfficialPayment(
+  request: RetryOfficialPaymentRequest
+): Promise<PaymentResponse> {
+  const res = await api.post('/api/user/topup/retry', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
   return res.data
 }

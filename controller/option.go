@@ -93,6 +93,10 @@ func GetOptions(c *gin.Context) {
 			continue
 		}
 		value := common.Interface2String(v)
+		// 渠道密钥只显示已配置标记，通用设置不能回传私钥和解密密钥。
+		if k == "payment_setting.official_channels" {
+			value = operation_setting.RedactOfficialPaymentChannels(value)
+		}
 		isSensitiveKey := strings.HasSuffix(k, "Token") ||
 			strings.HasSuffix(k, "Secret") ||
 			strings.HasSuffix(k, "Key") ||
@@ -368,6 +372,13 @@ func UpdateOption(c *gin.Context) {
 		}
 	case "AutomaticRetryStatusCodes":
 		_, err = operation_setting.ParseHTTPStatusCodeRanges(option.Value.(string))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	case "payment_setting.official_channels":
+		// 空密钥保留原值，由服务端统一验证渠道和保密字段。
+		option.Value, err = operation_setting.PrepareOfficialPaymentChannelsUpdate(option.Value.(string))
 		if err != nil {
 			common.ApiError(c, err)
 			return

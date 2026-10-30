@@ -324,6 +324,8 @@ export type BillingSettings = {
   MinTopUp: number
   CustomCallbackAddress: string
   PayMethods: string
+  /** 官方商户渠道由后端返回脱敏配置；保存时保留未修改的凭证。 */
+  'payment_setting.official_channels': string
   'payment_setting.amount_options': string
   'payment_setting.amount_discount': string
   'payment_setting.compliance_confirmed': boolean

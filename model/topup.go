@@ -13,9 +13,11 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
+	Id     int   `json:"id"`
+	UserId int   `json:"user_id" gorm:"index"`
+	Amount int64 `json:"amount"`
+	// 官方支付冻结下单额度，回调不按可能变化的汇率重新计算。
+	CreditedQuota   int     `json:"credited_quota" gorm:"column:credited_quota;type:bigint;not null;default:0"`
 	Money           float64 `json:"money"`
 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
@@ -23,6 +25,8 @@ type TopUp struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+	// 到期时间由创建时间推导，仅用于展示，不另存状态。
+	ExpiresAt int64 `json:"expires_at" gorm:"-"`
 }
 
 const (
@@ -30,7 +34,6 @@ const (
 	PaymentMethodCreem        = "creem"
 	PaymentMethodWaffo        = "waffo"
 	PaymentMethodWaffoPancake = "waffo_pancake"
-	PaymentMethodBalance      = "balance"
 )
 
 const (
@@ -39,13 +42,15 @@ const (
 	PaymentProviderCreem        = "creem"
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
-	PaymentProviderBalance      = "balance"
+	PaymentProviderAlipay       = "official_alipay"
+	PaymentProviderWechat       = "official_wechat"
 )
 
 var (
 	ErrPaymentMethodMismatch = errors.New("payment method mismatch")
 	ErrTopUpNotFound         = errors.New("topup not found")
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
+	ErrTopUpExpired          = common.NewMessage("The payment order has expired. Please create a new top-up order.")
 	// The quota errors reach the web console, so they carry message keys.
 	ErrInvalidTopUpQuota        error = common.NewMessage("Invalid top-up quota")
 	ErrTopUpQuotaLimitExceeded  error = common.NewMessage("Top-up quota limit exceeded")
@@ -326,6 +331,8 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 	}
 
 	// Commit transaction
+	prepareOfficialTopUps(topups)
+
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
@@ -354,6 +361,8 @@ func GetAllTopUps(pageInfo *common.PageInfo) (topups []*TopUp, total int64, err 
 		tx.Rollback()
 		return nil, 0, err
 	}
+
+	prepareOfficialTopUps(topups)
 
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
@@ -400,6 +409,8 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 		return nil, 0, common.NewMessage("Failed to search top-up records")
 	}
 
+	prepareOfficialTopUps(topups)
+
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
@@ -439,6 +450,8 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 		common.SysError(common.LogText("failed to search topups: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to search top-up records")
 	}
+
+	prepareOfficialTopUps(topups)
 
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
@@ -482,7 +495,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
 		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
 		var quotaErr error
-		if topUp.PaymentProvider == PaymentProviderStripe {
+		if IsOfficialPaymentProvider(topUp.PaymentProvider) {
+			quotaToAdd, quotaErr = topUp.QuotaToCredit()
+		} else if topUp.PaymentProvider == PaymentProviderStripe {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 			)

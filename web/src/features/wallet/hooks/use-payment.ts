@@ -85,6 +85,10 @@ export function usePayment() {
   const [amount, setAmount] = useState<number>(0)
   const [calculating, setCalculating] = useState(false)
   const [processing, setProcessing] = useState(false)
+  const [qrPayment, setQrPayment] = useState<{
+    qrCode: string
+    tradeNo?: string
+  } | null>(null)
 
   // Calculate payment amount
   const calculatePaymentAmount = useCallback(
@@ -140,6 +144,26 @@ export function usePayment() {
 
         // Handle non-Stripe payment
         if (!isStripe && response.data) {
+          const paymentData = response.data as Record<string, unknown>
+          const redirectUrl = paymentData.redirect_url
+          if (typeof redirectUrl === 'string' && redirectUrl) {
+            toast.success(i18next.t('Redirecting to payment page...'))
+            window.location.assign(redirectUrl)
+            return true
+          }
+
+          const qrCode = paymentData.qr_code
+          if (typeof qrCode === 'string' && qrCode) {
+            setQrPayment({
+              qrCode,
+              tradeNo:
+                typeof paymentData.trade_no === 'string'
+                  ? paymentData.trade_no
+                  : undefined,
+            })
+            return true
+          }
+
           const url = (response as unknown as { url?: string }).url
           if (url) {
             submitPaymentForm(url, response.data)
@@ -163,8 +187,10 @@ export function usePayment() {
     amount,
     calculating,
     processing,
+    qrPayment,
     calculatePaymentAmount,
     processPayment,
     setAmount,
+    clearQrPayment: () => setQrPayment(null),
   }
 }

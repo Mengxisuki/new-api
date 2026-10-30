@@ -16,8 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import {
+  Search,
+  Copy,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -46,7 +53,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatCurrencyFromUSD } from '@/lib/currency'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatQuota } from '@/lib/format'
 
 import { useBillingHistory } from '../../hooks/use-billing-history'
 import {
@@ -54,6 +61,8 @@ import {
   getPaymentMethodName,
   formatTimestamp,
 } from '../../lib/billing'
+import type { OfficialPaymentData } from '../../types'
+import { OfficialPaymentQrDialog } from './official-payment-qr-dialog'
 
 interface BillingHistoryDialogProps {
   open: boolean
@@ -74,6 +83,11 @@ export function BillingHistoryDialog({
     loading,
     completing,
     isAdmin,
+    isSuperAdmin, // 只能让超级管理员人工补单。
+    currentUserId, // 普通用户只恢复自己的未付官方订单。
+    retryingTradeNo,
+    handleRetryPayment,
+    refresh,
     handlePageChange,
     handlePageSizeChange,
     handleSearch,
@@ -84,6 +98,25 @@ export function BillingHistoryDialog({
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  const [retriedPayment, setRetriedPayment] =
+    useState<OfficialPaymentData | null>(null)
+  // 倒计时仅影响显示与按钮，订单是否过期由服务器最终判断。
+  // 关闭账单时清理计时器，避免后台页面不断重绘。
+  const hasPendingOfficial = records.some(
+    (record) =>
+      record.status === 'pending' &&
+      record.payment_provider?.startsWith('official_') &&
+      record.expires_at
+  )
+  useEffect(() => {
+    if (!open || !hasPendingOfficial) return
+    const interval = window.setInterval(
+      () => setNow(Math.floor(Date.now() / 1000)),
+      1000
+    )
+    return () => window.clearInterval(interval)
+  }, [open, hasPendingOfficial])
 
   const handleConfirmComplete = async () => {
     if (confirmTradeNo) {
@@ -187,7 +220,20 @@ export function BillingHistoryDialog({
             {!loading && records.length > 0 && (
               <div className='space-y-3'>
                 {records.map((record) => {
-                  const statusConfig = getStatusConfig(record.status)
+                  // 到期后立即禁用继续支付，不依赖用户手动重新打开账单。
+                  const expired =
+                    record.expires_at !== undefined && record.expires_at <= now
+                  const statusConfig = getStatusConfig(
+                    record.status === 'pending' && expired
+                      ? 'expired'
+                      : record.status
+                  )
+                  const canRetry =
+                    record.user_id === currentUserId &&
+                    record.status === 'pending' &&
+                    !expired &&
+                    record.payment_provider?.startsWith('official_')
+                  const remaining = Math.max(0, (record.expires_at ?? 0) - now)
                   return (
                     <div
                       key={record.id}
@@ -248,11 +294,14 @@ export function BillingHistoryDialog({
                             {t('Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
-                            {formatCurrencyFromUSD(record.amount, {
-                              digitsLarge: 2,
-                              digitsSmall: 2,
-                              abbreviate: false,
-                            })}
+                            {/* 新订单展示冻结入账额度，旧订单仍用原有美元金额。 */}
+                            {record.credited_quota
+                              ? formatQuota(record.credited_quota)
+                              : formatCurrencyFromUSD(record.amount, {
+                                  digitsLarge: 2,
+                                  digitsSmall: 2,
+                                  abbreviate: false,
+                                })}
                           </div>
                         </div>
                         <div className='space-y-1'>
@@ -265,8 +314,35 @@ export function BillingHistoryDialog({
                         </div>
                       </div>
 
+                      {/* 本人的官方订单可以继续支付，其他用户订单不提供此入口。 */}
+                      {canRetry && (
+                        <div className='mt-4 flex items-center justify-end gap-3'>
+                          <span className='text-muted-foreground text-xs tabular-nums'>
+                            {t('Payment expires in')}:{' '}
+                            {Math.floor(remaining / 60)}:
+                            {String(remaining % 60).padStart(2, '0')}
+                          </span>
+                          <Button
+                            size='sm'
+                            disabled={retryingTradeNo !== null}
+                            onClick={async () => {
+                              const payment = await handleRetryPayment(
+                                record.trade_no
+                              )
+                              if (payment?.redirect_url) {
+                                window.location.assign(payment.redirect_url)
+                              } else if (payment?.qr_code) {
+                                setRetriedPayment(payment)
+                              }
+                            }}
+                          >
+                            <RefreshCw className='size-4' aria-hidden='true' />
+                            {t('Retry payment')}
+                          </Button>
+                        </div>
+                      )}
                       {/* Admin Actions */}
-                      {isAdmin && record.status === 'pending' && (
+                      {isSuperAdmin && record.status === 'pending' && (
                         <div className='mt-4 flex justify-end'>
                           <Button
                             size='sm'
@@ -321,6 +397,20 @@ export function BillingHistoryDialog({
           )}
         </div>
       </Dialog>
+
+      {/* 刷新只重新查询账单，不把打开二维码当作付款成功。 */}
+      <OfficialPaymentQrDialog
+        open={!!retriedPayment}
+        onOpenChange={(value) => {
+          if (!value) setRetriedPayment(null)
+        }}
+        onRefresh={async () => {
+          setRetriedPayment(null)
+          await refresh()
+        }}
+        qrCode={retriedPayment?.qr_code ?? ''}
+        tradeNo={retriedPayment?.trade_no}
+      />
 
       {/* Confirm Complete Order Dialog */}
       <AlertDialog

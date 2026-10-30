@@ -35,7 +35,6 @@ export const subscriptionPlanSchema = z.object({
   quota_reset_custom_seconds: z.number().optional(),
   enabled: z.boolean(),
   sort_order: z.number(),
-  allow_balance_pay: z.boolean().optional().default(true),
   allow_wallet_overflow: z.boolean().optional().default(true),
   max_purchase_per_user: z.number(),
   total_amount: z.number(),
@@ -100,6 +99,10 @@ export interface SubscriptionPayResponse {
   data?: {
     // Stripe-style hosted checkout link.
     pay_link?: string
+    payment_kind?: 'qr' | 'redirect' // 官方订阅付款复用二维码或 H5 交互。
+    qr_code?: string // 仅用于支付展示，不能代表订阅已经生效。
+    redirect_url?: string // 官方 H5 结算页由后端返回。
+    trade_no?: string // 原订阅订单号，后端通知幂等地开通或续期。
     // Waffo Pancake / Creem hosted checkout URL.
     checkout_url?: string
     // Pancake-only: order metadata + self-service buyer session token,

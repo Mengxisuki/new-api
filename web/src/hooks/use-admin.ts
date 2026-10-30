@@ -29,3 +29,11 @@ export function useIsAdmin(): boolean {
   const { user } = useAuthStore((state) => state.auth)
   return (user?.role ?? 0) >= ROLE.ADMIN
 }
+
+// 账单人工补单仅向超级管理员开放；实际写入权限仍由服务端强制检查。
+// 与管理员查看账单权限分开，不能让只读管理员获得补发余额入口。
+export function useIsSuperAdmin(): boolean {
+  return useAuthStore(
+    (state) => (state.auth.user?.role ?? 0) >= ROLE.SUPER_ADMIN
+  )
+}

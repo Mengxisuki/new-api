@@ -61,6 +61,9 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/user/auth/refresh",
 	"POST /api/user/auth/logout",
 
+	// 官方通知与既有支付回调相同，由签名和订单归属验证而非个人令牌保护。
+	"POST /api/user/alipay/notify/:channel_id",
+	"POST /api/user/wechat-pay/notify/:channel_id",
 	// Payment callbacks.
 	"POST /api/stripe/webhook",
 	"POST /api/creem/webhook",
@@ -257,4 +260,14 @@ func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
 		_, listed := service.AccessTokenVerificationScope(scope)
 		assert.True(t, listed, "verification scope %s has no access token rule", scope)
 	}
+}
+
+// 余额支付路径必须真实移除，不能只靠前端隐藏按钮。
+// 未认证请求仍应得到路由不存在，而不是进入可恢复的余额扣款处理器。
+// 此断言不依赖用户、支付配置或数据库，因此能独立保护接口边界。
+func TestSubscriptionBalancePurchaseRouteIsRemoved(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/subscription/balance/pay", strings.NewReader(`{"plan_id":1}`)))
+	assert.Equal(t, http.StatusNotFound, response.Code)
 }

@@ -20,14 +20,16 @@ import i18next from 'i18next'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
-import { useIsAdmin } from '@/hooks/use-admin'
+import { useIsAdmin, useIsSuperAdmin } from '@/hooks/use-admin'
 import { useDebounce } from '@/hooks/use-debounce'
 import { handleServerError } from '@/lib/handle-server-error'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   getUserBillingHistory,
   getAllBillingHistory,
   completeOrder,
+  retryOfficialPayment,
   isApiSuccess,
 } from '../api'
 import type { TopupRecord } from '../types'
@@ -46,6 +48,8 @@ interface UseBillingHistoryOptions {
 export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
   const { initialPage = 1, initialPageSize = 10 } = options
   const isAdmin = useIsAdmin()
+  const isSuperAdmin = useIsSuperAdmin() // 补单权限与账单查看权限分别判断。
+  const currentUserId = useAuthStore((state) => state.auth.user?.id ?? 0)
 
   const [records, setRecords] = useState<TopupRecord[]>([])
   const [total, setTotal] = useState(0)
@@ -56,6 +60,7 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
   const requestIdRef = useRef(0)
   const [loading, setLoading] = useState(false)
   const [completing, setCompleting] = useState(false)
+  const [retryingTradeNo, setRetryingTradeNo] = useState<string | null>(null)
 
   /**
    * Fetch billing history
@@ -95,8 +100,8 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
    */
   const handleCompleteOrder = useCallback(
     async (tradeNo: string) => {
-      if (!isAdmin) {
-        toast.error(i18next.t('Admin access required'))
+      if (!isSuperAdmin) {
+        toast.error(i18next.t('Super admin access required'))
         return false
       }
 
@@ -119,7 +124,32 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
         setCompleting(false)
       }
     },
-    [isAdmin, fetchBillingHistory]
+    [isSuperAdmin, fetchBillingHistory]
+  )
+
+  // 重试请求只传订单号，服务端核对归属、有效期和冻结金额。
+  // 成功与失败后都刷新账单，让支付回调或到期状态及时可见。
+  // 错误仍走统一解析，避免把请求对象或商户资料写入浏览器日志。
+  const handleRetryPayment = useCallback(
+    async (tradeNo: string) => {
+      setRetryingTradeNo(tradeNo)
+      try {
+        const response = await retryOfficialPayment({ trade_no: tradeNo })
+        if (!isApiSuccess(response) || !response.data) {
+          handleServerError(response, i18next.t('Failed to retry payment'))
+          await fetchBillingHistory()
+          return null
+        }
+        await fetchBillingHistory()
+        return response.data
+      } catch (error) {
+        handleServerError(error, i18next.t('Failed to retry payment'))
+        return null
+      } finally {
+        setRetryingTradeNo(null)
+      }
+    },
+    [fetchBillingHistory]
   )
 
   /**
@@ -162,6 +192,10 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
     loading,
     completing,
     isAdmin,
+    isSuperAdmin,
+    currentUserId,
+    retryingTradeNo,
+    handleRetryPayment,
     handlePageChange,
     handlePageSizeChange,
     handleSearch,

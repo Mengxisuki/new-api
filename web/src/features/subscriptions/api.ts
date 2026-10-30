@@ -155,10 +155,12 @@ export async function paySubscriptionWaffoPancake(
   return res.data
 }
 
-export async function paySubscriptionBalance(
+// 官方网关直接创建订阅订单，金额与续期目标由服务端固定。
+// 请求不携带钱包额度，也不会调用充值或余额兑换端点。
+export async function paySubscriptionOfficial(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/balance/pay', data)
+  const res = await api.post('/api/subscription/official/pay', data)
   return res.data
 }
 

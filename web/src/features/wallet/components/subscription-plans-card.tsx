@@ -66,13 +66,16 @@ import type { PaymentMethod, TopupInfo } from '../types'
 interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
   onAvailabilityChange?: (available: boolean) => void
-  userQuota?: number
   onPurchaseSuccess?: () => void | Promise<void>
 }
 
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
   return payMethods.filter(
-    (m) => m?.type && m.type !== 'stripe' && m.type !== 'creem'
+    (m) =>
+      m?.type &&
+      m.type !== 'stripe' &&
+      m.type !== 'creem' &&
+      m.provider !== 'official'
   )
 }
 
@@ -97,7 +100,6 @@ function getBillingPreferenceLabel(
 export function SubscriptionPlansCard({
   topupInfo,
   onAvailabilityChange,
-  userQuota,
   onPurchaseSuccess,
 }: SubscriptionPlansCardProps) {
   const { t } = useTranslation()
@@ -121,6 +123,14 @@ export function SubscriptionPlansCard({
   const enableCreem = !!topupInfo?.enable_creem_topup
   const enableWaffoPancake = !!topupInfo?.enable_waffo_pancake_topup
   const enableOnlineTopUp = !!topupInfo?.enable_online_topup
+  // 官方商户渠道必须直接创建订阅订单，不能当作 Epay 表单提交。
+  const officialMethods = useMemo(
+    () =>
+      (topupInfo?.pay_methods || []).filter(
+        (method) => method.provider === 'official'
+      ),
+    [topupInfo?.pay_methods]
+  )
   const epayMethods = useMemo(
     () => getEpayMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
@@ -211,6 +221,18 @@ export function SubscriptionPlansCard({
   useEffect(() => {
     onAvailabilityChange?.(isAvailable)
   }, [isAvailable, onAvailabilityChange])
+
+  // 生效套餐集合同时驱动卡片和购买弹窗，避免两处续期资格不一致。
+  // 后台仍是到期时间与续期权限的最终校验方，前端只提供正确入口。
+  const renewablePlanIds = new Set(
+    activeSubscriptions
+      .filter(
+        ({ subscription }) =>
+          subscription.status === 'active' &&
+          subscription.end_time > Date.now() / 1000
+      )
+      .map(({ subscription }) => subscription.plan_id)
+  )
 
   const planTitleMap = useMemo(() => {
     const map = new Map<number, string>()
@@ -533,7 +555,10 @@ export function SubscriptionPlansCard({
               const isPopular = index === 0 && plans.length > 1
               const limit = Number(plan.max_purchase_per_user || 0)
               const count = planPurchaseCountMap.get(plan.id) || 0
-              const reached = limit > 0 && count >= limit
+              // 同套餐生效中购买会延长原订阅，历史实例限购不能挡住续期。
+              // 状态与到期时间同时判断，避免过期但尚未维护的 active 记录被当作续期。
+              const isRenewal = renewablePlanIds.has(plan.id)
+              const reached = !isRenewal && limit > 0 && count >= limit
 
               const benefits = [
                 `${t('Validity Period')}: ${formatDuration(plan, t)}`,
@@ -619,7 +644,7 @@ export function SubscriptionPlansCard({
                           setPurchaseOpen(true)
                         }}
                       >
-                        {t('Subscribe Now')}
+                        {isRenewal ? t('Renew') : t('Subscribe Now')}
                       </Button>
                     )}
                   </CardContent>
@@ -648,9 +673,10 @@ export function SubscriptionPlansCard({
         enableWaffoPancake={enableWaffoPancake}
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
-        userQuota={userQuota}
+        officialMethods={officialMethods}
         onPurchaseSuccess={onPurchaseSuccess}
         purchaseLimit={
+          !renewablePlanIds.has(selectedPlan?.plan?.id ?? 0) &&
           selectedPlan?.plan?.max_purchase_per_user
             ? Number(selectedPlan.plan.max_purchase_per_user)
             : undefined

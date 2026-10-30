@@ -35,7 +35,19 @@ export interface ApiResponse<T = unknown> {
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
 export type AmountResponse = ApiResponse<string>
-export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
+// 官方支付返回二维码或跳转链接，订单号用于继续支付与账单定位。
+// 返回值不包含商户密钥，二维码内容由服务端签名后的渠道响应提供。
+export interface OfficialPaymentData {
+  payment_kind?: 'qr' | 'redirect' // 交互类型区别于 Epay 的提交表单。
+  qr_code?: string // Native 支付的原始二维码内容，不是已付款凭据。
+  redirect_url?: string // H5/页面支付目标，由服务端渠道配置决定。
+  trade_no?: string // 只作为订单标识，服务端仍校验所属用户。
+  expires_at?: number // Unix 秒；过期后不能继续发起该订单支付。
+}
+
+export type PaymentResponse = ApiResponse<
+  Record<string, unknown> & OfficialPaymentData
+> & {
   url?: string
 }
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
@@ -100,6 +112,9 @@ export interface PaymentMethod {
   min_topup?: number
   /** Optional react-icons component name or safe icon URL */
   icon?: string
+  provider?: string // 官方渠道在通用充值列表展示，但不混入 Epay 订阅支付。
+  channel_type?: string // 微信和支付宝共用官方渠道配置。
+  interaction_mode?: string // 二维码和 H5 由实际响应选择展示方式。
 }
 
 /**
@@ -247,7 +262,7 @@ export interface UserWalletData {
 /**
  * Topup record status
  */
-export type TopupStatus = 'success' | 'pending' | 'expired'
+export type TopupStatus = 'success' | 'pending' | 'failed' | 'expired'
 
 /**
  * Topup billing record
@@ -265,6 +280,9 @@ export interface TopupRecord {
   trade_no: string
   /** Payment method type */
   payment_method: string
+  payment_provider?: string // 后端网关标识用于识别官方订单，不能仅按渠道名称推断。
+  credited_quota?: number // 下单时冻结的实际入账额度，避免显示单位或汇率变更影响历史。
+  expires_at?: number // 官方订单有效期由后端设置，前端仅作显示。
   /** Creation timestamp */
   create_time: number
   /** Completion timestamp */
@@ -285,5 +303,10 @@ export interface BillingHistoryResponse {
  * Complete order request (admin only)
  */
 export interface CompleteOrderRequest {
+  trade_no: string
+}
+
+// 重试复用原订单，服务器验证用户归属和订单状态后返回当前支付资料。
+export interface RetryOfficialPaymentRequest {
   trade_no: string
 }

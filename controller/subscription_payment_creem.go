@@ -69,16 +69,10 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		return
 	}
 
-	if plan.MaxPurchasePerUser > 0 {
-		count, err := model.CountUserSubscriptionsByPlan(userId, plan.Id)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorT(c, "Purchase limit for this plan has been reached")
-			return
-		}
+	// 活跃同套餐允许续期；到账事务会再次检查，避免只依赖支付前快照。
+	if err := model.CheckSubscriptionPurchaseLimit(userId, plan); err != nil {
+		common.ApiError(c, err)
+		return
 	}
 
 	reference := "sub-creem-ref-" + randstr.String(6)

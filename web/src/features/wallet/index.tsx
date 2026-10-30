@@ -27,6 +27,7 @@ import { getSelf } from '@/lib/api'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
+import { OfficialPaymentQrDialog } from './components/dialogs/official-payment-qr-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
@@ -96,6 +97,8 @@ export function Wallet(props: WalletProps) {
     processing,
     calculatePaymentAmount,
     processPayment,
+    qrPayment, // 下单成功后仅打开二维码，不修改本地余额。
+    clearQrPayment, // 关闭或刷新后释放旧订单展示状态。
   } = usePayment()
   const {
     affiliateLink,
@@ -209,6 +212,20 @@ export function Wallet(props: WalletProps) {
       setConfirmDialogOpen(false)
       await fetchUser()
     }
+  }
+
+  // 用户手动关闭二维码后刷新余额，实际到账仍以服务器数据为准。
+  // 不自动轮询，不把打开二维码等价为完成付款。
+  const handleQrDialogChange = (open: boolean) => {
+    if (open) return
+    clearQrPayment()
+    void fetchUser()
+  }
+
+  // 刷新操作沿用钱包的真实用户查询，不累加未经确认的额度。
+  const handleQrPaymentRefresh = async () => {
+    clearQrPayment()
+    await fetchUser()
   }
 
   // Handle redemption
@@ -334,7 +351,6 @@ export function Wallet(props: WalletProps) {
               <SubscriptionPlansCard
                 topupInfo={topupInfo}
                 onAvailabilityChange={handleSubscriptionAvailabilityChange}
-                userQuota={user?.quota}
                 onPurchaseSuccess={fetchUser}
               />
             </div>
@@ -363,6 +379,16 @@ export function Wallet(props: WalletProps) {
         processing={processing || waffoProcessing || pancakeProcessing}
         discountRate={getDiscountRate()}
         usdExchangeRate={effectiveUsdExchangeRate}
+      />
+
+      {/* 二维码复用公共对话框与现有二维码库，支付凭证不进入 URL。 */}
+      <OfficialPaymentQrDialog
+        open={!!qrPayment}
+        onOpenChange={handleQrDialogChange}
+        onRefresh={handleQrPaymentRefresh}
+        qrCode={qrPayment?.qrCode ?? ''}
+        tradeNo={qrPayment?.tradeNo}
+        paymentMethodName={selectedPaymentMethod?.name}
       />
 
       <TransferDialog

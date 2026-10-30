@@ -296,6 +296,18 @@ bun run dev -- --port 5173
 
 定向验证：在仓库根目录运行 `go test ./controller ./router -run TestProcurementContactOptions -count=1`；在 `web/` 下运行 `bun run test src/features/home/__tests__ src/features/system-settings/general/__tests__/procurement-contact-upload.test.tsx src/features/system-settings/general/__tests__/procurement-contact-schema.test.ts src/features/system-settings/general/__tests__/logo-upload.test.tsx`。
 
+### Oak 订阅续期与官方微信支付
+
+同一套餐仍有效时再次付款会从原到期时间延长一个套餐周期，不新增并行订阅，不补满当前周期额度，也不改变原重置时间。已到期或取消后重新购买按新开通处理；套餐原有历史限购规则仍有效。到期前已创建的续费订单若在自然到期后才到账，仍能兑现付款。管理员授权入口保留；用户购买和续费仅能走支付网关，已删除 `/api/subscription/balance/pay`、前端余额兑换和套餐余额支付开关。钱包余额继续用于原有按量模型调用。
+
+官方支付功能从 `dev/v1.0.0` 的 `504c53567`、`c2a94666d` 相关实现迁入，复用其支付宝/微信渠道框架，仅新增原功能所需 `wechatpay-go v0.2.21`。配置入口为「系统设置 → 计费 → 付款设置」的官方支付渠道：微信 Native 二维码或 H5 跳转需要商户号、AppID、商户证书序列号、商户私钥、API v3 密钥、微信支付公钥 ID 和公钥；H5 还需匹配微信商户端已配置的域名及场景资料。私钥和密钥不会通过用户接口公开，配置页返回脱敏占位，留空保存保留已存凭据。此功能与微信登录相互独立。
+
+官方网关订阅通过 `POST /api/subscription/official/pay` 创建独立订单；充值仍用 `POST /api/user/pay`。微信通知地址为 `/api/user/wechat-pay/notify/<渠道ID>`，支付宝为 `/api/user/alipay/notify/<渠道ID>`，基址沿用站点的支付回调地址配置。未覆盖通知地址时自动生成上述路径；填写自定义通知地址时须准确指向对应渠道路径。服务端执行平台公钥验签、商户/AppID、渠道及金额匹配；订阅收款只开通或延长订阅，充值收款只增加下单冻结的额度。成功订单重复通知不会重复发放。
+
+官方充值订单的十分钟窗口用于限制继续付款；已验签成功的迟到通知不会仅因本地窗口结束被拒绝。账单可继续支付本人未过期的官方充值单，服务端先关闭原上游订单，再创建冻结金额和额度不变的新单。`top_ups.credited_quota` 保存冻结额度，由现有 AutoMigrate 新增；旧订单及历史 `allow_balance_pay` 列不删除，不据旧列恢复余额购买。
+
+验证命令：`go test ./model ./controller ./router ./service ./setting/operation_setting -run 'Official|Subscription|AccessTokenRouteRules|TopUp|Topup|Epay|Payment' -count=1`；配置本地专用 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后，同一命令执行三库迁移、到账和续期矩阵。在 `web/` 下运行 `bun run test src/features/wallet/__tests__ src/features/wallet/hooks/use-payment.test.ts src/features/wallet/lib/payment.test.ts src/features/system-settings/integrations/__tests__/official-payment.test.tsx`、`bunx tsgo -b` 和 `bun run build`。当前未执行真实商户付款或生产发布，收款前仍需通过真实商户配置完成端到端联调。
+
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。

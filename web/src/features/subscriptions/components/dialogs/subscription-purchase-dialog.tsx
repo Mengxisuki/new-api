@@ -27,17 +27,21 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Separator } from '@/components/ui/separator'
-import { useSystemConfig } from '@/hooks/use-system-config'
+import { OfficialPaymentQrDialog } from '@/features/wallet/components/dialogs/official-payment-qr-dialog'
+import { submitPaymentForm } from '@/features/wallet/lib/payment'
+import type {
+  OfficialPaymentData,
+  PaymentMethod as WalletPaymentMethod,
+} from '@/features/wallet/types'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
 
 import {
   paySubscriptionStripe,
   paySubscriptionCreem,
   paySubscriptionEpay,
   paySubscriptionWaffoPancake,
-  paySubscriptionBalance,
+  paySubscriptionOfficial,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord } from '../../types'
@@ -58,14 +62,15 @@ interface Props {
   epayMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
-  userQuota?: number
+  officialMethods?: WalletPaymentMethod[]
   onPurchaseSuccess?: () => void | Promise<void>
 }
 
 export function SubscriptionPurchaseDialog(props: Props) {
   const { t } = useTranslation()
-  const { currency } = useSystemConfig()
   const [paying, setPaying] = useState(false)
+  const [officialPayment, setOfficialPayment] =
+    useState<OfficialPaymentData | null>(null)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
 
   useEffect(() => {
@@ -85,20 +90,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.enableWaffoPancake && !!plan.waffo_pancake_product_id
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
+  const hasOfficial = (props.officialMethods?.length ?? 0) > 0
+  const hasAnyPayment =
+    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasOfficial
   const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
-  const quotaPerUnit =
-    currency?.quotaPerUnit && currency.quotaPerUnit > 0
-      ? currency.quotaPerUnit
-      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
-  const balanceCost = Math.max(
-    0,
-    Math.ceil(Number(plan.price_amount || 0) * quotaPerUnit)
-  )
-  const userQuota = Math.max(0, Number(props.userQuota || 0))
-  const allowBalancePay = plan.allow_balance_pay !== false
-  const insufficientBalance = userQuota < balanceCost
   const limitReached =
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
@@ -158,10 +154,6 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }
 
-  const isSafari =
-    typeof navigator !== 'undefined' &&
-    /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
-
   const handlePayEpay = async () => {
     if (!selectedEpayMethod) {
       toast.error(t('Please select a payment method'))
@@ -174,22 +166,8 @@ export function SubscriptionPurchaseDialog(props: Props) {
         payment_method: selectedEpayMethod,
       })
       if (res.message === 'success' && res.url) {
-        const form = document.createElement('form')
-        form.action = res.url
-        form.method = 'POST'
-        if (!isSafari) {
-          form.target = '_blank'
-        }
-        Object.entries(res.data || {}).forEach(([key, value]) => {
-          const input = document.createElement('input')
-          input.type = 'hidden'
-          input.name = key
-          input.value = String(value)
-          form.appendChild(input)
-        })
-        document.body.appendChild(form)
-        form.submit()
-        document.body.removeChild(form)
+        // 沿用钱包现有表单提交，Safari 行为和隐藏字段清理由公共函数负责。
+        submitPaymentForm(res.url, res.data || {})
         toast.success(t('Payment initiated'))
         props.onOpenChange(false)
       } else {
@@ -202,198 +180,208 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }
 
-  const handlePayBalance = async () => {
-    if (!allowBalancePay) {
-      toast.error(t('This plan does not allow balance redemption'))
-      return
-    }
+  // 直接向所选官方渠道支付订阅价格；不消费已有钱包余额。
+  // 微信 Native 返回二维码，H5/支付宝页面返回跳转地址。
+  // 仅服务端支付通知可以开通/续期，打开付款页不触发本地成功回调。
+  const handlePayOfficial = async (paymentMethod: string) => {
     setPaying(true)
     try {
-      const res = await paySubscriptionBalance({ plan_id: plan.id })
-      if (res.success) {
-        toast.success(t('Subscription purchased successfully'))
-        void props.onPurchaseSuccess?.()
-        props.onOpenChange(false)
+      // 只发送套餐和渠道标识，客户端不能指定应付金额或续期时长。
+      const res = await paySubscriptionOfficial({
+        plan_id: plan.id, // 与当前购买卡片一致，不允许替换为充值数量。
+        payment_method: paymentMethod, // 后端验证此官方渠道启用且支持付款。
+      })
+      // 保存二维码与订单号即可，避免把其他网关的响应字段带入展示状态。
+      if (res.success && res.data?.qr_code) {
+        setOfficialPayment({
+          qr_code: res.data.qr_code,
+          trade_no: res.data.trade_no,
+        })
+      } else if (res.success && res.data?.redirect_url) {
+        // H5 在当前窗口跳转，避免 await 后新窗口被浏览器阻止。
+        window.location.assign(res.data.redirect_url)
       } else {
         handleServerError(res, t('Payment request failed'))
       }
     } catch (error) {
+      // 失败必须可见，不能退回余额购买或把请求当作已付款。
       handleServerError(error, t('Payment request failed'))
     } finally {
-      setPaying(false)
+      setPaying(false) // 异常和取消都释放按钮状态，允许用户重新选择。
     }
   }
 
   return (
-    <Dialog
-      open={props.open}
-      onOpenChange={props.onOpenChange}
-      title={
-        <>
-          <Crown className='h-5 w-5' />
-          {t('Purchase Subscription')}
-        </>
-      }
-      contentClassName='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md'
-      titleClassName='flex items-center gap-2'
-      contentHeight='auto'
-      bodyClassName='space-y-4'
-    >
-      <div className='space-y-3 sm:space-y-4'>
-        <div className='bg-muted/50 space-y-2.5 rounded-lg border p-3 sm:space-y-3 sm:p-4'>
-          <div className='flex justify-between'>
-            <span className='text-muted-foreground text-sm'>
-              {t('Plan Name')}
-            </span>
-            <span className='max-w-[200px] truncate text-sm font-medium'>
-              {plan.title}
-            </span>
-          </div>
-          <div className='flex items-center justify-between'>
-            <span className='text-muted-foreground text-sm'>
-              {t('Validity Period')}
-            </span>
-            <span className='flex items-center gap-1 text-sm'>
-              <CalendarClock className='h-3.5 w-3.5' />
-              {formatDuration(plan, t)}
-            </span>
-          </div>
-          {formatResetPeriod(plan, t) !== t('No Reset') && (
+    <>
+      <Dialog
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        title={
+          <>
+            <Crown className='h-5 w-5' />
+            {t('Purchase Subscription')}
+          </>
+        }
+        contentClassName='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md'
+        titleClassName='flex items-center gap-2'
+        contentHeight='auto'
+        bodyClassName='space-y-4'
+      >
+        <div className='space-y-3 sm:space-y-4'>
+          <div className='bg-muted/50 space-y-2.5 rounded-lg border p-3 sm:space-y-3 sm:p-4'>
             <div className='flex justify-between'>
               <span className='text-muted-foreground text-sm'>
-                {t('Reset Period')}
+                {t('Plan Name')}
               </span>
-              <span className='text-sm'>{formatResetPeriod(plan, t)}</span>
+              <span className='max-w-[200px] truncate text-sm font-medium'>
+                {plan.title}
+              </span>
             </div>
-          )}
-          <div className='flex items-center justify-between'>
-            <span className='text-muted-foreground text-sm'>
-              {t('Plan Quota')}
-            </span>
-            <span className='flex items-center gap-1 text-sm'>
-              <Package className='h-3.5 w-3.5' />
-              {totalAmount > 0 ? formatQuota(totalAmount) : t('Unlimited')}
-            </span>
-          </div>
-          {plan.upgrade_group && (
             <div className='flex items-center justify-between'>
               <span className='text-muted-foreground text-sm'>
-                {t('Upgrade Group')}
+                {t('Validity Period')}
               </span>
-              <GroupBadge group={plan.upgrade_group} />
+              <span className='flex items-center gap-1 text-sm'>
+                <CalendarClock className='h-3.5 w-3.5' />
+                {formatDuration(plan, t)}
+              </span>
             </div>
-          )}
-          <Separator />
-          <div className='flex items-center justify-between'>
-            <span className='text-sm font-medium'>{t('Amount Due')}</span>
-            <span className='text-primary text-lg font-bold'>${price}</span>
+            {formatResetPeriod(plan, t) !== t('No Reset') && (
+              <div className='flex justify-between'>
+                <span className='text-muted-foreground text-sm'>
+                  {t('Reset Period')}
+                </span>
+                <span className='text-sm'>{formatResetPeriod(plan, t)}</span>
+              </div>
+            )}
+            <div className='flex items-center justify-between'>
+              <span className='text-muted-foreground text-sm'>
+                {t('Plan Quota')}
+              </span>
+              <span className='flex items-center gap-1 text-sm'>
+                <Package className='h-3.5 w-3.5' />
+                {totalAmount > 0 ? formatQuota(totalAmount) : t('Unlimited')}
+              </span>
+            </div>
+            {plan.upgrade_group && (
+              <div className='flex items-center justify-between'>
+                <span className='text-muted-foreground text-sm'>
+                  {t('Upgrade Group')}
+                </span>
+                <GroupBadge group={plan.upgrade_group} />
+              </div>
+            )}
+            <Separator />
+            <div className='flex items-center justify-between'>
+              <span className='text-sm font-medium'>{t('Amount Due')}</span>
+              <span className='text-primary text-lg font-bold'>${price}</span>
+            </div>
           </div>
-        </div>
 
-        {limitReached && (
-          <Alert variant='destructive'>
-            <AlertDescription>
-              {t('Purchase limit reached')} ({props.purchaseCount}/
-              {props.purchaseLimit})
-            </AlertDescription>
-          </Alert>
-        )}
-
-        <div className='flex flex-col gap-2 rounded-md border p-3'>
-          <div className='flex items-center justify-between gap-2 text-xs'>
-            <span className='text-muted-foreground'>{t('Required')}</span>
-            <span>{formatQuota(balanceCost)}</span>
-          </div>
-          <div className='flex items-center justify-between gap-2 text-xs'>
-            <span className='text-muted-foreground'>{t('Available')}</span>
-            <span>{formatQuota(userQuota)}</span>
-          </div>
-          {!allowBalancePay ? (
+          {limitReached && (
             <Alert variant='destructive'>
               <AlertDescription>
-                {t('This plan does not allow balance redemption')}
+                {t('Purchase limit reached')} ({props.purchaseCount}/
+                {props.purchaseLimit})
               </AlertDescription>
             </Alert>
-          ) : (
-            insufficientBalance && (
-              <Alert variant='destructive'>
-                <AlertDescription>{t('Insufficient balance')}</AlertDescription>
-              </Alert>
-            )
           )}
-          <Button
-            variant='outline'
-            onClick={handlePayBalance}
-            disabled={
-              paying || limitReached || !allowBalancePay || insufficientBalance
-            }
-          >
-            {t('Pay with Balance')}
-          </Button>
-        </div>
 
-        {hasAnyPayment && (
-          <div className='space-y-3'>
-            <p className='text-muted-foreground text-xs'>
-              {t('Select payment method')}
-            </p>
-            {(hasStripe || hasCreem || hasWaffoPancake) && (
-              <div className='grid grid-cols-2 gap-2 sm:flex'>
-                {hasStripe && (
-                  <Button
-                    variant='outline'
+          {hasAnyPayment && (
+            <div className='space-y-3'>
+              <p className='text-muted-foreground text-xs'>
+                {t('Select payment method')}
+              </p>
+              {(hasStripe || hasCreem || hasWaffoPancake) && (
+                <div className='grid grid-cols-2 gap-2 sm:flex'>
+                  {hasStripe && (
+                    <Button
+                      variant='outline'
+                      className='flex-1'
+                      onClick={handlePayStripe}
+                      disabled={paying || limitReached}
+                    >
+                      Stripe
+                    </Button>
+                  )}
+                  {hasCreem && (
+                    <Button
+                      variant='outline'
+                      className='flex-1'
+                      onClick={handlePayCreem}
+                      disabled={paying || limitReached}
+                    >
+                      Creem
+                    </Button>
+                  )}
+                  {hasWaffoPancake && (
+                    <Button
+                      variant='outline'
+                      className='flex-1'
+                      onClick={handlePayWaffoPancake}
+                      disabled={paying || limitReached}
+                    >
+                      Waffo Pancake
+                    </Button>
+                  )}
+                </div>
+              )}
+              {/* 官方支付使用真实渠道名称，余额充足也不出现钱包购买按钮。 */}
+              {hasOfficial && (
+                <div className='flex flex-wrap gap-2'>
+                  {props.officialMethods?.map((method) => (
+                    <Button
+                      key={method.type}
+                      variant='outline'
+                      disabled={paying || limitReached}
+                      onClick={() => handlePayOfficial(method.type)}
+                    >
+                      {method.name || method.type}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {hasEpay && (
+                <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
+                  <Combobox
+                    options={(props.epayMethods || []).map((m) => ({
+                      value: m.type,
+                      label: m.name || m.type,
+                    }))}
+                    value={selectedEpayMethod}
+                    onValueChange={(v) =>
+                      v !== null && setSelectedEpayMethod(v)
+                    }
+                    disabled={limitReached}
                     className='flex-1'
-                    onClick={handlePayStripe}
-                    disabled={paying || limitReached}
-                  >
-                    Stripe
-                  </Button>
-                )}
-                {hasCreem && (
+                  />
                   <Button
-                    variant='outline'
-                    className='flex-1'
-                    onClick={handlePayCreem}
-                    disabled={paying || limitReached}
+                    onClick={handlePayEpay}
+                    disabled={paying || !selectedEpayMethod || limitReached}
                   >
-                    Creem
+                    {t('Pay')}
                   </Button>
-                )}
-                {hasWaffoPancake && (
-                  <Button
-                    variant='outline'
-                    className='flex-1'
-                    onClick={handlePayWaffoPancake}
-                    disabled={paying || limitReached}
-                  >
-                    Waffo Pancake
-                  </Button>
-                )}
-              </div>
-            )}
-            {hasEpay && (
-              <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
-                <Combobox
-                  options={(props.epayMethods || []).map((m) => ({
-                    value: m.type,
-                    label: m.name || m.type,
-                  }))}
-                  value={selectedEpayMethod}
-                  onValueChange={(v) => v !== null && setSelectedEpayMethod(v)}
-                  disabled={limitReached}
-                  className='flex-1'
-                />
-                <Button
-                  onClick={handlePayEpay}
-                  disabled={paying || !selectedEpayMethod || limitReached}
-                >
-                  {t('Pay')}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </Dialog>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Dialog>
+      {/* 关闭二维码后只刷新订阅数据，是否生效以服务端查询结果为准。 */}
+      <OfficialPaymentQrDialog
+        open={!!officialPayment}
+        onOpenChange={(open) => {
+          if (!open) setOfficialPayment(null)
+        }}
+        onRefresh={async () => {
+          setOfficialPayment(null)
+          await props.onPurchaseSuccess?.()
+          props.onOpenChange(false)
+        }}
+        refreshLabel={t('Payment completed, refresh subscription')}
+        qrCode={officialPayment?.qr_code ?? ''}
+        tradeNo={officialPayment?.trade_no}
+      />
+    </>
   )
 }

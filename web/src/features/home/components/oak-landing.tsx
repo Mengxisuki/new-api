@@ -17,12 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowDown, ArrowRight, ReceiptText } from 'lucide-react'
+import { ArrowDown, ArrowRight, BookOpen, ReceiptText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Footer } from '@/components/layout/components/footer'
 import { PublicLayout } from '@/components/layout/components/public-layout'
 import { Button } from '@/components/ui/button'
+import { useStatus } from '@/hooks/use-status'
 
 import { OakComparison } from './oak-comparison'
 import { OakProcurement } from './oak-procurement'
@@ -71,6 +72,11 @@ const modelFamilies = [
 // 只有网站默认内容被替换，HTML 和 iframe 等分支不属于此组件。
 export function OakLanding(props: { isAuthenticated: boolean }) {
   const { t } = useTranslation()
+  // 共享公开状态中的后台文档配置，首屏与接入指南保持同一目标。
+  const { status } = useStatus()
+  // 未配置时禁用文档入口，不跳转到旧官网或不存在的站内页面。
+  const docsURL =
+    typeof status?.docs_link === 'string' ? status.docs_link.trim() : ''
   return (
     <div /* 局部主题变量边界，避免泄漏到控制台 */ className='oak-home'>
       <PublicLayout
@@ -124,6 +130,22 @@ export function OakLanding(props: { isAuthenticated: boolean }) {
                     <ArrowRight
                       /* 装饰箭头不加入按钮的朗读名称 */ aria-hidden='true'
                     />
+                  </Button>
+                  <Button
+                    /* 文档沿用首页次按钮样式，不依赖展开公共导航。 */
+                    variant='outline'
+                    className='oak-button oak-button-secondary'
+                    disabled={!docsURL} // 配置未加载或为空时不产生无效跳转。
+                    render={
+                      <a
+                        href={docsURL || undefined} // 只使用后台配置，不再硬编码文档地址。
+                        target='_blank'
+                        rel='noopener noreferrer' // 外链隔离新页面，不影响首页阅读状态。
+                      />
+                    }
+                  >
+                    <BookOpen aria-hidden='true' />
+                    {t('Docs')}
                   </Button>
                   <Button
                     variant='outline' // 服务次动作保留共享按钮的轮廓变体
@@ -199,6 +221,7 @@ export function OakLanding(props: { isAuthenticated: boolean }) {
           <OakComparison /* 比较区解释共享网关的实际差异 */ />
           <OakProcurement /* 采购说明包含开票清单与可配置联系信息 */ />
           <OakQuickStart
+            docsURL={docsURL} // 与首屏共用同一份文档设置，后台修改后同步生效。
             /* 接入示例沿用同一认证状态，不自行取会话 */ isAuthenticated={
               props.isAuthenticated
             }

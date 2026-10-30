@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { HOME_DOCS_URL } from '@/lib/constants'
 
 // 接入指南提供可复制示例，不自动发起任何模型请求。
 // 示例基址来自当前站点，适配不同部署域名及本地预览。
@@ -39,14 +38,17 @@ import { HOME_DOCS_URL } from '@/lib/constants'
 // 认证状态只改变首步入口，访问密钥页仍受应用现有路由守卫保护。
 // 外部文档在新标签打开，隔离 opener 并避免传递 referrer。
 // 代码区域保留键盘焦点，长代码由样式控制水平滚动。
-// 文档地址沿用旧官网常量，避免在不同示例位置重复硬编码。
+// 文档地址由首页传入，和首屏按钮使用同一份后台配置。
 // 按钮和标签页均复用项目组件，保留既有键盘与可访问性行为。
 // Python 示例从环境变量读取密钥和模型，不嵌入任何真实凭据。
 // 示例中的平台地址随当前部署域名变化，复制后无需沿用旧域名。
 // 选项卡只在当前页面维护选择，不持久化为全站语言偏好。
 // 剪贴板内容直接使用当前示例，防止可见代码和复制内容分离。
 // 文档按钮只打开已有接入文档，不在页面内尝试验证用户密钥。
-export function OakQuickStart(props: { isAuthenticated: boolean }) {
+export function OakQuickStart(props: {
+  isAuthenticated: boolean
+  docsURL: string // 父级从共享公开状态读取，空值表示未配置文档链接。
+}) {
   const { t } = useTranslation()
   const [language, setLanguage] = useState('python') // 初始示例与默认步骤中的 Python 接入一致
   const endpoint = `${window.location.origin}/v1` // 只取浏览器 origin，不混入当前路由查询参数
@@ -127,7 +129,7 @@ export function OakQuickStart(props: { isAuthenticated: boolean }) {
               <div>
                 <h3>
                   <a /* 文档入口只导航，不代替执行示例 */
-                    href={HOME_DOCS_URL} // 沿用旧官网文档入口的唯一常量
+                    href={props.docsURL || undefined} // 未配置时保留说明文字，不生成空链接。
                     target='_blank'
                     rel='noopener noreferrer'
                   >

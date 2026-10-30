@@ -284,7 +284,7 @@ bun run dev -- --port 5173
 
 ### Oak 官网与采购联系配置
 
-默认首页位于 `web/src/features/home/components/oak-landing.tsx`，局部主题和响应式样式位于 `web/src/styles/oak-home.css`。后台配置的自定义首页内容仍优先显示。
+默认首页位于 `web/src/features/home/components/oak-landing.tsx`，局部主题和响应式样式位于 `web/src/styles/oak-home.css`。后台配置的自定义首页内容仍优先显示。首屏“文档”按钮与接入指南均使用「系统设置 → 站点设置 → 系统信息 → 文档链接」的配置；未配置时首屏文档按钮禁用。
 
 服务选型区位于 `web/src/features/home/components/oak-services.tsx`，依次介绍量贩 Token、包月订阅、账号挂靠与卡密代充值。量贩入口沿用 `/pricing`，其他服务定位到采购咨询区；每周 150 元仅为额度示例，不代表已配置的套餐或月费。挂靠及外部账户充值的说明不等于已实现自助开通，代充值卡密也不等同于平台余额兑换码。
 

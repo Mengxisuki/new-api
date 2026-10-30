@@ -78,13 +78,16 @@ import { Home } from '../index'
 // 新增官网交互时只增加用户可观察的契约，不绑定内部组件拆分。
 const clients: QueryClient[] = []
 
-async function renderHome() {
+async function renderHome(docsLink?: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   clients.push(client)
   // 已有公开状态作为缓存输入；页面无采购联系人仍须完整显示。
-  client.setQueryData(STATUS_QUERY_KEY, { system_name: 'Oak' })
+  client.setQueryData(STATUS_QUERY_KEY, {
+    system_name: 'Oak',
+    docs_link: docsLink,
+  })
   client.setQueryData(['notice'], { success: true, data: '' })
   const router = createRouter({
     routeTree: createRootRoute({ component: Home }),
@@ -145,6 +148,54 @@ test('已登录访问首页时行动入口指向控制台', async () => {
     screen.queryByRole('button', { name: 'Get Started' })
   ).not.toBeInTheDocument()
 })
+
+// 从真实首页读取共享状态，不能只验证孤立按钮或硬编码默认地址。
+// 首屏与接入指南应始终使用同一份后台文档配置。
+// 未配置时禁用按钮，不能继续使用旧官网外链或产生空跳转。
+test.each([
+  [
+    '已配置文档链接',
+    'https://docs.example.org/oak/start',
+    'https://docs.example.org/oak/start',
+  ],
+  ['未配置文档链接', '', ''],
+])(
+  '%s时首屏和接入指南均跳转至对应文档',
+  async (_name, configured, expected) => {
+    await renderHome(configured)
+    // 首屏文档是独立可见按钮，不依赖展开手机导航。
+    const docs = screen.getByRole('button', { name: 'Docs' })
+    expect(docs).toBeVisible()
+    if (!expected) {
+      // 未配置时按钮仍可见，但不可跳转，也不保留过期的接入指南外链。
+      expect(docs).toHaveAttribute('aria-disabled', 'true')
+      expect(docs).not.toHaveAttribute('href')
+      expect(
+        screen.queryByRole('link', { name: 'Make your first request' })
+      ).not.toBeInTheDocument()
+      return
+    }
+    expect(docs).toHaveAttribute('href', expected)
+    // 外部文档单独打开，保留首页当前阅读位置。
+    expect(docs).toHaveAttribute('target', '_blank')
+    expect(docs).toHaveAttribute('rel', 'noopener noreferrer')
+    // 接入指南同步读取配置，防止首页两处文档链接分叉。
+    expect(
+      screen.getByRole('link', { name: 'Make your first request' })
+    ).toHaveAttribute('href', expected)
+    // 后台配置变更后两处入口同时响应，不冻结为首次加载时的地址。
+    await act(async () => {
+      clients[0].setQueryData(STATUS_QUERY_KEY, {
+        system_name: 'Oak',
+        docs_link: 'https://docs.example.org/oak/updated',
+      })
+    })
+    expect(docs).toHaveAttribute('href', 'https://docs.example.org/oak/updated')
+    expect(
+      screen.getByRole('link', { name: 'Make your first request' })
+    ).toHaveAttribute('href', 'https://docs.example.org/oak/updated')
+  }
+)
 
 // 从真实入口核对服务分组，防止说明组件未接入首页。
 // 价格目录与采购说明是现有入口，不应生成尚未实现的购买路由。

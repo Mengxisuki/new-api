@@ -25,6 +25,8 @@ import {
 } from './section-registry.tsx'
 
 const defaultBillingSettings: BillingSettings = {
+  'invoice_setting.default_rate': 0,
+  'invoice_setting.group_rates': '{}',
   QuotaForNewUser: 0,
   QuotaForInviter: 0,
   QuotaForInvitee: 0,

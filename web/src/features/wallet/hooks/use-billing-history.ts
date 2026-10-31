@@ -39,6 +39,8 @@ import type { TopupRecord } from '../types'
 // ============================================================================
 
 interface UseBillingHistoryOptions {
+  /** 弹窗关闭时停止读取，下一次打开重新请求当前订单。 */
+  enabled?: boolean
   /** Initial page number */
   initialPage?: number
   /** Initial page size */
@@ -46,7 +48,7 @@ interface UseBillingHistoryOptions {
 }
 
 export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
-  const { initialPage = 1, initialPageSize = 10 } = options
+  const { initialPage = 1, initialPageSize = 10, enabled = true } = options
   const isAdmin = useIsAdmin()
   const isSuperAdmin = useIsSuperAdmin() // 补单权限与账单查看权限分别判断。
   const currentUserId = useAuthStore((state) => state.auth.user?.id ?? 0)
@@ -178,10 +180,15 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
 
   // Fetch data after the search draft has settled.
   useEffect(() => {
-    if (keyword !== debouncedKeyword) return
+    // 打开状态属于请求依赖，常驻弹窗每次重开都会获取新数据。
+    if (!enabled || keyword !== debouncedKeyword) return
 
-    fetchBillingHistory()
-  }, [debouncedKeyword, fetchBillingHistory, keyword])
+    void fetchBillingHistory()
+    // 关闭后的旧响应不能覆盖下一次打开时的最新列表。
+    return () => {
+      requestIdRef.current += 1
+    }
+  }, [enabled, debouncedKeyword, fetchBillingHistory, keyword])
 
   return {
     records,

@@ -65,7 +65,8 @@ const defaultPaymentAmountCalculators: PaymentAmountCalculators = {
 export async function requestPaymentQuote(
   topupAmount: number,
   paymentType: string,
-  calculators: PaymentAmountCalculators = defaultPaymentAmountCalculators
+  calculators: PaymentAmountCalculators = defaultPaymentAmountCalculators,
+  invoiceRequired = false
 ): Promise<PaymentQuote> {
   let calculator = calculators.regular
   if (isStripePayment(paymentType)) {
@@ -76,7 +77,16 @@ export async function requestPaymentQuote(
     calculator = calculators.waffoPancake
   }
 
-  const response = await calculator({ amount: topupAmount })
+  // 不支持开票的国际通道明确失败，不能静默漏收开票费用。
+  if (invoiceRequired && !isLocalTopupPayment(paymentType)) {
+    throw new Error(
+      i18next.t('Invoicing is not supported for this payment method')
+    )
+  }
+  const response = await calculator({
+    amount: topupAmount,
+    ...(invoiceRequired ? { invoice_required: true } : {}),
+  })
   // 错误响应必须显式失败，不能将失败金额伪装成零元报价。
   if (!isApiSuccess(response) || !response.data) {
     throw createServerError(response, i18next.t('Payment request failed'))
@@ -93,10 +103,34 @@ export async function requestPaymentQuote(
   ) {
     throw new Error(i18next.t('Payment details unavailable. Please retry.'))
   }
-  return { amount, creditedQuota, inputAmount: topupAmount, paymentType }
+  if (
+    invoiceRequired &&
+    (response.invoice_required !== true ||
+      !Number.isFinite(response.invoice_fee_amount))
+  ) {
+    throw new Error(i18next.t('Payment details unavailable. Please retry.'))
+  }
+  return {
+    amount,
+    creditedQuota,
+    inputAmount: topupAmount,
+    paymentType,
+    invoiceRequired,
+    invoiceBaseAmount: response.invoice_base_amount,
+    invoiceFeePercent: response.invoice_fee_percent,
+    invoiceFeeAmount: response.invoice_fee_amount,
+  }
 }
 
-export function usePayment() {
+interface UsePaymentOptions {
+  invoiceRequired?: boolean
+  invoiceReady?: boolean // 抬头查询或快捷保存未完成时，不能发起开票付款。
+  invoiceProfileRevision?: number // 常用抬头修改后重新获取服务端报价。
+}
+
+export function usePayment(options: UsePaymentOptions = {}) {
+  const invoiceRequired = options.invoiceRequired === true
+  const invoiceReady = options.invoiceReady !== false
   const [quote, setQuote] = useState<PaymentQuote | null>(null)
   const requestId = useRef(0) // 只有最新金额与渠道的报价可以更新界面。
   const currency = useSystemConfigStore((state) => state.config.currency)
@@ -117,13 +151,18 @@ export function usePayment() {
       const currentRequest = ++requestId.current
       lastRequest.current = { amount: topupAmount, paymentType }
       setQuote(null)
-      if (topupAmount <= 0) {
+      if (topupAmount <= 0 || (invoiceRequired && !invoiceReady)) {
         setCalculating(false) // 用户清空输入时，已失效旧请求的 finally 不会再释放加载状态。
         return null
       }
       setCalculating(true)
       try {
-        const next = await requestPaymentQuote(topupAmount, paymentType)
+        const next = await requestPaymentQuote(
+          topupAmount,
+          paymentType,
+          undefined,
+          invoiceRequired
+        )
         if (
           currency.quotaDisplayType === 'CNY' &&
           isLocalTopupPayment(paymentType) &&
@@ -147,7 +186,7 @@ export function usePayment() {
         if (currentRequest === requestId.current) setCalculating(false)
       }
     },
-    [currency.quotaDisplayType]
+    [currency.quotaDisplayType, invoiceRequired, invoiceReady]
   )
 
   // 币种或汇率保存后重新向服务器报价，不在浏览器按新汇率改旧冻结额度。
@@ -160,12 +199,22 @@ export function usePayment() {
     currency.quotaDisplayType,
     currency.usdExchangeRate,
     currency.customCurrencyExchangeRate,
+    options.invoiceProfileRevision,
     calculatePaymentAmount,
   ])
 
   // Process payment
   const processPayment = useCallback(
     async (topupAmount: number, paymentType: string) => {
+      if (
+        invoiceRequired &&
+        (!invoiceReady || !isLocalTopupPayment(paymentType))
+      ) {
+        handleServerError(
+          new Error(i18next.t('Please configure your invoice title first'))
+        )
+        return false
+      }
       try {
         setProcessing(true)
 
@@ -180,6 +229,7 @@ export function usePayment() {
           : await requestPayment({
               amount,
               payment_method: paymentType,
+              ...(invoiceRequired ? { invoice_required: true } : {}),
             })
 
         if (!isApiSuccess(response)) {
@@ -232,7 +282,7 @@ export function usePayment() {
         setProcessing(false)
       }
     },
-    []
+    [invoiceRequired, invoiceReady]
   )
 
   return {

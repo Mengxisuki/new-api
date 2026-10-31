@@ -19,13 +19,18 @@ import (
 )
 
 type WaffoPancakePayRequest struct {
-	Amount int64 `json:"amount"`
+	InvoiceRequired bool  `json:"invoice_required"`
+	Amount          int64 `json:"amount"`
 }
 
 func RequestWaffoPancakeAmount(c *gin.Context) {
 	var req WaffoPancakePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		paymentError(c, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
 		return
 	}
 
@@ -348,6 +353,10 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	var req WaffoPancakePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		paymentError(c, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
 		return
 	}
 	if req.Amount < int64(setting.WaffoPancakeMinTopUp) {

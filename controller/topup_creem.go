@@ -49,8 +49,9 @@ func verifyCreemSignature(payload string, signature string, secret string) bool 
 }
 
 type CreemPayRequest struct {
-	ProductId     string `json:"product_id"`
-	PaymentMethod string `json:"payment_method"`
+	InvoiceRequired bool   `json:"invoice_required"`
+	ProductId       string `json:"product_id"`
+	PaymentMethod   string `json:"payment_method"`
 }
 
 type CreemProduct struct {
@@ -65,6 +66,10 @@ type CreemAdaptor struct {
 }
 
 func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
+		return
+	}
 	if req.PaymentMethod != model.PaymentMethodCreem {
 		paymentError(c, common.NewMessage("Unsupported payment channel"))
 		return

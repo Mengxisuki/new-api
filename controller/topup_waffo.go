@@ -105,16 +105,21 @@ func getWaffoPayMoney(amount float64, group string) float64 {
 }
 
 type WaffoPayRequest struct {
-	Amount         int64  `json:"amount"`
-	PayMethodIndex *int   `json:"pay_method_index"` // 服务端支付方式列表的索引，nil 表示由 Waffo 自动选择
-	PayMethodType  string `json:"pay_method_type"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
-	PayMethodName  string `json:"pay_method_name"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
+	InvoiceRequired bool   `json:"invoice_required"`
+	Amount          int64  `json:"amount"`
+	PayMethodIndex  *int   `json:"pay_method_index"` // 服务端支付方式列表的索引，nil 表示由 Waffo 自动选择
+	PayMethodType   string `json:"pay_method_type"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
+	PayMethodName   string `json:"pay_method_name"`  // Deprecated: 兼容旧前端，优先使用 pay_method_index
 }
 
 func RequestWaffoAmount(c *gin.Context) {
 	var req WaffoPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		paymentError(c, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
 		return
 	}
 
@@ -156,6 +161,10 @@ func RequestWaffoPay(c *gin.Context) {
 		return
 	}
 	waffoMinTopup := int64(setting.WaffoMinTopUp)
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
+		return
+	}
 	if req.Amount < waffoMinTopup {
 		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": waffoMinTopup}))
 		return

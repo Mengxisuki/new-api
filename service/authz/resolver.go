@@ -1,13 +1,21 @@
 package authz
 
-import "slices"
+import (
+	"slices"
 
-import "github.com/casbin/casbin/v2"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/casbin/casbin/v2"
+)
 
 // Can reports whether the subject may perform the permission. A superuser role
 // short-circuits to allow. Otherwise a per-user override wins, then the union of
 // the subject's role baselines applies.
 func Can(userID int, systemRole int, permission Permission) bool {
+	// 财务角色的资源边界高于历史用户覆盖，降权后不能沿用旧管理员权限。
+	// 逐请求检查角色，旧缓存的用户覆盖不能扩大到渠道、审计或插件资源。
+	if systemRole == common.RoleFinanceUser && permission.Resource != ResourceFinance {
+		return false
+	}
 	roles := resolveSubjectRoles(userID, systemRole)
 	if len(roles) == 0 {
 		return false

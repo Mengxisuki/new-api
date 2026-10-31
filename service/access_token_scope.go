@@ -131,7 +131,9 @@ func AccessTokenCatalog(userID, role int) []AccessTokenCatalogGroup {
 		resource.Actions = slices.Clone(resource.Actions)
 		resources[resource.group] = append(resources[resource.group], resource)
 	}
-	if role >= common.RoleAdminUser {
+	// 财务可以授权其真实财务动作；每项仍经 Can 过滤，不能借目录扩大角色。
+	// 静态 user/billing/option 等资源继续保留上面的管理员门槛。
+	if role >= common.RoleFinanceUser {
 		for _, definition := range authz.Catalog() {
 			resource := AccessTokenResource{Resource: definition.Resource, LabelKey: definition.LabelKey}
 			for _, action := range definition.Actions {

@@ -724,3 +724,114 @@ func TestUpdateUserSettingKeepsWhatTheRequestLeavesOut(t *testing.T) {
 		})
 	}
 }
+
+// 已有管理员改为财务必须经真实单次验证，并清除旧的管理权限覆盖。
+// 角色变化沿用模型的认证版本提升与会话撤销，不另建会话兼容路径。
+// 数据库句柄由现有夹具隔离，支持同一命令在外部测试数据库复核。
+func TestManageUserFinanceRoleClearsAdministratorGrantsAndSessions(t *testing.T) {
+	db := setupManageUserTestDB(t) // 同一夹具支持三库，不能只在内存状态判断权限变化。
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = true // 财务内置基线由正式授权初始化种入测试库。
+	t.Cleanup(func() { common.IsMasterNode = previousMaster })
+	require.NoError(t, authz.Init(db)) // 真实角色基线与用户覆盖均写入隔离库。
+	user := model.User{Username: "managed-finance", Password: "password", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, authz.SetUserPermissions(user.Id, authz.PermissionsMap{authz.ResourceChannel: {authz.ActionSensitiveWrite: true}}))
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.UserSession{SID: "finance-old-admin", UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "fixture-refresh", LoginMethod: "password", LastActiveAt: now, ExpiresAt: now + 3600}).Error)
+	body := fmt.Sprintf(`{"id":%d,"action":"finance"}`, user.Id) // 角色变更必须通过明确的管理动作，不能混入普通资料更新。
+	// 未携带验证凭据时不能改变角色，即使调用者上下文是 Root。
+	response := performManageUserRequest(t, body)
+	assert.NotContains(t, response.Body.String(), `"success":true`)
+	var unchanged model.User // 用数据库再次读取，不能仅靠请求失败码推断角色未变。
+	require.NoError(t, db.First(&unchanged, user.Id).Error)
+	assert.Equal(t, common.RoleAdminUser, unchanged.Role) // 缺少凭据不会提前撤销原用户权限。
+	identity, proof := manageUserProof(t, db, service.VerificationOperation{Scope: service.VerificationScopeAdminUserManage, Context: []byte(fmt.Sprintf(`{"user_id":%d,"action":"finance"}`, user.Id))})
+	response = performVerifiedManageUserRequest(t, body, identity, proof)
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	var updated model.User // 模型认证版本是所有旧会话失效的依据。
+	require.NoError(t, db.First(&updated, user.Id).Error)
+	assert.Equal(t, common.RoleFinanceUser, updated.Role)               // 授权不能误写为完整管理员。
+	assert.EqualValues(t, 2, updated.AuthVersion)                       // 原管理员身份凭据不能继续使用旧版本。
+	assert.True(t, authz.Can(user.Id, updated.Role, authz.FinanceRead)) // 新角色也不能被清旧授权误删默认财务能力。
+	assert.False(t, authz.Can(user.Id, updated.Role, authz.ChannelSensitiveWrite))
+	assert.Empty(t, authz.ExplicitUserOverrides(user.Id)) // 清除真实策略记录，而不只隐藏前端菜单。
+	var session model.UserSession                         // 核对旧管理员会话真正被撤销，而不是只更新展示角色。
+	require.NoError(t, db.First(&session, "sid = ?", "finance-old-admin").Error)
+	assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+	assert.Equal(t, "admin_finance_role", session.RevokedReason)
+}
+
+// 财务创建与授权使用既有管理员验证作用域，参数也参与凭据绑定。
+// 普通用户创建不能借该作用域伪装成财务提权。
+func TestFinanceRoleVerificationContextsAreBound(t *testing.T) {
+	for _, operation := range []service.VerificationOperation{
+		{Scope: service.VerificationScopeAdminUserCreate, Context: []byte(`{"role":5}`)},
+		{Scope: service.VerificationScopeAdminUserManage, Context: []byte(`{"user_id":7,"action":"finance"}`)},
+	} {
+		binding, err := service.BindVerificationOperation(operation)
+		require.NoError(t, err)
+		assert.NotEmpty(t, binding.ContextHash) // 用户、动作或角色变更后将不能复用此凭据。
+	}
+	_, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeAdminUserCreate, Context: []byte(`{"role":1}`)})
+	require.ErrorIs(t, err, service.ErrVerificationContextInvalid)
+}
+
+// 财务身份的新建同样是授权，不能因为数字小于管理员而绕过单次验证。
+// 正式创建后仍只有财务基线，不因创建入口属于管理员模块而获得渠道权限。
+// 同一公共入口同时验证 Root 成功和普通管理员拒绝，避免只测前端下拉。
+func TestCreateFinanceUserRequiresRootAndBoundProof(t *testing.T) {
+	db := setupManageUserTestDB(t) // 同一夹具支持三库，不能只在内存状态判断权限变化。
+	oldMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = oldMaster })
+	require.NoError(t, authz.Init(db)) // 真实角色基线与用户覆盖均写入隔离库。
+	body := `{"username":"new-finance","password":"finance-password-1","role":5}`
+	response := adminUserRequest(http.MethodPost, "/api/user/", body, "", service.AuthIdentity{UserID: 9999}, common.RoleAdminUser, nil, CreateUser)
+	assert.Contains(t, response.Body.String(), "Only root can assign the finance role")
+	response = adminUserRequest(http.MethodPost, "/api/user/", body, "", service.AuthIdentity{UserID: 9999}, common.RoleRootUser, nil, CreateUser)
+	assert.NotContains(t, response.Body.String(), `"success":true`)
+	identity, proof := manageUserProof(t, db, service.VerificationOperation{Scope: service.VerificationScopeAdminUserCreate, Context: []byte(`{"role":5}`)})
+	response = adminUserRequest(http.MethodPost, "/api/user/", body, proof, identity, common.RoleRootUser, nil, CreateUser)
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	var created model.User
+	require.NoError(t, db.Where("username = ?", "new-finance").First(&created).Error)
+	assert.Equal(t, common.RoleFinanceUser, created.Role) // 新建路径不能把财务误写成完整管理员。
+	assert.True(t, authz.Can(created.Id, created.Role, authz.FinanceWrite))
+	assert.False(t, authz.Can(created.Id, created.Role, authz.ChannelRead)) // 完成财务授权不等于授予模型渠道访问。
+}
+
+// 财务用户只能为实际拥有的财务能力创建个人令牌，不能伪造其它管理 scope。
+// 浏览器会话和单次验证均调用正式服务，令牌入库来自真实控制器。
+// 有效的 scope 也不能跳过验证，失败时数据库不能留下半个令牌。
+func TestFinancePersonalTokenCreationKeepsGrantAndProofBoundaries(t *testing.T) {
+	db := setupManageUserTestDB(t) // 同一夹具支持三库，不能只在内存状态判断权限变化。
+	oldMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = oldMaster })
+	require.NoError(t, authz.Init(db))                                 // 真实角色基线与用户覆盖均写入隔离库。
+	operator := createQuotaTestOperator(t, db, common.RoleFinanceUser) // 策略查询与凭据身份必须是同一个真实财务用户。
+	require.NoError(t, model.PublishUserAuthCache(operator.Id))        // 保留生产认证缓存版本约束，不能绕过过期身份判断。
+	bundle, err := service.CreateLoginSession(operator.Id, "password", "127.0.0.1", "finance-pat-test")
+	require.NoError(t, err)
+	identity, err := service.ParseAccessToken(bundle.AccessToken) // 使用服务端签发的真实会话身份，避免手工拼接SID。
+	require.NoError(t, err)
+	response := adminUserRequest(http.MethodPost, "/api/user/access_tokens", `{"name":"finance","scopes":["channel:read"],"expires_at":0}`, "", identity, common.RoleFinanceUser, nil, CreateAccessToken)
+	assert.Equal(t, http.StatusBadRequest, response.Code) // 已登录也必须拒绝超出角色的授权请求。
+	assert.Contains(t, response.Body.String(), "ACCESS_TOKEN_SCOPE_FORBIDDEN")
+	body := `{"name":"finance","scopes":["finance:read"],"expires_at":0}`
+	response = adminUserRequest(http.MethodPost, "/api/user/access_tokens", body, "", identity, common.RoleFinanceUser, nil, CreateAccessToken)
+	assert.NotContains(t, response.Body.String(), `"success":true`) // 财务身份不是跳过验证的许可。
+	var count int64
+	require.NoError(t, db.Model(&model.UserAccessToken{}).Where("user_id = ?", operator.Id).Count(&count).Error)
+	assert.Zero(t, count) // 失败不能先写入可用凭证再依赖界面隐藏。
+	binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeAccessTokenGenerate, Context: []byte(`{"scopes":["finance:read"],"expires_at":0}`)})
+	require.NoError(t, err)
+	proof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPassword, binding)
+	require.NoError(t, err)
+	response = adminUserRequest(http.MethodPost, "/api/user/access_tokens", body, proof, identity, common.RoleFinanceUser, nil, CreateAccessToken)
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	var token model.UserAccessToken // 检查持久化scope，而非只核对一次成功响应。
+	require.NoError(t, db.Where("user_id = ?", operator.Id).First(&token).Error)
+	assert.Equal(t, []string{"finance:read"}, token.GetScopes()) // 存储时不能额外补管理员默认scope。
+}

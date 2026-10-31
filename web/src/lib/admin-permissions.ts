@@ -25,6 +25,7 @@ export type AdminCapabilities = AdminPermissionMatrix
 
 export const ADMIN_PERMISSION_RESOURCES = {
   AUDIT: 'audit',
+  FINANCE: 'finance', // 与后端权限目录同名，财务工作区按动作校验。
   CHANNEL: 'channel',
   TASK_PLUGIN: 'task_plugin',
 } as const

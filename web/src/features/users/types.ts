@@ -28,7 +28,7 @@ import type { AdminPermissionMatrix } from '@/lib/admin-permissions'
 export const userStatusSchema = z.number()
 export type UserStatus = z.infer<typeof userStatusSchema>
 
-/** User role: 1 = common user, 10 = admin, 100 = root */
+/** 用户角色：1 普通用户、5 财务、10 管理员、100 超级管理员。 */
 export const userRoleSchema = z.number()
 export type UserRole = z.infer<typeof userRoleSchema>
 
@@ -129,6 +129,7 @@ export interface UserFormData {
 }
 
 export type ManageUserAction =
+  | 'finance'
   | 'promote'
   | 'demote'
   | 'enable'

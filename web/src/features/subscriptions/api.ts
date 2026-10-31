@@ -239,3 +239,23 @@ export async function getGroups(): Promise<ApiResponse<string[]>> {
   const res = await api.get('/api/group')
   return res.data
 }
+
+// 本地订阅开票报价采用支付接口相同的冻结规则，不能在浏览器自行加价。
+export async function quoteSubscriptionInvoice(
+  planId: number,
+  invoiceRequired: boolean
+) {
+  const response = await api.post('/api/subscription/invoice-quote', {
+    plan_id: planId,
+    invoice_required: invoiceRequired,
+  })
+  return response.data as {
+    message?: string
+    success?: boolean
+    data?: string
+    invoice_required?: boolean
+    invoice_base_amount?: number
+    invoice_fee_percent?: number
+    invoice_fee_amount?: number
+  }
+}

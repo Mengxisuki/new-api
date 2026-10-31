@@ -534,3 +534,42 @@ func TestApplyWebSocketSubprotocolAuthorizationReadsRepeatedHeaders(t *testing.T
 	assert.True(t, applyWebSocketSubprotocolAuthorization(header))
 	assert.Equal(t, "Bearer sk-later-field", header.Get("Authorization"))
 }
+
+// 财务身份通过原有登录令牌认证，仅能进入显式财务动作。
+// 普通管理员接口、用户管理及人工补单不因新增角色而放开。
+// 测试实际中间件与授权目录，不用伪造 c.Set(role) 代替认证。
+func TestFinanceAuthDoesNotGrantAdministratorRoutes(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t) // 认证读取隔离数据库，不调用外部登录服务。
+	require.NoError(t, model.DB.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}))
+	oldMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = oldMaster })
+	require.NoError(t, authz.Init(model.DB)) // 财务资源从真实目录种子加载，不mock权限返回值。
+	user := model.User{Username: "finance-auth", AffCode: "finance-auth", Role: common.RoleFinanceUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, model.DB.Create(&user).Error)
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "finance-auth-test")
+	require.NoError(t, err)
+	router := gin.New() // 最小路由仍串接真实鉴权和授权中间件。
+	ok := func(c *gin.Context) { c.Status(http.StatusNoContent) }
+	router.GET("/api/finance/invoices", FinanceAuth(), RequirePermission(authz.FinanceRead), ok) // 读权限不能替代写权限。
+	router.POST("/api/finance/invoices/issue", FinanceAuth(), RequirePermission(authz.FinanceWrite), ok)
+	router.GET("/api/channel/", AdminAuth(), ok)
+	router.GET("/api/user/", AdminAuth(), ok)
+	router.POST("/api/user/topup/complete", RootAuth(), ok)
+	for _, test := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/api/finance/invoices", http.StatusNoContent},
+		{http.MethodPost, "/api/finance/invoices/issue", http.StatusNoContent},
+		{http.MethodGet, "/api/channel/", http.StatusForbidden},             // 角色5不满足旧管理员门槛。
+		{http.MethodGet, "/api/user/", http.StatusForbidden},                // 财务不能管理其它账号。
+		{http.MethodPost, "/api/user/topup/complete", http.StatusForbidden}, // 开票权限不能冒充人工补余额授权。
+	} {
+		request := httptest.NewRequest(test.method, test.path, nil)
+		request.Header.Set("Authorization", "Bearer "+bundle.AccessToken) // 每条请求重新验身份，不能继承上一条上下文。
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		assert.Equal(t, test.want, response.Code, response.Body.String()) // 允许/拒绝以真实HTTP结果验证。
+	}
+}

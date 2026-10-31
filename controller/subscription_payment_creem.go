@@ -16,7 +16,8 @@ import (
 )
 
 type SubscriptionCreemPayRequest struct {
-	PlanId int `json:"plan_id"`
+	PlanId          int  `json:"plan_id"`
+	InvoiceRequired bool `json:"invoice_required"`
 }
 
 func SubscriptionRequestCreemPay(c *gin.Context) {
@@ -40,6 +41,10 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		return
 	}
 
+	if req.InvoiceRequired {
+		common.ApiErrorT(c, "Invoices are supported only for CNY local payment methods")
+		return
+	}
 	plan, err := model.GetSubscriptionPlanById(req.PlanId)
 	if err != nil {
 		common.ApiError(c, err)

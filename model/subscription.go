@@ -207,10 +207,12 @@ func (p *SubscriptionPlan) NormalizeDefaults() {
 
 // Subscription order (payment -> webhook -> create UserSubscription)
 type SubscriptionOrder struct {
-	Id     int     `json:"id"`
-	UserId int     `json:"user_id" gorm:"index"`
-	PlanId int     `json:"plan_id" gorm:"index"`
-	Money  float64 `json:"money"`
+	Id              int             `json:"id"`
+	UserId          int             `json:"user_id" gorm:"index"`
+	PlanId          int             `json:"plan_id" gorm:"index"`
+	Money           float64         `json:"money"`
+	InvoiceRequired bool            `json:"invoice_required" gorm:"not null;default:false"`
+	Invoice         *InvoiceRequest `json:"-" gorm:"-"`
 
 	TradeNo         string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string `json:"payment_method" gorm:"type:varchar(50)"`
@@ -222,11 +224,21 @@ type SubscriptionOrder struct {
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
 }
 
+// 订阅与充值一样，申请快照必须和待付款订单原子创建。
 func (o *SubscriptionOrder) Insert() error {
 	if o.CreateTime == 0 {
 		o.CreateTime = common.GetTimestamp()
 	}
-	return DB.Create(o).Error
+	if o.Invoice == nil {
+		return DB.Create(o).Error
+	}
+	o.InvoiceRequired = true
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(o).Error; err != nil {
+			return err
+		}
+		return CreateInvoiceForOrderTx(tx, o.Invoice, o.TradeNo)
+	})
 }
 
 func (o *SubscriptionOrder) Update() error {
@@ -727,6 +739,11 @@ func completeSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
 			return err
 		}
+		if order.InvoiceRequired {
+			if err := MarkInvoicePaidTx(tx, order.TradeNo); err != nil {
+				return err
+			}
+		}
 		order.Status = common.TopUpStatusSuccess   // 权益更新成功后再标记订单完成，统一随事务提交。
 		order.CompleteTime = common.GetTimestamp() // 仅记录服务端确认时刻，订单创建时刻保持可追溯。
 		// 保留网关交易引用便于对账，不把商户凭据写入订单载荷。
@@ -772,14 +789,15 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	if err := tx.Where("trade_no = ?", order.TradeNo).First(&topup).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			topup = TopUp{
-				UserId:        order.UserId,
-				Amount:        0,
-				Money:         order.Money,
-				TradeNo:       order.TradeNo,
-				PaymentMethod: order.PaymentMethod,
-				CreateTime:    order.CreateTime,
-				CompleteTime:  now,
-				Status:        common.TopUpStatusSuccess,
+				UserId:          order.UserId,
+				Amount:          0,
+				Money:           order.Money,
+				TradeNo:         order.TradeNo,
+				PaymentMethod:   order.PaymentMethod,
+				InvoiceRequired: order.InvoiceRequired,
+				CreateTime:      order.CreateTime,
+				CompleteTime:    now,
+				Status:          common.TopUpStatusSuccess,
 			}
 			return tx.Create(&topup).Error
 		}

@@ -282,6 +282,8 @@ export type ModelSettings = {
 }
 
 export type BillingSettings = {
+  'invoice_setting.default_rate': number
+  'invoice_setting.group_rates': string
   QuotaForNewUser: number
   QuotaForInviter: number
   QuotaForInvitee: number

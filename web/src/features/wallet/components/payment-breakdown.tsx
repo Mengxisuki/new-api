@@ -30,6 +30,7 @@ interface PaymentBreakdownProps {
   paymentAmount: number // 来自同一次服务端报价的实际应付金额。
   creditedQuota?: number | null // 缺失时明确未知，禁止自行推导入账结果。
   calculating: boolean
+  invoiceFeeAmount?: number // 开票附加费已包含在付款额，不能叠加到平台余额。
   quoteValid?: boolean // 父级核对当前输入和渠道后才允许展示此报价。
 }
 
@@ -66,6 +67,19 @@ export function PaymentBreakdown(props: PaymentBreakdownProps) {
       lang={locale}
     >
       {message}
+      {valid && props.invoiceFeeAmount !== undefined ? (
+        <span className='mt-1 block'>
+          {t(
+            'Included invoicing surcharge: {{amount}}. Platform credit is unchanged.',
+            {
+              amount: formatLocalCurrencyAmount(
+                props.invoiceFeeAmount,
+                options
+              ),
+            }
+          )}
+        </span>
+      ) : null}
     </p>
   )
 }

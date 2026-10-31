@@ -135,6 +135,22 @@ export function SidebarModulesCard() {
     },
   ]
 
+  // 财务类别只有服务端声明可配置时显示，隐藏偏好不能授予开票权限。
+  if (currentUser?.permissions?.sidebar_modules?.finance) {
+    sectionDefs.push({
+      key: 'finance',
+      title: t('Finance'),
+      description: t('Invoice management'),
+      modules: [
+        {
+          key: 'invoices',
+          title: t('Invoice management'),
+          description: t('View invoice requests'),
+        },
+      ],
+    })
+  }
+
   const loadConfig = useCallback(async () => {
     try {
       const res = await api.get('/api/user/self')

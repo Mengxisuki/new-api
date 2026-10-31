@@ -218,7 +218,7 @@ export function UsersMutateDrawer({
           if (!proof) return
           proofToken = proof.proof_token
         }
-      } else if ((payload.role ?? 0) >= ROLE.ADMIN) {
+      } else if ((payload.role ?? 0) >= ROLE.FINANCE) {
         const proof = await requestVerification({
           scope: 'admin.user.create',
           context: { role: payload.role ?? ROLE.ADMIN },
@@ -336,6 +336,9 @@ export function UsersMutateDrawer({
                         <Select
                           items={[
                             { value: '1', label: t('Common User') },
+                            ...(currentUser?.role === ROLE.SUPER_ADMIN
+                              ? [{ value: '5', label: t('Finance') }]
+                              : []),
                             { value: '10', label: t('Admin') },
                           ]}
                           onValueChange={(value) =>
@@ -354,6 +357,11 @@ export function UsersMutateDrawer({
                               <SelectItem value='1'>
                                 {t('Common User')}
                               </SelectItem>
+                              {currentUser?.role === ROLE.SUPER_ADMIN && (
+                                <SelectItem value='5'>
+                                  {t('Finance')}
+                                </SelectItem>
+                              )}
                               <SelectItem value='10'>{t('Admin')}</SelectItem>
                             </SelectGroup>
                           </SelectContent>

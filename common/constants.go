@@ -196,14 +196,15 @@ const (
 )
 
 const (
-	RoleGuestUser  = 0
-	RoleCommonUser = 1
-	RoleAdminUser  = 10
-	RoleRootUser   = 100
+	RoleGuestUser   = 0
+	RoleCommonUser  = 1
+	RoleFinanceUser = 5 // 财务只进入专用财务接口，等级低于普通管理员。
+	RoleAdminUser   = 10
+	RoleRootUser    = 100
 )
 
 func IsValidateRole(role int) bool {
-	return role == RoleGuestUser || role == RoleCommonUser || role == RoleAdminUser || role == RoleRootUser
+	return role == RoleGuestUser || role == RoleCommonUser || role == RoleFinanceUser || role == RoleAdminUser || role == RoleRootUser
 }
 
 var (

@@ -20,10 +20,12 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { useInvoiceProfile } from '@/features/invoices/hooks/use-invoice-profile'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
 import { getCurrencyDisplay } from '@/lib/currency'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
@@ -31,6 +33,7 @@ import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { OfficialPaymentQrDialog } from './components/dialogs/official-payment-qr-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
+import { InvoiceSelection } from './components/invoice-selection'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
@@ -85,6 +88,10 @@ export function Wallet(props: WalletProps) {
 
   const { status } = useStatus()
   const { currency } = useSystemConfig()
+  const [invoiceRequired, setInvoiceRequired] = useState(false) // 每次进入钱包默认不开票，不持久化选择。
+  const [invoiceRevision, setInvoiceRevision] = useState(0)
+  const invoiceProfile = useInvoiceProfile(invoiceRequired)
+  const invoiceReady = !invoiceRequired || !!invoiceProfile.data
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
   // 公共货币工具统一处理 CNY 与自定义展示率，不另写默认 7.3 的映射。
@@ -101,7 +108,11 @@ export function Wallet(props: WalletProps) {
     processPayment,
     qrPayment, // 下单成功后仅打开二维码，不修改本地余额。
     clearQrPayment, // 关闭或刷新后释放旧订单展示状态。
-  } = usePayment()
+  } = usePayment({
+    invoiceRequired,
+    invoiceReady,
+    invoiceProfileRevision: invoiceRevision,
+  })
   const {
     affiliateLink,
     loading: affiliateLoading,
@@ -167,7 +178,9 @@ export function Wallet(props: WalletProps) {
   const quoteValid =
     !!quote &&
     quote.inputAmount === topupAmount &&
-    quote.paymentType === getCurrentPaymentType()
+    quote.paymentType === getCurrentPaymentType() &&
+    !!quote.invoiceRequired === invoiceRequired &&
+    invoiceReady
 
   // Handle preset selection
   const handleSelectPreset = (preset: PresetAmount) => {
@@ -262,6 +275,12 @@ export function Wallet(props: WalletProps) {
 
   // Handle Creem product selection
   const handleCreemProductSelect = (product: CreemProduct) => {
+    if (invoiceRequired) {
+      handleServerError(
+        new Error(t('Invoicing is not supported for this payment method'))
+      )
+      return
+    }
     setSelectedCreemProduct(product)
     setCreemDialogOpen(true)
   }
@@ -352,6 +371,18 @@ export function Wallet(props: WalletProps) {
                   localCnyInput={localCnyInput}
                   creditedQuota={creditedQuota}
                   quoteValid={quoteValid}
+                  invoiceFeeAmount={quote?.invoiceFeeAmount}
+                  invoiceSelection={
+                    <InvoiceSelection
+                      required={invoiceRequired}
+                      onRequiredChange={setInvoiceRequired}
+                      profile={invoiceProfile.data}
+                      loading={invoiceProfile.isFetching}
+                      error={invoiceProfile.isError}
+                      onRetry={() => void invoiceProfile.refetch()}
+                      onSaved={() => setInvoiceRevision((value) => value + 1)}
+                    />
+                  }
                   onOpenBilling={() => setBillingDialogOpen(true)}
                   creemProducts={topupInfo?.creem_products}
                   enableCreemTopup={topupInfo?.enable_creem_topup}
@@ -400,6 +431,7 @@ export function Wallet(props: WalletProps) {
         localCnyInput={localCnyInput}
         creditedQuota={creditedQuota}
         quoteValid={quoteValid}
+        invoiceFeeAmount={quote?.invoiceFeeAmount}
       />
 
       {/* 二维码复用公共对话框与现有二维码库，支付凭证不进入 URL。 */}

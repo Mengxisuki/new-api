@@ -28,6 +28,7 @@ var stripeAdaptor = &StripeAdaptor{}
 
 // StripePayRequest represents a payment request for Stripe checkout.
 type StripePayRequest struct {
+	InvoiceRequired bool `json:"invoice_required"`
 	// Amount is the quantity of units to purchase.
 	Amount int64 `json:"amount"`
 	// PaymentMethod specifies the payment method (e.g., "stripe").
@@ -44,6 +45,10 @@ type StripeAdaptor struct {
 }
 
 func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
+		return
+	}
 	if req.Amount < getStripeMinTopup() {
 		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": getStripeMinTopup()}))
 		return
@@ -70,6 +75,10 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 }
 
 func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
+	if req.InvoiceRequired {
+		paymentError(c, common.NewMessage("Invoices are supported only for CNY local payment methods"))
+		return
+	}
 	if req.PaymentMethod != model.PaymentMethodStripe {
 		paymentError(c, common.NewMessage("Unsupported payment channel"))
 		return

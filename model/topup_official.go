@@ -113,6 +113,11 @@ func CompleteOfficialTopUp(tradeNo string, expectedProvider string, expectedPaym
 		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
 			return err
 		}
+		if topUp.InvoiceRequired {
+			if err := MarkInvoicePaidTx(tx, topUp.TradeNo); err != nil {
+				return err
+			}
+		}
 		completed = true
 		return nil
 	})
@@ -229,10 +234,22 @@ func ReplacePendingOfficialTopUpForRetry(userID int, tradeNo string, replacement
 			PaymentMethod:   topUp.PaymentMethod,   // 禁止重试时切换具体商户渠道。
 			PaymentProvider: topUp.PaymentProvider, // 保持原支付厂商，避免跨网关认领。
 			CreateTime:      createTime,
-			Status:          common.TopUpStatusPending, // 创建新单不代表已收款。
+			Status:          common.TopUpStatusPending,
+			InvoiceRequired: topUp.InvoiceRequired, // 创建新单不代表已收款。
 		}
 		// 创建失败触发事务回滚，原单失败状态也不会单独提交。
-		return tx.Create(&replacement).Error
+		if err := tx.Create(&replacement).Error; err != nil {
+			return err
+		}
+		if topUp.InvoiceRequired {
+			var previous InvoiceRequest
+			if err := tx.Where("trade_no = ?", topUp.TradeNo).First(&previous).Error; err != nil {
+				return err
+			}
+			previous.Id, previous.TradeNo, previous.CreatedAt, previous.UpdatedAt = 0, replacement.TradeNo, 0, 0
+			return tx.Create(&previous).Error
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

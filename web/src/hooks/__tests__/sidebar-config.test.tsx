@@ -180,3 +180,39 @@ describe('audit log sidebar entry', () => {
     expect(titles).toContain('Audit Logs')
   })
 })
+
+// 财务导航按独立资源能力展示，不依靠管理员角色等级顺带开放。
+// 本测试只保护导航接线，服务端越权边界由真实权限测试验证。
+it('财务账号具有读取能力时获得独立财务分类及开票入口', () => {
+  useAuthStore.getState().auth.setUser({
+    id: 5,
+    username: 'finance',
+    role: 5,
+    permissions: {
+      admin_permissions: { finance: { read: true, write: true } },
+    },
+  })
+  const result = renderHook(() => useSidebarData())
+  const finance = result.result.current.navGroups.find(
+    (group) => group.id === 'finance'
+  )
+  expect(finance?.items).toEqual([
+    expect.objectContaining({ url: '/finance/invoices' }),
+  ])
+})
+
+// 被撤销读取权限后，菜单立即消失，不能只检查数字角色等于财务。
+it('没有财务读取能力时不显示财务分类', () => {
+  useAuthStore.getState().auth.setUser({
+    id: 5,
+    username: 'finance',
+    role: 5,
+    permissions: {
+      admin_permissions: { finance: { read: false, write: false } },
+    },
+  })
+  const result = renderHook(() => useSidebarData())
+  expect(
+    result.result.current.navGroups.some((group) => group.id === 'finance')
+  ).toBe(false)
+})

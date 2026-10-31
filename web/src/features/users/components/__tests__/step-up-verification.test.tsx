@@ -24,6 +24,7 @@ import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { User } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -105,6 +106,7 @@ async function completeTwoFactorVerification() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
 })
 
 it('deleting a user sends the request only with a single-use proof for that user', async () => {
@@ -197,4 +199,61 @@ it('disabling a user from the row menu binds the proof to the user and action', 
     }),
     expect.anything()
   )
+})
+
+// Root 授予财务角色必须先完成同一用户及动作绑定的单次验证。
+// 观察真实行菜单和 API 载荷，不模拟权限处理器或内部 state。
+// 普通管理员不能因为也能管理用户而看到财务授权入口。
+it('root assigns finance role only after a bound single-use proof', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  const proof = mockVerification('admin.user.manage', 'finance-proof')
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') return proof
+    if (url === '/api/user/manage') return { data: { success: true } }
+    throw new Error(`Unexpected POST ${url}`)
+  })
+  renderInProvider(
+    <DataTableRowActions row={{ original: target } as Row<User>} />
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: 'Assign finance role' })
+  )
+  // 显示验证弹窗不代表已经赋予权限，网络变更必须等验证完成。
+  expect(post).not.toHaveBeenCalledWith(
+    '/api/user/manage',
+    expect.anything(),
+    expect.anything()
+  )
+  await completeTwoFactorVerification()
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/user/manage',
+      { id: 2, action: 'finance' },
+      expect.objectContaining({
+        headers: { 'X-Security-Proof': 'finance-proof' },
+        singleUseAuthorization: true,
+      })
+    )
+  )
+  expect(post).toHaveBeenCalledWith(
+    '/api/verify',
+    expect.objectContaining({
+      scope: 'admin.user.manage',
+      context: { user_id: 2, action: 'finance' },
+    }),
+    expect.anything()
+  )
+})
+
+// 按钮隐藏只是界面契约，后端对应 Root 校验由真实控制器测试保护。
+it('regular administrator cannot see the finance role assignment action', async () => {
+  useAuthStore.getState().auth.setUser({ id: 3, username: 'admin', role: 10 })
+  renderInProvider(
+    <DataTableRowActions row={{ original: target } as Row<User>} />
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  expect(
+    screen.queryByRole('menuitem', { name: 'Assign finance role' })
+  ).not.toBeInTheDocument()
 })

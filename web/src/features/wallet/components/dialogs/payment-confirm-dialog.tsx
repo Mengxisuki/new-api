@@ -50,6 +50,7 @@ interface PaymentConfirmDialogProps {
   usdExchangeRate?: number
   localCnyInput?: boolean
   creditedQuota?: number | null
+  invoiceFeeAmount?: number // 服务端已计入实付，只展示明细，不再次加算。
   quoteValid?: boolean
 }
 
@@ -67,6 +68,7 @@ export function PaymentConfirmDialog({
   localCnyInput = false,
   creditedQuota,
   quoteValid = true,
+  invoiceFeeAmount,
 }: PaymentConfirmDialogProps) {
   const { t } = useTranslation()
   const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0
@@ -140,6 +142,7 @@ export function PaymentConfirmDialog({
             creditedQuota={creditedQuota} // 缺失时不会以输入推算，明确提示未获取报价。
             calculating={calculating}
             quoteValid={quoteValid}
+            invoiceFeeAmount={invoiceFeeAmount}
           />
           <div className='border-t pt-4'>
             <div className='flex items-center justify-between'>

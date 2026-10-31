@@ -30,8 +30,8 @@ import (
 // 成功下单日志不输出带签名的付款URL，避免凭据进入日志系统。
 // 返回前补充十分钟支付窗口，供前端展示剩余付款时间。
 // 付款成功只能由经过验签的异步通知及模型事务确认。
-func requestOfficialTopUp(c *gin.Context, channel operation_setting.OfficialPaymentChannel, requestAmount int64, creditedQuota int, payMoney float64, userID int) {
-	if channel.MinTopUp > 0 && requestAmount < channel.MinTopUp {
+func requestOfficialTopUp(c *gin.Context, channel operation_setting.OfficialPaymentChannel, topUp *model.TopUp) {
+	if channel.MinTopUp > 0 && topUp.Amount < channel.MinTopUp {
 		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": channel.MinTopUp}))
 		return
 	}
@@ -41,20 +41,13 @@ func requestOfficialTopUp(c *gin.Context, channel operation_setting.OfficialPaym
 	if channel.ChannelType == operation_setting.PaymentChannelWechat {
 		provider = model.PaymentProviderWechat
 	}
-	tradeNo := fmt.Sprintf("USR%dNO%s%d", userID, common.GetRandomString(6), time.Now().Unix())
-	topUp := &model.TopUp{
-		UserId:          userID,
-		Amount:          requestAmount,
-		CreditedQuota:   creditedQuota, // 冻结权益，通知不能按修改后的费率重算。
-		Money:           payMoney,
-		TradeNo:         tradeNo,
-		PaymentMethod:   channel.ID, // 具体商户渠道必须在通知时完全匹配。
-		PaymentProvider: provider,   // 防止跨支付厂商的签名回调认领订单。
-		CreateTime:      common.GetTimestamp(),
-		Status:          common.TopUpStatusPending,
-	}
+	tradeNo := fmt.Sprintf("USR%dNO%s%d", topUp.UserId, common.GetRandomString(6), time.Now().Unix())
+	// 金额和权益由已校验的调用方提供，商户与订单身份仍由服务端固定。
+	topUp.TradeNo, topUp.PaymentMethod, topUp.PaymentProvider = tradeNo, channel.ID, provider
+	topUp.CreateTime, topUp.Status = common.GetTimestamp(), common.TopUpStatusPending
+
 	if err := topUp.Insert(); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("官方支付创建充值订单失败 user_id=%d channel_id=%s error=%q", userID, channel.ID, err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("官方支付创建充值订单失败 user_id=%d channel_id=%s error=%q", topUp.UserId, channel.ID, err.Error()))
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
@@ -67,12 +60,12 @@ func requestOfficialTopUp(c *gin.Context, channel operation_setting.OfficialPaym
 		if statusErr := model.UpdatePendingTopUpStatus(tradeNo, provider, common.TopUpStatusFailed); statusErr != nil {
 			logger.LogError(c.Request.Context(), common.LogText("failed to mark official top-up order failed trade_no=%s error=%q", tradeNo, statusErr.Error()))
 		}
-		logger.LogError(c.Request.Context(), fmt.Sprintf("官方支付拉起失败 user_id=%d trade_no=%s channel_id=%s error=%q", userID, tradeNo, channel.ID, err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("官方支付拉起失败 user_id=%d trade_no=%s channel_id=%s error=%q", topUp.UserId, tradeNo, channel.ID, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment. Please check the channel configuration."))
 		return
 	}
 
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("官方支付充值订单创建成功 user_id=%d trade_no=%s channel_id=%s provider=%s amount=%d money=%.2f", userID, tradeNo, channel.ID, provider, requestAmount, payMoney))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("官方支付充值订单创建成功 user_id=%d trade_no=%s channel_id=%s provider=%s amount=%d money=%.2f", topUp.UserId, tradeNo, channel.ID, provider, topUp.Amount, topUp.Money))
 	common.ApiSuccess(c, officialPaymentResponse(topUp.TradeNo, topUp.ExpiresAt, result))
 }
 

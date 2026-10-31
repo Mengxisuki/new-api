@@ -71,14 +71,24 @@ func SubscriptionRequestOfficialPay(c *gin.Context) {
 		return
 	}
 	// 官方人民币渠道按分收款，订单和发送金额保存同一份精度结果。
-	amount := decimal.NewFromFloat(plan.PriceAmount).Round(2)
+	group, err := model.GetUserGroup(userID, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	invoice, payMoney, err := model.NewInvoiceRequest(userID, group, "subscription", plan.PriceAmount, req.InvoiceRequired)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	amount := decimal.NewFromFloat(payMoney).Round(2)
 	provider := model.PaymentProviderAlipay
 	if channel.ChannelType == operation_setting.PaymentChannelWechat {
 		provider = model.PaymentProviderWechat
 	}
 	createdAt := common.GetTimestamp()
 	order := &model.SubscriptionOrder{
-		UserId: userID, PlanId: plan.Id, Money: amount.InexactFloat64(),
+		UserId: userID, PlanId: plan.Id, Money: amount.InexactFloat64(), Invoice: invoice,
 		TradeNo:       fmt.Sprintf("SUBUSR%dNO%s%d", userID, common.GetRandomString(6), time.Now().UnixNano()),
 		PaymentMethod: channel.ID, PaymentProvider: provider,
 		Status: common.TopUpStatusPending, CreateTime: createdAt,

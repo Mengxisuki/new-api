@@ -1,8 +1,9 @@
 package authz
 
 const (
-	BuiltInRoleRoot  = "root"
-	BuiltInRoleAdmin = "admin"
+	BuiltInRoleRoot    = "root"
+	BuiltInRoleAdmin   = "admin"
+	BuiltInRoleFinance = "finance" // 独立基线仅包含财务资源，不继承管理员角色。
 )
 
 // RoleSpec describes a role. A superuser role is allowed every permission
@@ -32,6 +33,14 @@ var builtInRoles = []RoleSpec{
 		BuiltIn:     true,
 		Superuser:   false,
 		Sort:        10,
+	},
+	{
+		Key:         BuiltInRoleFinance,
+		Name:        "Finance",
+		Description: "Built-in finance authorization role",
+		BuiltIn:     true,  // 随正式授权初始化幂等种入，不依赖手工数据库配置。
+		Superuser:   false, // 不能绕过 Can 的逐动作默认拒绝与用户撤销。
+		Sort:        20,    // 只影响角色目录顺序，不用于比较权限强弱。
 	},
 }
 

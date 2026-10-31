@@ -89,6 +89,7 @@ export interface PlanPayload {
 }
 
 export interface SubscriptionPayRequest {
+  invoice_required?: boolean // 订阅开票仅改变实际收款，不改变套餐期限及配额。
   plan_id: number
   payment_method?: string
 }

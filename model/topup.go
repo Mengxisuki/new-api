@@ -17,14 +17,16 @@ type TopUp struct {
 	UserId int   `json:"user_id" gorm:"index"`
 	Amount int64 `json:"amount"`
 	// 官方支付冻结下单额度，回调不按可能变化的汇率重新计算。
-	CreditedQuota   int     `json:"credited_quota" gorm:"column:credited_quota;type:bigint;not null;default:0"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	CreditedQuota   int             `json:"credited_quota" gorm:"column:credited_quota;type:bigint;not null;default:0"`
+	Money           float64         `json:"money"`
+	InvoiceRequired bool            `json:"invoice_required" gorm:"not null;default:false"`
+	Invoice         *InvoiceRequest `json:"-" gorm:"-"`
+	TradeNo         string          `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod   string          `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider string          `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime      int64           `json:"create_time"`
+	CompleteTime    int64           `json:"complete_time"`
+	Status          string          `json:"status"`
 	// 到期时间由创建时间推导，仅用于展示，不另存状态。
 	ExpiresAt int64 `json:"expires_at" gorm:"-"`
 }
@@ -57,10 +59,19 @@ var (
 	ErrWalletQuotaLimitExceeded error = common.NewMessage("Wallet quota limit exceeded")
 )
 
+// Insert在同一事务中保存付款订单及可选开票快照。
+// 无发票订单沿用原路径，不依赖发票表以保持历史行为。
 func (topUp *TopUp) Insert() error {
-	var err error
-	err = DB.Create(topUp).Error
-	return err
+	if topUp.Invoice == nil {
+		return DB.Create(topUp).Error
+	}
+	topUp.InvoiceRequired = true
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(topUp).Error; err != nil {
+			return err
+		}
+		return CreateInvoiceForOrderTx(tx, topUp.Invoice, topUp.TradeNo)
+	})
 }
 
 func topUpQuotaMaxCurrent(creditedQuota int) (int, error) {
@@ -233,7 +244,13 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		if topUp.InvoiceRequired {
+			return MarkInvoicePaidTx(tx, topUp.TradeNo)
+		}
+		return nil
 	})
 	if err != nil {
 		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
@@ -536,6 +553,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 增加用户额度（立即写库，保持一致性）
 		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
 			return err
+		}
+		if topUp.InvoiceRequired {
+			if err := MarkInvoicePaidTx(tx, topUp.TradeNo); err != nil {
+				return err
+			}
 		}
 
 		userId = topUp.UserId

@@ -40,7 +40,9 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { hasPermission } from '@/lib/admin-permissions'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -50,6 +52,8 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const canReadFinance = hasPermission(user, 'finance', 'read')
 
   return {
     navGroups: [
@@ -128,6 +132,22 @@ export function useSidebarData(): SidebarData {
           },
         ],
       },
+      // 财务按真实权限单独成组，不能借管理员数字阈值扩大其他菜单权限。
+      ...(canReadFinance
+        ? [
+            {
+              id: 'finance',
+              title: t('Finance'),
+              items: [
+                {
+                  title: t('Invoice management'),
+                  url: '/finance/invoices',
+                  icon: FileText,
+                },
+              ],
+            },
+          ]
+        : []),
       {
         id: 'admin',
         title: t('Admin'),

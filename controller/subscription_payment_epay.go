@@ -17,8 +17,9 @@ import (
 )
 
 type SubscriptionEpayPayRequest struct {
-	PlanId        int    `json:"plan_id"`
-	PaymentMethod string `json:"payment_method"`
+	PlanId          int    `json:"plan_id"`
+	PaymentMethod   string `json:"payment_method"`
+	InvoiceRequired bool   `json:"invoice_required"`
 }
 
 func SubscriptionRequestEpay(c *gin.Context) {
@@ -57,6 +58,16 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		return
 	}
 
+	group, err := model.GetUserGroup(userId, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	invoice, payMoney, err := model.NewInvoiceRequest(userId, group, "subscription", plan.PriceAmount, req.InvoiceRequired)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	callBackAddress := service.GetCallbackAddress()
 	returnUrl, err := url.Parse(callBackAddress + "/api/subscription/epay/return")
 	if err != nil {
@@ -81,7 +92,8 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
+		Money:           payMoney,
+		Invoice:         invoice,
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentProvider: model.PaymentProviderEpay,
@@ -96,7 +108,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		Type:           req.PaymentMethod,
 		ServiceTradeNo: tradeNo,
 		Name:           fmt.Sprintf("SUB:%s", plan.Title),
-		Money:          strconv.FormatFloat(plan.PriceAmount, 'f', 2, 64),
+		Money:          strconv.FormatFloat(payMoney, 'f', 2, 64),
 		Device:         epay.PC,
 		NotifyUrl:      notifyUrl,
 		ReturnUrl:      returnUrl,
@@ -154,6 +166,13 @@ func SubscriptionEpayNotify(c *gin.Context) {
 	LockOrder(verifyInfo.ServiceTradeNo)
 	defer UnlockOrder(verifyInfo.ServiceTradeNo)
 
+	// 订阅开票也核对冻结总价，普通旧订阅仍保持原来的支付合同。
+	order := model.GetSubscriptionOrderByTradeNo(verifyInfo.ServiceTradeNo)
+	if order == nil || validateInvoiceCallbackAmount(order.InvoiceRequired, order.Money, verifyInfo.Money) != nil {
+		common.SysError(common.LogText("Epay invoice subscription amount mismatch or order missing trade_no=%s", verifyInfo.ServiceTradeNo))
+		c.String(http.StatusOK, "fail")
+		return
+	}
 	if err := model.CompleteSubscriptionOrder(verifyInfo.ServiceTradeNo, common.GetJsonString(verifyInfo), model.PaymentProviderEpay, verifyInfo.Type); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
@@ -203,6 +222,13 @@ func SubscriptionEpayReturn(c *gin.Context) {
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
+		// 浏览器返回不是另一个宽松到账入口，仍核对签名内包含的总金额。
+		order := model.GetSubscriptionOrderByTradeNo(verifyInfo.ServiceTradeNo)
+		if order == nil || validateInvoiceCallbackAmount(order.InvoiceRequired, order.Money, verifyInfo.Money) != nil {
+			common.SysError(common.LogText("Epay invoice subscription return amount mismatch or order missing trade_no=%s", verifyInfo.ServiceTradeNo))
+			c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
+			return
+		}
 		if err := model.CompleteSubscriptionOrder(verifyInfo.ServiceTradeNo, common.GetJsonString(verifyInfo), model.PaymentProviderEpay, verifyInfo.Type); err != nil {
 			c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay=fail"))
 			return

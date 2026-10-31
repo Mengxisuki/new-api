@@ -10,6 +10,8 @@ var resolveSubjectRoles = func(userID int, systemRole int) []string {
 		return []string{BuiltInRoleRoot}
 	case systemRole >= common.RoleAdminUser:
 		return []string{BuiltInRoleAdmin}
+	case systemRole == common.RoleFinanceUser:
+		return []string{BuiltInRoleFinance} // 财务不因数字较高而继承管理员基线。
 	default:
 		return nil
 	}

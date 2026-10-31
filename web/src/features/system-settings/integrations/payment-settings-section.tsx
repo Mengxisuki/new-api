@@ -63,6 +63,8 @@ import { safeNumberFieldProps } from '../utils/numeric-field'
 import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
 import { CreemProductsVisualEditor } from './creem-products-visual-editor'
+import { InvoiceRateEditor } from './invoice-rate-editor'
+import { invoiceRateSchema } from './invoice-rate-schema'
 import { OfficialPaymentChannelsEditor } from './official-payment-channels-editor'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
 import {
@@ -105,6 +107,34 @@ const paymentSchema = z.object({
   }, 'Provide a valid callback URL starting with http:// or https://'),
   EpayId: z.string(),
   EpayKey: z.string(),
+  InvoiceDefaultRate: invoiceRateSchema.default(0),
+  InvoiceGroupRates: z
+    .string()
+    .default('{}')
+    .superRefine((value, ctx) => {
+      try {
+        const parsed: unknown = JSON.parse(value)
+        if (
+          !parsed ||
+          typeof parsed !== 'object' ||
+          Array.isArray(parsed) ||
+          Object.entries(parsed).some(
+            ([group, rate]) =>
+              !group.trim() ||
+              group.length > 64 ||
+              typeof rate !== 'number' ||
+              !invoiceRateSchema.safeParse(rate).success
+          )
+        ) {
+          throw new Error('invalid')
+        }
+      } catch {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Invoice surcharge percentage must be between 0 and 100',
+        })
+      }
+    }),
   Price: z.coerce.number().min(0),
   MinTopUp: z.coerce.number().min(0),
   CustomCallbackAddress: z
@@ -435,6 +465,8 @@ export function PaymentSettingsSection({
       PayAddress: removeTrailingSlash(values.PayAddress),
       EpayId: values.EpayId.trim(),
       EpayKey: values.EpayKey.trim(),
+      InvoiceDefaultRate: values.InvoiceDefaultRate,
+      InvoiceGroupRates: values.InvoiceGroupRates.trim(),
       Price: values.Price,
       MinTopUp: values.MinTopUp,
       CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
@@ -478,6 +510,8 @@ export function PaymentSettingsSection({
       PayAddress: removeTrailingSlash(initialRef.current.PayAddress),
       EpayId: initialRef.current.EpayId.trim(),
       EpayKey: initialRef.current.EpayKey.trim(),
+      InvoiceDefaultRate: initialRef.current.InvoiceDefaultRate,
+      InvoiceGroupRates: initialRef.current.InvoiceGroupRates.trim(),
       Price: initialRef.current.Price,
       MinTopUp: initialRef.current.MinTopUp,
       CustomCallbackAddress: removeTrailingSlash(
@@ -536,6 +570,21 @@ export function PaymentSettingsSection({
       updates.push({ key: 'EpayKey', value: sanitized.EpayKey })
     }
 
+    if (sanitized.InvoiceDefaultRate !== initial.InvoiceDefaultRate) {
+      updates.push({
+        key: 'invoice_setting.default_rate',
+        value: sanitized.InvoiceDefaultRate,
+      })
+    }
+    if (
+      normalizeJsonForComparison(sanitized.InvoiceGroupRates) !==
+      normalizeJsonForComparison(initial.InvoiceGroupRates)
+    ) {
+      updates.push({
+        key: 'invoice_setting.group_rates',
+        value: sanitized.InvoiceGroupRates,
+      })
+    }
     if (sanitized.Price !== initial.Price) {
       updates.push({ key: 'Price', value: sanitized.Price })
     }
@@ -906,9 +955,10 @@ export function PaymentSettingsSection({
           />
           <Tabs defaultValue='general' className='min-w-0'>
             <div className='overflow-x-auto pb-1'>
-              <TabsList className='grid min-w-[50rem] grid-cols-7'>
+              <TabsList className='grid min-w-[56rem] grid-cols-8'>
                 <TabsTrigger value='general'>{t('General')}</TabsTrigger>
                 <TabsTrigger value='epay'>Epay</TabsTrigger>
+                <TabsTrigger value='invoicing'>{t('Invoicing')}</TabsTrigger>
                 <TabsTrigger value='official'>{t('Official')}</TabsTrigger>
                 <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
                 <TabsTrigger value='creem'>Creem</TabsTrigger>
@@ -1681,6 +1731,59 @@ export function PaymentSettingsSection({
                 savedBinding={waffoPancakeSavedBinding}
                 onSelectedBindingChange={setWaffoPancakeSelection}
               />
+            </TabsContent>
+
+            <TabsContent
+              value='invoicing'
+              className={paymentTabContentClassName}
+            >
+              <div className='space-y-6'>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'The invoice surcharge is added to the payment, without increasing platform credit. For example, a 6% rate adds 6 CNY to a 100 CNY top-up.'
+                  )}
+                </p>
+                <FormField
+                  control={form.control}
+                  name='InvoiceDefaultRate'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t('Default invoice surcharge (%)')}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          min={0}
+                          max={100}
+                          step='0.0001'
+                          {...safeNumberFieldProps(field)}
+                          className='max-w-xs'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='InvoiceGroupRates'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t('Invoice surcharge by user group')}
+                      </FormLabel>
+                      <FormControl>
+                        <InvoiceRateEditor
+                          value={field.value}
+                          onChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </TabsContent>
 
             <TabsContent value='waffo' className={paymentTabContentClassName}>

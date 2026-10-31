@@ -35,7 +35,13 @@ export interface ApiResponse<T = unknown> {
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
 // 报价仍保留字符串金额；入账额度来自同一服务端计算，不在浏览器推导。
-export type AmountResponse = ApiResponse<string> & { credited_quota?: number }
+export type AmountResponse = ApiResponse<string> & {
+  credited_quota?: number
+  invoice_required?: boolean // 当前报价冻结是否开票，不能沿用上次选择。
+  invoice_base_amount?: number
+  invoice_fee_percent?: number
+  invoice_fee_amount?: number
+}
 
 // 将金额、渠道和应入账额度绑定到同一次报价，防止沿用上一次请求。
 export interface PaymentQuote {
@@ -43,6 +49,10 @@ export interface PaymentQuote {
   creditedQuota: number | null
   inputAmount: number
   paymentType: string
+  invoiceRequired?: boolean // 与金额和渠道共同构成同一次报价。
+  invoiceBaseAmount?: number
+  invoiceFeePercent?: number
+  invoiceFeeAmount?: number
 }
 // 官方支付返回二维码或跳转链接，订单号用于继续支付与账单定位。
 // 返回值不包含商户密钥，二维码内容由服务端签名后的渠道响应提供。
@@ -204,6 +214,7 @@ export interface RedemptionRequest {
  * Payment request parameters
  */
 export interface PaymentRequest {
+  invoice_required?: boolean // 由用户明确选择，服务端根据已保存抬头及分组计算加价。
   /** Topup amount */
   amount: number
   /** Payment method identifier */
@@ -232,6 +243,7 @@ export interface WaffoPancakePaymentRequest {
  * Amount calculation request
  */
 export interface AmountRequest {
+  invoice_required?: boolean
   /** Topup amount to calculate */
   amount: number
 }

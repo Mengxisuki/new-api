@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -75,6 +75,8 @@ interface RechargeFormCardProps {
   usdExchangeRate?: number
   localCnyInput?: boolean
   creditedQuota?: number | null
+  invoiceSelection?: ReactNode // 开票选项放在付款渠道之前，不改变充值面额。
+  invoiceFeeAmount?: number
   quoteValid?: boolean
   onOpenBilling?: () => void
   creemProducts?: CreemProduct[]
@@ -109,6 +111,8 @@ export function RechargeFormCard({
   localCnyInput = false,
   creditedQuota,
   quoteValid,
+  invoiceSelection,
+  invoiceFeeAmount,
   onOpenBilling,
   creemProducts,
   enableCreemTopup,
@@ -337,7 +341,10 @@ export function RechargeFormCard({
                 creditedQuota={creditedQuota}
                 calculating={calculating}
                 quoteValid={quoteValid}
+                invoiceFeeAmount={invoiceFeeAmount}
               />
+
+              {invoiceSelection}
 
               <div className='space-y-2.5 sm:space-y-3'>
                 <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>

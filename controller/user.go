@@ -550,6 +550,8 @@ func calculateUserPermissions(userRole int) map[string]any {
 		}
 	}
 
+	// 财务工作区单独呈现，不能借 admin 区域开关进入其它管理功能。
+	permissions["sidebar_modules"].(map[string]any)["finance"] = userRole >= common.RoleFinanceUser
 	return permissions
 }
 
@@ -602,6 +604,10 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"user":       true,
 			"setting":    true,
 		}
+	}
+	// 财务区与管理员区独立；角色不授予后端尚未授权的动作。
+	if userRole >= common.RoleFinanceUser {
+		defaultConfig["finance"] = map[string]any{"enabled": true, "invoices": true}
 	}
 	// 普通用户不包含admin区域
 
@@ -1016,13 +1022,19 @@ func CreateUser(c *gin.Context) {
 		user.DisplayName = user.Username
 	}
 	myRole := c.GetInt("role")
+	// 财务账号的创建也是授权操作，不能利用低于管理员的数字绕过 Root 限制。
+	if user.Role == common.RoleFinanceUser && myRole != common.RoleRootUser {
+		common.ApiErrorT(c, "Only root can assign the finance role to non-root accounts")
+		return
+	}
 	if user.Role >= myRole {
 		common.ApiErrorT(c, "Cannot create users with permission level equal to or higher than yourself")
 		return
 	}
 	auditParams := map[string]any{"role": user.Role}
 	// Creating an administrator grants privilege just like promoting one.
-	if user.Role >= common.RoleAdminUser {
+	// 新建财务账号同样授予敏感工作区权限，不能绕过管理员创建验证。
+	if user.Role >= common.RoleFinanceUser {
 		authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserCreate, service.AdminUserCreateContext{Role: user.Role})
 		if authorization == nil {
 			return
@@ -1165,6 +1177,19 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		user.Role = common.RoleAdminUser
+	case "finance":
+		// 财务角色授权或降权都只能由 Root 经原有单次验证流程执行。
+		// 不允许把 Root 自身改为财务，保留现有最高权限保护。
+		if myRole != common.RoleRootUser || user.Role == common.RoleRootUser {
+			common.ApiErrorT(c, "Only root can assign the finance role to non-root accounts")
+			return
+		}
+		// 重复授权不应无故提升认证版本或撤销正在使用的财务会话。
+		if user.Role == common.RoleFinanceUser {
+			common.ApiErrorT(c, "This user already has the finance role")
+			return
+		}
+		user.Role = common.RoleFinanceUser // 旧覆盖会随下方同一事务清理，不能只改显示角色。
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorT(c, "Cannot demote super administrator user")
@@ -1184,7 +1209,7 @@ func ManageUser(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	if req.Action == "demote" {
+	if req.Action == "demote" || req.Action == "finance" {
 		if err := model.DB.Transaction(func(tx *gorm.DB) error {
 			if err := user.UpdateWithTx(tx, false); err != nil {
 				return err
@@ -1202,7 +1227,11 @@ func ManageUser(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		if _, err := model.RevokeAllUserSessions(user.Id, "admin_demote"); err != nil {
+		revocationReason := "admin_demote"
+		if req.Action == "finance" {
+			revocationReason = "admin_finance_role" // 原管理会话不能继续携带旧角色访问权限。
+		}
+		if _, err := model.RevokeAllUserSessions(user.Id, revocationReason); err != nil {
 			common.ApiError(c, err)
 			return
 		}

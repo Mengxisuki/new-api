@@ -86,7 +86,7 @@ func authHelper(c *gin.Context, minRole int) {
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
 	// handler 内手动埋点者会设置 ContextKeyAuditLogged，finishAdminAudit 据此跳过。
 	var auditWriter *auditResponseWriter
-	if minRole >= common.RoleAdminUser {
+	if minRole >= common.RoleFinanceUser {
 		auditWriter = beginAdminAudit(c)
 	}
 
@@ -132,6 +132,15 @@ func TryUserAuth() func(c *gin.Context) {
 func UserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleCommonUser)
+	}
+}
+
+// FinanceAuth 验证财务及以上身份，保留现有会话、PAT 和写审计链路。
+// 角色门槛不能代替具体授权；路由必须继续 RequirePermission 财务动作。
+// 财务低于 AdminAuth 门槛，因此无法借此进入原有用户或渠道管理接口。
+func FinanceAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RoleFinanceUser)
 	}
 }
 

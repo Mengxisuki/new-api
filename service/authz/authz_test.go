@@ -37,13 +37,14 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 	// admin baseline is written as explicit policy rows.
 	var count int64
 	require.NoError(t, db.Model(&model.CasbinRule{}).Count(&count).Error)
-	assert.Equal(t, int64(len(PermissionsForRole(BuiltInRoleAdmin))), count)
+	assert.Equal(t, int64(len(PermissionsForRole(BuiltInRoleAdmin))+len(PermissionsForRole(BuiltInRoleFinance))), count)
 
 	var roles []model.AuthzRole
 	require.NoError(t, db.Order("sort asc").Find(&roles).Error)
-	require.Len(t, roles, 2)
+	require.Len(t, roles, 3)
 	assert.Equal(t, BuiltInRoleRoot, roles[0].Key)
 	assert.Equal(t, BuiltInRoleAdmin, roles[1].Key)
+	assert.Equal(t, BuiltInRoleFinance, roles[2].Key)
 
 	assert.True(t, Can(1, common.RoleRootUser, ChannelSensitiveWrite))
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelRead))
@@ -157,7 +158,8 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
-		ResourceAudit: {ActionRead: false},
+		ResourceAudit:   {ActionRead: false},
+		ResourceFinance: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -189,7 +191,8 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
-		ResourceAudit: {ActionRead: false},
+		ResourceAudit:   {ActionRead: false},
+		ResourceFinance: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
 }
@@ -319,4 +322,25 @@ func TestTaskPluginBindIsRootOnlyUntilGranted(t *testing.T) {
 	_, err = enforcer.RemovePolicy(RoleSubject(BuiltInRoleAdmin), ResourceTaskPlugin, ActionBind, EffectAllow)
 	require.NoError(t, err)
 	assert.False(t, Can(2, common.RoleAdminUser, TaskPluginBind))
+}
+
+// 财务是独立的受限系统角色，不能凭数字排序进入既有管理员功能。
+// 真实策略种子、角色解析和权限快照共同验证，而非模拟 Can 返回值。
+// 历史管理员覆盖即使残留，也不能在降为财务后恢复渠道权限。
+func TestFinanceRoleOnlyGrantsFinanceCapabilities(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+	assert.True(t, common.IsValidateRole(5)) // 财务角色必须能被登录身份和用户 API 接受。
+	for _, action := range []string{"read", "write"} {
+		permission := Permission{Resource: "finance", Action: action}
+		assert.True(t, Can(501, 5, permission))                      // 财务人员获得开票工作区的默认权限。
+		assert.True(t, Can(502, common.RoleAdminUser, permission))   // 管理员仍可办理财务工作。
+		assert.False(t, Can(503, common.RoleCommonUser, permission)) // 用户不能读取他人的财务数据。
+	}
+	require.NoError(t, SetUserPermissions(501, PermissionsMap{ResourceChannel: {ActionSensitiveWrite: true}}))
+	assert.False(t, Can(501, 5, ChannelSensitiveWrite)) // 旧覆盖不能跨越新角色的资源边界。
+	assert.False(t, Can(501, 5, ChannelRead))           // 只读渠道访问也不属于开票工作区。
+	assert.False(t, Can(501, 5, AuditRead))             // 财务不能默认读取其它账号的通用审计。
+	assert.False(t, Can(501, 5, TaskPluginBind))
+	assert.True(t, Can(504, common.RoleRootUser, Permission{Resource: "finance", Action: "write"}))
 }

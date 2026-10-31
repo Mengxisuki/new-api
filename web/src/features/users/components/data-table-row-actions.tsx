@@ -28,6 +28,7 @@ import {
   ShieldAlert,
   Link2,
   CreditCard,
+  ReceiptText,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -50,6 +51,7 @@ import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -67,6 +69,7 @@ const MANAGE_ACTION_TITLES: Record<AdminUserManageAction, string> = {
   disable: 'Verify to disable user',
   enable: 'Verify to enable user',
   promote: 'Verify to promote user',
+  finance: 'Verify to assign finance role',
   demote: 'Verify to demote user',
 }
 
@@ -77,6 +80,7 @@ interface DataTableRowActionsProps {
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
+  const viewerRole = useAuthStore((state) => state.auth.user?.role ?? 0) // 财务授权入口仅向 Root 展示。
   const {
     setOpen,
     setCurrentRow,
@@ -186,6 +190,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isDisabled = user.status === USER_STATUS.DISABLED
   const isAdmin = user.role >= USER_ROLE.ADMIN
+  const isFinance = user.role === USER_ROLE.FINANCE
   const isRoot = user.role === USER_ROLE.ROOT
 
   if (isUserDeleted(user)) {
@@ -233,7 +238,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        {isAdmin && !isRoot && (
+        {(isAdmin || isFinance) && !isRoot && (
           <DropdownMenuItem onClick={() => handleManage('demote')}>
             {t('Demote')}
             <DropdownMenuShortcut>
@@ -247,6 +252,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             {t('Promote')}
             <DropdownMenuShortcut>
               <ArrowUp size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+
+        {/* 角色变更仍经共享验证流程与服务端 Root 校验，按钮不是授权依据。 */}
+        {viewerRole === USER_ROLE.ROOT && !isRoot && !isFinance && (
+          <DropdownMenuItem onClick={() => handleManage('finance')}>
+            {t('Assign finance role')}
+            <DropdownMenuShortcut>
+              <ReceiptText size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         )}

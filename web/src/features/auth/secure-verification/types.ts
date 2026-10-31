@@ -48,7 +48,13 @@ export type SecurityProofScope =
   | 'admin.user.binding.clear'
 
 /** ManageUser actions that change a user's status or role and need step-up. */
-export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
+// 财务角色变更沿用单次管理验证，不能通过普通资料更新绕过。
+export type AdminUserManageAction =
+  | 'disable'
+  | 'enable'
+  | 'promote'
+  | 'demote'
+  | 'finance'
 
 export type VerificationOperation =
   | { scope: 'channel.key.read'; context: { channel_id: number } }

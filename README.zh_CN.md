@@ -312,6 +312,24 @@ bun run dev -- --port 5173
 
 验证命令：`go test ./model ./controller ./router ./service ./setting/operation_setting -run 'Official|Subscription|AccessTokenRouteRules|TopUp|Topup|Epay|Payment' -count=1`；配置本地专用 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后，同一命令执行三库迁移、到账和续期矩阵。在 `web/` 下运行 `bun run test src/features/wallet/__tests__ src/features/wallet/hooks/use-payment.test.ts src/features/wallet/lib/payment.test.ts src/features/system-settings/integrations/__tests__/official-payment.test.tsx`、`bunx tsgo -b` 和 `bun run build`。当前未执行真实商户付款或生产发布，收款前仍需通过真实商户配置完成端到端联调。
 
+### 发票与财务工作区
+
+钱包的「订单查询」每次打开都重新请求当前订单；关闭时停止读取，不复用上次弹窗打开前的订单响应。订单弹窗另有「我的发票」分页列表，可查看对应付款订单、处理进度和已开票文件。
+
+常用抬头在「个人资料」配置，支持个人/企业抬头；企业税号和接收邮箱会在服务端校验。付款方式前的「是否需要发票」默认否，选择是且未配置抬头时提供同一表单的快捷配置。下单时保存独立抬头快照，后续编辑常用抬头不会修改已付款申请。税务和银行资料不写浏览器持久存储。
+
+超级管理员在「系统设置 → 计费 → 付款设置 → 开票」设置默认加价百分比及分组覆盖。`invoice_setting.default_rate` 用 `6` 表示 6%，`invoice_setting.group_rates` 为分组到百分比的映射；显式 `0` 表示该组免加价，没有覆盖时使用默认率。范围 0–100，最多四位小数。费用按优惠后的原应付金额计算，四舍五入到分，并计入本笔实付；不增加平台到账额度。例如充值 100 元、无优惠、开票加价 6%，支付 106 元、到账 100 元额度。报价、订单、支付回调和继续支付均使用服务端冻结金额与资料。
+
+开票支持人民币本地微信、支付宝、易支付充值，以及官方商户/易支付订阅购买与续费；Stripe、Creem、Waffo 等尚未接通开票的支付方式会明确拒绝开票请求。选择否继续原付款流程，不创建发票申请或附加收费。新增报价字段为 `invoice_required`、`invoice_base_amount`、`invoice_fee_percent`、`invoice_fee_amount`，原应付 `data` 与到账 `credited_quota` 仍保留。
+
+财务人员进入「财务 → 开票管理」，只处理实际支付成功的申请。可以开始处理、填写发票号并上传 PDF/PNG/JPEG（最大 5 MiB），或填写原因后拒绝；上传成功且号码完整才显示已开具。已开具/拒绝为当前流程终态，不提供自动重开或自动退款，拒绝不会自动退还附加费。用户和财务分别通过受保护接口下载，附件不公开托管。附件目录为运行工作目录下 `data/invoices/`，原生部署对应 `/var/lib/new-api/data/invoices/`，备份时需保留此目录及数据库。
+
+Root 可在用户管理中创建财务账号或通过原有单次验证将现有账号设为财务。系统角色值 `5` 低于普通管理员 `10`，默认只有 `finance:read/write`，不授予渠道、用户管理、系统设置或人工补余额能力；角色变更会撤销旧会话与遗留管理覆盖。普通管理员默认可办理财务事项，Root 可通过现有权限编辑器调整；财务账号的个人令牌也只能授权其真实财务能力。
+
+核心位置：`model/invoice.go` 保存抬头、申请和状态规则，`controller/invoice*.go` 提供资料/报价/文件接口，`setting/operation_setting/invoice_setting.go` 保存费率，`service/authz/resources_finance.go` 定义权限，前端 `web/src/features/invoices/` 组织公共资料表单与财务页面。新表 `invoice_profiles`、`invoice_requests` 和订单的 `invoice_required` 字段由既有迁移流程注册；旧订单默认不开票，不追溯加价。
+
+验证：配置隔离 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后执行 `go test ./controller -run '^TestInvoice' -count=1`；权限回归执行 `go test ./service/authz ./middleware -count=1`。在 `web/` 下执行 `bun run test src/features/wallet/__tests__/invoice-payment.test.tsx src/features/invoices/__tests__/admin.test.tsx src/features/system-settings/integrations/__tests__/invoice-rates.test.tsx src/features/users/components/__tests__`、`bunx tsgo -b` 和 `bun run build`。本实现记录人工开票与文件交付，不对接税务开票服务商；发布前应完成真实商户付款、财务上传和用户下载联调。
+
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。

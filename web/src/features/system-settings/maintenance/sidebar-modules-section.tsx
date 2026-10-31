@@ -77,6 +77,12 @@ export function SidebarModulesSection({
       title: t('Personal area'),
       description: t('Wallet management and personal preferences.'),
     },
+    finance: {
+      title: t('Finance'),
+      description: t(
+        'View paid orders, invoice requests and protected invoice files.'
+      ),
+    },
     admin: {
       title: t('Admin area'),
       description: t('Global configuration and administrative tools.'),
@@ -135,6 +141,12 @@ export function SidebarModulesSection({
       security: {
         title: t('Security & Access'),
         description: t('Manage your security settings and account access'),
+      },
+    },
+    finance: {
+      invoices: {
+        title: t('Invoice management'),
+        description: t('Process invoice requests'),
       },
     },
     admin: {

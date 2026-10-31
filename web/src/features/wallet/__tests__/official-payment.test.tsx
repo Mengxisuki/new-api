@@ -30,6 +30,66 @@ import { BillingHistoryDialog } from '../components/dialogs/billing-history-dial
 import { SubscriptionPlansCard } from '../components/subscription-plans-card'
 import { usePayment } from '../hooks/use-payment'
 
+// 钱包弹窗常驻页面，关闭后再次查询必须重新读取服务端订单。
+// 请求替换在 HTTP 边界，保留真实弹窗及账单 Hook 的生命周期。
+test('订单查询每次打开时立即获取新数据且不复用旧请求', async () => {
+  const get = vi
+    .spyOn(api, 'get')
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          items: [
+            {
+              id: 1,
+              trade_no: 'first-order',
+              amount: 1,
+              money: 1,
+              status: 'pending',
+              payment_method: 'wxpay',
+              create_time: 1,
+            },
+          ],
+          total: 1,
+        },
+      },
+    })
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          items: [
+            {
+              id: 2,
+              trade_no: 'new-order',
+              amount: 1,
+              money: 1,
+              status: 'success',
+              payment_method: 'wxpay',
+              create_time: 1,
+            },
+          ],
+          total: 1,
+        },
+      },
+    })
+  const view = render(
+    <BillingHistoryDialog open={false} onOpenChange={vi.fn()} />
+  )
+  expect(get).not.toHaveBeenCalled()
+  view.rerender(<BillingHistoryDialog open onOpenChange={vi.fn()} />)
+  expect(await screen.findByText('first-order')).toBeVisible()
+  view.rerender(<BillingHistoryDialog open={false} onOpenChange={vi.fn()} />)
+  view.rerender(<BillingHistoryDialog open onOpenChange={vi.fn()} />)
+  expect(await screen.findByText('new-order')).toBeVisible()
+  expect(screen.queryByText('first-order')).not.toBeInTheDocument()
+  expect(get).toHaveBeenCalledTimes(2)
+  expect(get).toHaveBeenLastCalledWith(
+    expect.stringContaining('/api/user/topup/self?'),
+    expect.objectContaining({ disableDuplicate: true })
+  )
+})
+
 // 本文件保护官方付款迁移与续费接线的用户契约。
 // 下单成功表示获取付款资料，不代表支付到账或订阅已经开通。
 // 模拟 HTTP 响应是为了隔离真实商户系统，测试不使用可支付二维码。

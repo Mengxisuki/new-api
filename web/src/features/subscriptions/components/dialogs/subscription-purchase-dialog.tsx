@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Crown, CalendarClock, Package } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,14 +28,18 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Separator } from '@/components/ui/separator'
+import { useInvoiceProfile } from '@/features/invoices/hooks/use-invoice-profile'
 import { OfficialPaymentQrDialog } from '@/features/wallet/components/dialogs/official-payment-qr-dialog'
+import { InvoiceSelection } from '@/features/wallet/components/invoice-selection'
 import { submitPaymentForm } from '@/features/wallet/lib/payment'
 import type {
   OfficialPaymentData,
   PaymentMethod as WalletPaymentMethod,
 } from '@/features/wallet/types'
+import { formatLocalCurrencyAmount } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
 
 import {
   paySubscriptionStripe,
@@ -42,6 +47,7 @@ import {
   paySubscriptionEpay,
   paySubscriptionWaffoPancake,
   paySubscriptionOfficial,
+  quoteSubscriptionInvoice,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord } from '../../types'
@@ -72,6 +78,42 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const [officialPayment, setOfficialPayment] =
     useState<OfficialPaymentData | null>(null)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
+  const [invoiceRequired, setInvoiceRequired] = useState(false) // 每次重新打开默认不需要发票。
+  const [invoiceRevision, setInvoiceRevision] = useState(0)
+  const invoiceProfile = useInvoiceProfile(props.open && invoiceRequired)
+  const invoiceQuote = useQuery({
+    queryKey: [
+      'subscription-invoice-quote',
+      props.plan?.plan.id,
+      invoiceRequired,
+      invoiceRevision,
+    ],
+    enabled:
+      props.open && invoiceRequired && !!invoiceProfile.data && !!props.plan,
+    staleTime: 0,
+    queryFn: async () => {
+      const response = await quoteSubscriptionInvoice(
+        props.plan?.plan.id ?? 0,
+        true
+      )
+      if (
+        response.message !== 'success' ||
+        !response.data ||
+        response.invoice_required !== true
+      ) {
+        throw createServerError(response, t('Payment request failed'))
+      }
+      return response
+    },
+  })
+  const invoiceReady =
+    !invoiceRequired ||
+    (!!invoiceProfile.data &&
+      invoiceQuote.isSuccess &&
+      !invoiceQuote.isFetching)
+  useEffect(() => {
+    if (!props.open) setInvoiceRequired(false)
+  }, [props.open])
 
   useEffect(() => {
     if (props.open && props.epayMethods && props.epayMethods.length > 0) {
@@ -100,6 +142,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
 
   const handlePayStripe = async () => {
+    if (invoiceRequired) {
+      handleServerError(
+        new Error(t('Invoicing is not supported for this payment method'))
+      )
+      return
+    }
     setPaying(true)
     try {
       const res = await paySubscriptionStripe({ plan_id: plan.id })
@@ -118,6 +166,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
   }
 
   const handlePayCreem = async () => {
+    if (invoiceRequired) {
+      handleServerError(
+        new Error(t('Invoicing is not supported for this payment method'))
+      )
+      return
+    }
     setPaying(true)
     try {
       const res = await paySubscriptionCreem({ plan_id: plan.id })
@@ -138,6 +192,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
   // In-tab redirect (not window.open) — user-gesture context is lost
   // across the await, so a popup would be blocked. Same as the wallet hook.
   const handlePayWaffoPancake = async () => {
+    if (invoiceRequired) {
+      handleServerError(
+        new Error(t('Invoicing is not supported for this payment method'))
+      )
+      return
+    }
     setPaying(true)
     try {
       const res = await paySubscriptionWaffoPancake({ plan_id: plan.id })
@@ -155,6 +215,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
   }
 
   const handlePayEpay = async () => {
+    if (!invoiceReady) return
     if (!selectedEpayMethod) {
       toast.error(t('Please select a payment method'))
       return
@@ -164,6 +225,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       const res = await paySubscriptionEpay({
         plan_id: plan.id,
         payment_method: selectedEpayMethod,
+        ...(invoiceRequired ? { invoice_required: true } : {}),
       })
       if (res.message === 'success' && res.url) {
         // 沿用钱包现有表单提交，Safari 行为和隐藏字段清理由公共函数负责。
@@ -184,12 +246,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
   // 微信 Native 返回二维码，H5/支付宝页面返回跳转地址。
   // 仅服务端支付通知可以开通/续期，打开付款页不触发本地成功回调。
   const handlePayOfficial = async (paymentMethod: string) => {
+    if (!invoiceReady) return
     setPaying(true)
     try {
       // 只发送套餐和渠道标识，客户端不能指定应付金额或续期时长。
       const res = await paySubscriptionOfficial({
         plan_id: plan.id, // 与当前购买卡片一致，不允许替换为充值数量。
         payment_method: paymentMethod, // 后端验证此官方渠道启用且支持付款。
+        ...(invoiceRequired ? { invoice_required: true } : {}),
       })
       // 保存二维码与订单号即可，避免把其他网关的响应字段带入展示状态。
       if (res.success && res.data?.qr_code) {
@@ -287,6 +351,42 @@ export function SubscriptionPurchaseDialog(props: Props) {
             </Alert>
           )}
 
+          <InvoiceSelection
+            required={invoiceRequired}
+            onRequiredChange={setInvoiceRequired}
+            profile={invoiceProfile.data}
+            loading={invoiceProfile.isFetching}
+            error={invoiceProfile.isError}
+            onRetry={() => void invoiceProfile.refetch()}
+            onSaved={() => setInvoiceRevision((value) => value + 1)}
+          />
+          {invoiceRequired && invoiceQuote.isFetching ? (
+            <p role='status'>{t('Calculating payment details…')}</p>
+          ) : null}
+          {invoiceRequired && invoiceQuote.isError ? (
+            <p role='alert'>
+              {t('Payment details unavailable. Please retry.')}{' '}
+              <Button
+                variant='link'
+                onClick={() => void invoiceQuote.refetch()}
+              >
+                {t('Retry')}
+              </Button>
+            </p>
+          ) : null}
+          {invoiceRequired && invoiceQuote.data && !invoiceQuote.isFetching ? (
+            <p className='text-muted-foreground text-sm'>
+              {t('Amount Due')}:{' '}
+              {formatLocalCurrencyAmount(Number(invoiceQuote.data.data), {
+                abbreviate: false,
+              })}{' '}
+              · {t('Invoicing surcharge')}:{' '}
+              {formatLocalCurrencyAmount(
+                invoiceQuote.data.invoice_fee_amount ?? 0,
+                { abbreviate: false }
+              )}
+            </p>
+          ) : null}
           {hasAnyPayment && (
             <div className='space-y-3'>
               <p className='text-muted-foreground text-xs'>
@@ -299,7 +399,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                       variant='outline'
                       className='flex-1'
                       onClick={handlePayStripe}
-                      disabled={paying || limitReached}
+                      disabled={paying || limitReached || !invoiceReady}
                     >
                       Stripe
                     </Button>
@@ -309,7 +409,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                       variant='outline'
                       className='flex-1'
                       onClick={handlePayCreem}
-                      disabled={paying || limitReached}
+                      disabled={paying || limitReached || !invoiceReady}
                     >
                       Creem
                     </Button>
@@ -319,7 +419,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                       variant='outline'
                       className='flex-1'
                       onClick={handlePayWaffoPancake}
-                      disabled={paying || limitReached}
+                      disabled={paying || limitReached || !invoiceReady}
                     >
                       Waffo Pancake
                     </Button>
@@ -333,7 +433,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                     <Button
                       key={method.type}
                       variant='outline'
-                      disabled={paying || limitReached}
+                      disabled={paying || limitReached || !invoiceReady}
                       onClick={() => handlePayOfficial(method.type)}
                     >
                       {method.name || method.type}
@@ -357,7 +457,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
                   />
                   <Button
                     onClick={handlePayEpay}
-                    disabled={paying || !selectedEpayMethod || limitReached}
+                    disabled={
+                      paying ||
+                      !selectedEpayMethod ||
+                      limitReached ||
+                      !invoiceReady
+                    }
                   >
                     {t('Pay')}
                   </Button>

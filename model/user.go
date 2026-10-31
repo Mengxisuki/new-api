@@ -271,6 +271,10 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"setting":    true,
 		}
 	}
+	// 财务独立于管理员导航，不能因财务区可见而解锁渠道或用户管理。
+	if userRole >= common.RoleFinanceUser {
+		defaultConfig["finance"] = map[string]any{"enabled": true, "invoices": true}
+	}
 	// 普通用户不包含admin区域
 
 	// 转换为JSON字符串

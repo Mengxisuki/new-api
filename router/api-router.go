@@ -140,6 +140,12 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
 				selfRoute.POST("/aff_transfer", middleware.UserCriticalRateLimit("aff-transfer"), controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
+				// 发票抬头与附件均为私有资料，只允许本人读取或修改。
+				selfRoute.GET("/invoice-profile", controller.GetInvoiceProfile)
+				selfRoute.PUT("/invoice-profile", controller.PutInvoiceProfile)
+				selfRoute.DELETE("/invoice-profile", controller.DeleteInvoiceProfile)
+				selfRoute.GET("/invoices", controller.GetUserInvoices)
+				selfRoute.GET("/invoices/:id/file", controller.DownloadUserInvoiceFile)
 
 				// 2FA routes
 				selfRoute.GET("/2fa/status", controller.Get2FAStatus)
@@ -180,11 +186,26 @@ func SetApiRouter(router *gin.Engine) {
 			}
 		}
 
+		// 财务角色不进入普通管理员路由；每个动作仍执行细粒度授权。
+		middleware.DeclareAccessTokenPermissionRoute("GET", "/api/finance/invoices", authz.FinanceRead)
+		middleware.DeclareAccessTokenPermissionRoute("PUT", "/api/finance/invoices/:id/status", authz.FinanceWrite)
+		middleware.DeclareAccessTokenPermissionRoute("POST", "/api/finance/invoices/:id/file", authz.FinanceWrite)
+		middleware.DeclareAccessTokenPermissionRoute("GET", "/api/finance/invoices/:id/file", authz.FinanceRead)
+		financeRoute := apiRouter.Group("/finance")
+		financeRoute.Use(middleware.FinanceAuth())
+		{
+			financeRoute.GET("/invoices", middleware.RequirePermission(authz.FinanceRead), controller.GetFinanceInvoices)
+			financeRoute.PUT("/invoices/:id/status", middleware.RequirePermission(authz.FinanceWrite), controller.UpdateInvoiceStatus)
+			financeRoute.POST("/invoices/:id/file", middleware.RequirePermission(authz.FinanceWrite), controller.UploadInvoiceFile)
+			financeRoute.GET("/invoices/:id/file", middleware.RequirePermission(authz.FinanceRead), controller.DownloadFinanceInvoiceFile)
+		}
+
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())
 		{
 			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)
+			subscriptionRoute.POST("/invoice-quote", controller.SubscriptionInvoiceQuote)
 			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)
 			subscriptionRoute.PUT("/self/preference", controller.UpdateSubscriptionPreference)
 			// 订阅直接向官方商户付款，绝不复用钱包余额兑换。

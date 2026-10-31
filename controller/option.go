@@ -376,6 +376,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	case "invoice_setting.default_rate", "invoice_setting.group_rates":
+		if err = operation_setting.ValidateInvoiceSettingUpdate(option.Key, option.Value.(string)); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	case "payment_setting.official_channels":
 		// 空密钥保留原值，由服务端统一验证渠道和保密字段。
 		option.Value, err = operation_setting.PrepareOfficialPaymentChannelsUpdate(option.Value.(string))

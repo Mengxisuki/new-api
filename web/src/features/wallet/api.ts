@@ -215,7 +215,10 @@ export async function getUserBillingHistory(
   if (keyword) {
     params.append('keyword', keyword)
   }
-  const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  // 用户主动查询要求本次新请求，不能复用打开前仍在途的旧列表。
+  const res = await api.get(`/api/user/topup/self?${params.toString()}`, {
+    disableDuplicate: true,
+  })
   return res.data
 }
 
@@ -234,7 +237,10 @@ export async function getAllBillingHistory(
   if (keyword) {
     params.append('keyword', keyword)
   }
-  const res = await api.get(`/api/user/topup?${params.toString()}`)
+  // 管理员订单查询采用相同的新鲜度约束，不改变服务端分页合同。
+  const res = await api.get(`/api/user/topup?${params.toString()}`, {
+    disableDuplicate: true,
+  })
   return res.data
 }
 

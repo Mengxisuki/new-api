@@ -137,6 +137,8 @@ const BILLING_SECTIONS = [
           PayAddress: settings.PayAddress,
           EpayId: settings.EpayId,
           EpayKey: settings.EpayKey,
+          InvoiceDefaultRate: settings['invoice_setting.default_rate'] ?? 0,
+          InvoiceGroupRates: settings['invoice_setting.group_rates'] ?? '{}',
           Price: settings.Price,
           MinTopUp: settings.MinTopUp,
           CustomCallbackAddress: settings.CustomCallbackAddress,

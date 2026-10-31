@@ -145,12 +145,14 @@ func GetTopUpInfo(c *gin.Context) {
 }
 
 type EpayRequest struct {
-	Amount        int64  `json:"amount"`
-	PaymentMethod string `json:"payment_method"`
+	Amount          int64  `json:"amount"`
+	PaymentMethod   string `json:"payment_method"`
+	InvoiceRequired bool   `json:"invoice_required"`
 }
 
 type AmountRequest struct {
-	Amount int64 `json:"amount"`
+	Amount          int64 `json:"amount"`
+	InvoiceRequired bool  `json:"invoice_required"`
 }
 
 func GetEpayClient() *epay.Client {
@@ -364,6 +366,12 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 	payMoney := getPayMoney(req.Amount, group)
+	baseMoney := payMoney
+	invoice, payMoney, err := model.NewInvoiceRequest(id, group, "topup", baseMoney, req.InvoiceRequired)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -372,7 +380,7 @@ func RequestEpay(c *gin.Context) {
 	// 官方渠道与易支付共享现有额度和钱包容量校验。
 	// 渠道选择由服务端配置查找，不接受客户端提供的商户配置。
 	if channel, ok := operation_setting.GetOfficialPaymentChannel(req.PaymentMethod, true); ok {
-		requestOfficialTopUp(c, *channel, req.Amount, creditedQuota, payMoney, id)
+		requestOfficialTopUp(c, *channel, &model.TopUp{UserId: id, Amount: req.Amount, CreditedQuota: creditedQuota, Money: payMoney, Invoice: invoice})
 		return
 	}
 
@@ -414,6 +422,7 @@ func RequestEpay(c *gin.Context) {
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
+		Invoice:         invoice,
 		CreditedQuota:   creditedQuota, // 易支付同样冻结权益，不能用人民币面额当美元数量入账。
 		Money:           payMoney,
 		TradeNo:         tradeNo,
@@ -536,6 +545,13 @@ func EpayNotify(c *gin.Context) {
 		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
+		// 开票订单必须真实收齐包含附加费的总价，不能只因签名合法就发放权益。
+		order := model.GetTopUpByTradeNo(verifyInfo.ServiceTradeNo)
+		if order == nil || validateInvoiceCallbackAmount(order.InvoiceRequired, order.Money, verifyInfo.Money) != nil {
+			logger.LogWarn(c.Request.Context(), common.LogText("Epay invoice order amount mismatch or order missing trade_no=%s", verifyInfo.ServiceTradeNo))
+			c.String(http.StatusOK, "fail")
+			return
+		}
 		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP())
 		if err != nil {
 			switch {
@@ -590,11 +606,19 @@ func RequestAmount(c *gin.Context) {
 		return
 	}
 	payMoney := getPayMoney(req.Amount, group)
+	baseMoney := payMoney
+	invoice, payMoney, err := model.NewInvoiceRequest(id, group, "topup", baseMoney, req.InvoiceRequired)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64), "credited_quota": creditedQuota})
+	response := invoiceQuoteResponse(baseMoney, payMoney, invoice)
+	response["credited_quota"] = creditedQuota
+	c.JSON(http.StatusOK, response)
 }
 
 func GetUserTopUps(c *gin.Context) {

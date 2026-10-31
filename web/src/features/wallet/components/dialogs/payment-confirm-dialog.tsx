@@ -35,6 +35,7 @@ import { formatLocalCurrencyAmount } from '@/lib/currency'
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
 import { formatCurrency, getPaymentIcon } from '../../lib'
 import type { PaymentMethod } from '../../types'
+import { PaymentBreakdown } from '../payment-breakdown'
 
 interface PaymentConfirmDialogProps {
   open: boolean
@@ -47,6 +48,9 @@ interface PaymentConfirmDialogProps {
   processing: boolean
   discountRate?: number
   usdExchangeRate?: number
+  localCnyInput?: boolean
+  creditedQuota?: number | null
+  quoteValid?: boolean
 }
 
 export function PaymentConfirmDialog({
@@ -60,6 +64,9 @@ export function PaymentConfirmDialog({
   processing,
   discountRate = DEFAULT_DISCOUNT_RATE,
   usdExchangeRate = 1,
+  localCnyInput = false,
+  creditedQuota,
+  quoteValid = true,
 }: PaymentConfirmDialogProps) {
   const { t } = useTranslation()
   const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0
@@ -84,11 +91,14 @@ export function PaymentConfirmDialog({
               {t('Topup Amount')}
             </span>
             <span className='text-lg font-semibold'>
-              {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
-                digitsLarge: 2,
-                digitsSmall: 2,
-                abbreviate: false,
-              })}
+              {formatLocalCurrencyAmount(
+                localCnyInput ? topupAmount : topupAmount * usdExchangeRate,
+                {
+                  digitsLarge: 2,
+                  digitsSmall: 2,
+                  abbreviate: false,
+                }
+              )}
             </span>
           </div>
 
@@ -123,6 +133,14 @@ export function PaymentConfirmDialog({
             </div>
           )}
 
+          <PaymentBreakdown
+            localCnyInput={localCnyInput} // 人民币渠道的输入、报价和到账按同一单位解释。
+            inputAmount={topupAmount}
+            paymentAmount={paymentAmount}
+            creditedQuota={creditedQuota} // 缺失时不会以输入推算，明确提示未获取报价。
+            calculating={calculating}
+            quoteValid={quoteValid}
+          />
           <div className='border-t pt-4'>
             <div className='flex items-center justify-between'>
               <span className='text-muted-foreground text-sm'>
@@ -145,7 +163,10 @@ export function PaymentConfirmDialog({
           <AlertDialogCancel disabled={processing}>
             {t('Cancel')}
           </AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} disabled={processing}>
+          <AlertDialogAction
+            onClick={onConfirm}
+            disabled={processing || calculating || !quoteValid}
+          >
             {processing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {t('Confirm Payment')}
           </AlertDialogAction>

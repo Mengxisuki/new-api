@@ -7570,6 +7570,11 @@
     "WeChat Pay H5 type must be WAP, IOS or ANDROID": "Loại H5 WeChat Pay phải là WAP, IOS hoặc ANDROID",
     "WeChat Pay interaction mode must be qr or redirect": "Chế độ WeChat Pay phải là qr hoặc redirect",
     "WeChat Pay public key IDs must start with PUB_KEY_ID_": "ID khóa công khai WeChat Pay phải bắt đầu bằng PUB_KEY_ID_",
-    "Payment completed, refresh subscription": "Đã thanh toán, làm mới gói đăng ký"
+    "Payment completed, refresh subscription": "Đã thanh toán, làm mới gói đăng ký",
+    "Payment breakdown": "Chi tiết thanh toán",
+    "Calculating payment details…": "Đang tính số tiền thanh toán và ghi có…",
+    "Payment details unavailable. Please retry.": "Chưa có chi tiết thanh toán. Vui lòng thử lại.",
+    "Recharge {{input}} → Pay {{payment}} → Receive {{credit}} in platform credit": "Nạp {{input}} → Thanh toán {{payment}} → Nhận {{credit}} số dư nền tảng",
+    "Currency exchange rate must be positive and finite": "Tỷ giá phải là số dương hữu hạn"
   }
 }

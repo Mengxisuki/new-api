@@ -19,12 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import { PAYMENT_TYPES } from '../constants'
-import { requestPaymentAmount } from './use-payment'
+import { requestPaymentQuote } from './use-payment'
 
 describe('payment amount routing', () => {
   test('uses the dedicated Waffo amount calculator', async () => {
     const calls: string[] = []
-    const amount = await requestPaymentAmount(120, PAYMENT_TYPES.WAFFO, {
+    const amount = await requestPaymentQuote(120, PAYMENT_TYPES.WAFFO, {
       regular: async () => {
         calls.push('regular')
         return { success: true, data: '1' }
@@ -43,7 +43,7 @@ describe('payment amount routing', () => {
       },
     })
 
-    expect(amount).toBe(18.75)
+    expect(amount.amount).toBe(18.75)
     expect(calls).toEqual(['waffo:120'])
   })
 })

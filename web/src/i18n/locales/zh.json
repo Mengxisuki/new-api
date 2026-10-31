@@ -7570,6 +7570,11 @@
     "WeChat Pay H5 type must be WAP, IOS or ANDROID": "微信支付 H5 类型必须为 WAP、IOS 或 ANDROID",
     "WeChat Pay interaction mode must be qr or redirect": "微信支付交互方式必须为 qr 或 redirect",
     "WeChat Pay public key IDs must start with PUB_KEY_ID_": "微信支付公钥 ID 必须以 PUB_KEY_ID_ 开头",
-    "Payment completed, refresh subscription": "已完成支付，刷新订阅"
+    "Payment completed, refresh subscription": "已完成支付，刷新订阅",
+    "Payment breakdown": "充值换算说明",
+    "Calculating payment details…": "正在计算付款与到账额度…",
+    "Payment details unavailable. Please retry.": "暂未获取付款与到账额度，请重试。",
+    "Recharge {{input}} → Pay {{payment}} → Receive {{credit}} in platform credit": "充值 {{input}} → 支付 {{payment}} → 到账平台额度 {{credit}}",
+    "Currency exchange rate must be positive and finite": "货币换算率必须为正数且为有限值"
   }
 }

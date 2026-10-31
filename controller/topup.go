@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -166,23 +167,30 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
+// getPayMoney 为本地收款渠道计算实际应付金额。
+// CNY 按人民币面额收款；其余模式继续使用已配置的美元单价。
+// 分组倍率和面额优惠影响实付，不改变用户选购的到账面额。
 func getPayMoney(amount int64, group string) float64 {
-	dAmount := decimal.NewFromInt(amount)
-	// 充值金额以“展示类型”为准：
-	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
+	dAmount := decimal.NewFromInt(amount) // 使用十进制计算，不引入二进制浮点连乘尾差。
+	// 人民币渠道的 CNY 输入是元面额，不能再乘美元充值单价。
+	// USD/CUSTOM 保持现有美元数量合同；TOKENS 先换算为美元数量。
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		dAmount = dAmount.Div(dQuotaPerUnit)
 	}
 
-	topupGroupRatio := common.GetTopupGroupRatio(group)
+	topupGroupRatio := common.GetTopupGroupRatio(group) // 人民币面额改价不覆盖已有用户分组优惠。
 	if topupGroupRatio == 0 {
 		topupGroupRatio = 1
 	}
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
-	dPrice := decimal.NewFromFloat(operation_setting.Price)
-	// apply optional preset discount by the original request amount (if configured), default 1.0
+	unitPrice := operation_setting.Price
+	if operation_setting.IsCNYDisplay() {
+		unitPrice = 1 // 每元面额按一元报价；用户分组和面额优惠仍由下方统一应用。
+	}
+	dPrice := decimal.NewFromFloat(unitPrice)
+	// 面额优惠仍按原请求金额匹配，不用换算后的内部额度作为优惠档位。
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
 		if ds > 0 {
@@ -191,7 +199,7 @@ func getPayMoney(amount int64, group string) float64 {
 	}
 	dDiscount := decimal.NewFromFloat(discount)
 
-	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
+	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount) // 优惠只作用于实付，到账由独立冻结额度决定。
 
 	return payMoney.InexactFloat64()
 }
@@ -219,6 +227,36 @@ func getTopUpQuota(amount int64) (int, error) {
 		quota = quota.Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 	}
 	return common.WalletQuotaFromDecimalStrict(quota)
+}
+
+// getEpayTopUpQuota 把本地支付面额转换为下单时冻结的内部额度。
+// 仅 CNY 改用人民币输入；Stripe/Waffo 等仍使用原有 getTopUpQuota 合同。
+// 以整数额度向下取整，不把舍入尾差放大成可重复领取的赠送。
+func getEpayTopUpQuota(amount int64) (int, error) {
+	if !operation_setting.IsCNYDisplay() {
+		return validateTopUpQuota(amount)
+	}
+	rate := operation_setting.USDExchangeRate // 使用当前保存的换算，禁止回退到默认七点三。
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 0, common.NewMessage("Currency exchange rate must be positive and finite")
+	}
+	// 内部仍以美元额度存储，展示汇率改变不能导致一元付款获得一美元额度。
+	quota := decimal.NewFromInt(amount).Div(decimal.NewFromFloat(rate)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Floor()
+	return validateCreditedQuota(quota) // 复用统一正值与钱包上限校验，不能向前端报零额度成功。
+}
+
+// validateEpayTopUpQuotaForUser 同时验证本次冻结额度和钱包最终容量。
+// 报价和下单共享这一个入口，避免展示允许支付但订单额度无法到账。
+// 这里只预检容量，到账仍由模型的原子条件更新再次检查并发余额。
+func validateEpayTopUpQuotaForUser(userID int, amount int64) (int, error) {
+	quota, err := getEpayTopUpQuota(amount) // 先确定本笔应入账额度，再对真实余额做容量检查。
+	if err != nil {
+		return 0, err
+	}
+	if err := model.ValidateTopUpQuotaCapacity(userID, quota); err != nil {
+		return 0, err
+	}
+	return quota, nil
 }
 
 func getMaxTopUpAmount() int64 {
@@ -314,7 +352,9 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	creditedQuota, err := validateEpayTopUpQuotaForUser(id, req.Amount)
+	if err != nil {
+		paymentError(c, err)
 		return
 	}
 
@@ -332,11 +372,6 @@ func RequestEpay(c *gin.Context) {
 	// 官方渠道与易支付共享现有额度和钱包容量校验。
 	// 渠道选择由服务端配置查找，不接受客户端提供的商户配置。
 	if channel, ok := operation_setting.GetOfficialPaymentChannel(req.PaymentMethod, true); ok {
-		creditedQuota, quotaErr := validateTopUpQuota(req.Amount)
-		if quotaErr != nil {
-			paymentError(c, quotaErr)
-			return
-		}
 		requestOfficialTopUp(c, *channel, req.Amount, creditedQuota, payMoney, id)
 		return
 	}
@@ -379,6 +414,7 @@ func RequestEpay(c *gin.Context) {
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
+		CreditedQuota:   creditedQuota, // 易支付同样冻结权益，不能用人民币面额当美元数量入账。
 		Money:           payMoney,
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
@@ -543,7 +579,9 @@ func RequestAmount(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	creditedQuota, err := validateEpayTopUpQuotaForUser(id, req.Amount)
+	if err != nil {
+		paymentError(c, err)
 		return
 	}
 	group, err := model.GetUserGroup(id, true)
@@ -556,7 +594,7 @@ func RequestAmount(c *gin.Context) {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64), "credited_quota": creditedQuota})
 }
 
 func GetUserTopUps(c *gin.Context) {

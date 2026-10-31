@@ -7570,6 +7570,11 @@
     "WeChat Pay H5 type must be WAP, IOS or ANDROID": "Le type H5 WeChat Pay doit être WAP, IOS ou ANDROID",
     "WeChat Pay interaction mode must be qr or redirect": "Le mode WeChat Pay doit être qr ou redirect",
     "WeChat Pay public key IDs must start with PUB_KEY_ID_": "L’ID de clé publique WeChat Pay doit commencer par PUB_KEY_ID_",
-    "Payment completed, refresh subscription": "Paiement terminé, actualiser l’abonnement"
+    "Payment completed, refresh subscription": "Paiement terminé, actualiser l’abonnement",
+    "Payment breakdown": "Détail du paiement",
+    "Calculating payment details…": "Calcul des montants…",
+    "Payment details unavailable. Please retry.": "Détails du paiement indisponibles. Réessayez.",
+    "Recharge {{input}} → Pay {{payment}} → Receive {{credit}} in platform credit": "Recharge {{input}} → Paiement {{payment}} → Crédit plateforme {{credit}}",
+    "Currency exchange rate must be positive and finite": "Le taux de change doit être positif et fini"
   }
 }

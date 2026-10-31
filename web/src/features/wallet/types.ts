@@ -34,7 +34,16 @@ export interface ApiResponse<T = unknown> {
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
-export type AmountResponse = ApiResponse<string>
+// 报价仍保留字符串金额；入账额度来自同一服务端计算，不在浏览器推导。
+export type AmountResponse = ApiResponse<string> & { credited_quota?: number }
+
+// 将金额、渠道和应入账额度绑定到同一次报价，防止沿用上一次请求。
+export interface PaymentQuote {
+  amount: number
+  creditedQuota: number | null
+  inputAmount: number
+  paymentType: string
+}
 // 官方支付返回二维码或跳转链接，订单号用于继续支付与账单定位。
 // 返回值不包含商户密钥，二维码内容由服务端签名后的渠道响应提供。
 export interface OfficialPaymentData {

@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
+import { getCurrencyDisplay } from '@/lib/currency'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
@@ -47,6 +48,7 @@ import {
   getDefaultPaymentType,
   getMinTopupAmount,
   dispatchSelectedPayment,
+  isLocalTopupPayment,
 } from './lib'
 import type {
   UserWalletData,
@@ -85,14 +87,14 @@ export function Wallet(props: WalletProps) {
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
-  // Calculate effective exchange rate - when display type is USD, use rate of 1
-  const effectiveUsdExchangeRate = useMemo(() => {
-    return currency?.quotaDisplayType === 'USD'
-      ? 1
-      : currency?.usdExchangeRate || 1
-  }, [currency?.quotaDisplayType, currency?.usdExchangeRate])
+  // 公共货币工具统一处理 CNY 与自定义展示率，不另写默认 7.3 的映射。
+  const { meta: currencyMeta } = getCurrencyDisplay()
+  const effectiveUsdExchangeRate =
+    currencyMeta.kind === 'tokens' ? 1 : currencyMeta.exchangeRate
   const {
     amount: paymentAmount,
+    creditedQuota,
+    quote,
     calculating,
     processing,
     calculatePaymentAmount,
@@ -158,6 +160,15 @@ export function Wallet(props: WalletProps) {
     return selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo)
   }, [selectedPaymentMethod, topupInfo])
 
+  // 普通本地渠道以人民币为输入；国际渠道继续走原有美元数量合同。
+  const localCnyInput =
+    currency?.quotaDisplayType === 'CNY' &&
+    isLocalTopupPayment(getCurrentPaymentType())
+  const quoteValid =
+    !!quote &&
+    quote.inputAmount === topupAmount &&
+    quote.paymentType === getCurrentPaymentType()
+
   // Handle preset selection
   const handleSelectPreset = (preset: PresetAmount) => {
     setTopupAmount(preset.value)
@@ -186,8 +197,8 @@ export function Wallet(props: WalletProps) {
       }
 
       // Calculate payment amount and show confirmation dialog
-      await calculatePaymentAmount(topupAmount, method.type)
-      setConfirmDialogOpen(true)
+      const quoted = await calculatePaymentAmount(topupAmount, method.type)
+      if (quoted !== null) setConfirmDialogOpen(true)
     } finally {
       setPaymentLoading(null)
     }
@@ -195,7 +206,8 @@ export function Wallet(props: WalletProps) {
 
   // Handle payment confirmation
   const handlePaymentConfirm = async () => {
-    if (!selectedPaymentMethod) return
+    // 没有当前金额与渠道的有效报价时，不能确认上一笔请求的付款资料。
+    if (!selectedPaymentMethod || calculating || !quoteValid) return
 
     const success = await dispatchSelectedPayment(
       selectedPaymentMethod,
@@ -280,8 +292,11 @@ export function Wallet(props: WalletProps) {
     setPaymentLoading(loadingKey)
 
     try {
-      await calculatePaymentAmount(topupAmount, PAYMENT_TYPES.WAFFO)
-      setConfirmDialogOpen(true)
+      const quoted = await calculatePaymentAmount(
+        topupAmount,
+        PAYMENT_TYPES.WAFFO
+      )
+      if (quoted !== null) setConfirmDialogOpen(true)
     } finally {
       setPaymentLoading(null)
     }
@@ -334,6 +349,9 @@ export function Wallet(props: WalletProps) {
                   loading={topupLoading}
                   priceRatio={(status?.price as number) || 1}
                   usdExchangeRate={effectiveUsdExchangeRate}
+                  localCnyInput={localCnyInput}
+                  creditedQuota={creditedQuota}
+                  quoteValid={quoteValid}
                   onOpenBilling={() => setBillingDialogOpen(true)}
                   creemProducts={topupInfo?.creem_products}
                   enableCreemTopup={topupInfo?.enable_creem_topup}
@@ -379,6 +397,9 @@ export function Wallet(props: WalletProps) {
         processing={processing || waffoProcessing || pancakeProcessing}
         discountRate={getDiscountRate()}
         usdExchangeRate={effectiveUsdExchangeRate}
+        localCnyInput={localCnyInput}
+        creditedQuota={creditedQuota}
+        quoteValid={quoteValid}
       />
 
       {/* 二维码复用公共对话框与现有二维码库，支付凭证不进入 URL。 */}

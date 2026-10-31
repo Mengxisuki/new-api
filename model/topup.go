@@ -175,6 +175,20 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	})
 }
 
+// epayQuotaToCredit 区分新冻结订单和仍待付款的历史美元数量订单。
+// 非零冻结值必须完整校验，负值不能借历史路径重新计算出正额度。
+// 精确零只代表迁移前已持久化且没有冻结值的真实旧单。
+// 旧单只按其原 Amount 契约结算，不读取当前人民币或自定义展示汇率。
+func (topUp *TopUp) epayQuotaToCredit() (int, error) {
+	if topUp.CreditedQuota != 0 {
+		return topUp.QuotaToCredit() // 复用钱包上限及正值校验，不另建一份边界规则。
+	}
+	// 保留旧订单原有美元数量含义，切换站点币种不能追溯改写已购权益。
+	return common.WalletQuotaFromDecimalStrict(
+		decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+	)
+}
+
 // RechargeEpay 原子完成易支付订单：订单行锁、状态校验、成功更新与用户额度增加
 // 在同一个事务内完成，因此同一订单的并发/重复回调（包括多实例部署下）最多充值一次。
 // alreadyDone=true 表示订单此前已完成，本次为幂等重复回调。
@@ -209,9 +223,8 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 			topUp.PaymentMethod = actualPaymentMethod
 		}
 		var quotaErr error
-		quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
-			decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-		)
+		// 新订单已按购买时的货币换算冻结权益，不能再把人民币输入当作美元。
+		quotaToAdd, quotaErr = topUp.epayQuotaToCredit()
 		if quotaErr != nil || quotaToAdd <= 0 {
 			return ErrInvalidTopUpQuota
 		}
@@ -491,12 +504,15 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return common.NewMessage("Order is not pending payment and cannot be completed")
 		}
 
-		// 计算应充值额度：
-		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
-		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
+		// 新官方及易支付订单读取冻结权益，不能按当前展示币种重算。
+		// Stripe 仍按 Money 表示的美元额度，其它网关仍按原 Amount 契约。
+		// 只有真实历史易支付零冻结订单保留原美元数量规则。
 		var quotaErr error
 		if IsOfficialPaymentProvider(topUp.PaymentProvider) {
 			quotaToAdd, quotaErr = topUp.QuotaToCredit()
+		} else if topUp.PaymentProvider == PaymentProviderEpay {
+			// 人工补单与自动回调使用同一冻结规则，不能因入口不同多发额度。
+			quotaToAdd, quotaErr = topUp.epayQuotaToCredit()
 		} else if topUp.PaymentProvider == PaymentProviderStripe {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),

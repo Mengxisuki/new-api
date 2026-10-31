@@ -52,6 +52,7 @@ import type {
   WaffoPayMethod,
 } from '../types'
 import { CreemProductsSection } from './creem-products-section'
+import { PaymentBreakdown } from './payment-breakdown'
 
 interface RechargeFormCardProps {
   topupInfo: TopupInfo | null
@@ -72,6 +73,9 @@ interface RechargeFormCardProps {
   loading?: boolean
   priceRatio?: number
   usdExchangeRate?: number
+  localCnyInput?: boolean
+  creditedQuota?: number | null
+  quoteValid?: boolean
   onOpenBilling?: () => void
   creemProducts?: CreemProduct[]
   enableCreemTopup?: boolean
@@ -102,6 +106,9 @@ export function RechargeFormCard({
   loading,
   priceRatio = 1,
   usdExchangeRate = 1,
+  localCnyInput = false,
+  creditedQuota,
+  quoteValid,
   onOpenBilling,
   creemProducts,
   enableCreemTopup,
@@ -239,9 +246,9 @@ export function RechargeFormCard({
                         hasDiscount,
                       } = calculatePresetPricing(
                         preset.value,
-                        priceRatio,
+                        localCnyInput ? 1 : priceRatio, // 本地 CNY 不再将一元当成一美元售价。
                         discount,
-                        usdExchangeRate
+                        localCnyInput ? 1 : usdExchangeRate // CNY 预设已经是元，不重复换算。
                       )
                       return (
                         <Button
@@ -322,6 +329,15 @@ export function RechargeFormCard({
                   </div>
                 </div>
               </div>
+
+              <PaymentBreakdown
+                localCnyInput={localCnyInput}
+                inputAmount={topupAmount}
+                paymentAmount={paymentAmount}
+                creditedQuota={creditedQuota}
+                calculating={calculating}
+                quoteValid={quoteValid}
+              />
 
               <div className='space-y-2.5 sm:space-y-3'>
                 <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>

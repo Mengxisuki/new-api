@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import i18next from 'i18next'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { toast } from 'sonner'
 
 import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   calculateAmount,
@@ -32,12 +34,13 @@ import {
   isApiSuccess,
 } from '../api'
 import {
+  isLocalTopupPayment,
   isStripePayment,
   isWaffoPayment,
   isWaffoPancakePayment,
   submitPaymentForm,
 } from '../lib'
-import type { AmountRequest, AmountResponse } from '../types'
+import type { AmountRequest, AmountResponse, PaymentQuote } from '../types'
 
 // ============================================================================
 // Payment Hook
@@ -59,11 +62,11 @@ const defaultPaymentAmountCalculators: PaymentAmountCalculators = {
   waffoPancake: calculateWaffoPancakeAmount,
 }
 
-export async function requestPaymentAmount(
+export async function requestPaymentQuote(
   topupAmount: number,
   paymentType: string,
   calculators: PaymentAmountCalculators = defaultPaymentAmountCalculators
-): Promise<number> {
+): Promise<PaymentQuote> {
   let calculator = calculators.regular
   if (isStripePayment(paymentType)) {
     calculator = calculators.stripe
@@ -74,15 +77,32 @@ export async function requestPaymentAmount(
   }
 
   const response = await calculator({ amount: topupAmount })
+  // 错误响应必须显式失败，不能将失败金额伪装成零元报价。
   if (!isApiSuccess(response) || !response.data) {
-    return 0
+    throw createServerError(response, i18next.t('Payment request failed'))
   }
-
-  return Number.parseFloat(response.data)
+  const amount = Number(response.data)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(i18next.t('Payment details unavailable. Please retry.'))
+  }
+  // 入账字段缺失可用于尚无冻结报价的国际渠道，人民币本地渠道随后严格要求。
+  const creditedQuota = response.credited_quota ?? null
+  if (
+    creditedQuota !== null &&
+    (!Number.isSafeInteger(creditedQuota) || creditedQuota <= 0)
+  ) {
+    throw new Error(i18next.t('Payment details unavailable. Please retry.'))
+  }
+  return { amount, creditedQuota, inputAmount: topupAmount, paymentType }
 }
 
 export function usePayment() {
-  const [amount, setAmount] = useState<number>(0)
+  const [quote, setQuote] = useState<PaymentQuote | null>(null)
+  const requestId = useRef(0) // 只有最新金额与渠道的报价可以更新界面。
+  const currency = useSystemConfigStore((state) => state.config.currency)
+  const lastRequest = useRef<{ amount: number; paymentType: string } | null>(
+    null
+  )
   const [calculating, setCalculating] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [qrPayment, setQrPayment] = useState<{
@@ -90,26 +110,58 @@ export function usePayment() {
     tradeNo?: string
   } | null>(null)
 
-  // Calculate payment amount
+  // 报价中和失败时清空旧结果，不把上次金额留作可确认的付款资料。
+  // 请求序号只保护浏览器展示顺序，最终金额仍由下单端点重新校验。
   const calculatePaymentAmount = useCallback(
     async (topupAmount: number, paymentType: string) => {
+      const currentRequest = ++requestId.current
+      lastRequest.current = { amount: topupAmount, paymentType }
+      setQuote(null)
+      if (topupAmount <= 0) {
+        setCalculating(false) // 用户清空输入时，已失效旧请求的 finally 不会再释放加载状态。
+        return null
+      }
+      setCalculating(true)
       try {
-        setCalculating(true)
-        const calculatedAmount = await requestPaymentAmount(
-          topupAmount,
-          paymentType
-        )
-        setAmount(calculatedAmount)
-        return calculatedAmount
-      } catch {
-        setAmount(0)
-        return 0
+        const next = await requestPaymentQuote(topupAmount, paymentType)
+        if (
+          currency.quotaDisplayType === 'CNY' &&
+          isLocalTopupPayment(paymentType) &&
+          next.creditedQuota === null
+        ) {
+          throw new Error(
+            i18next.t('Payment details unavailable. Please retry.')
+          )
+        }
+        // 后返回的旧请求既不能覆盖当前报价，也不能打开其付款确认框。
+        if (currentRequest !== requestId.current) return null
+        setQuote(next)
+        return next.amount
+      } catch (error) {
+        if (currentRequest === requestId.current) {
+          setQuote(null)
+          handleServerError(error, i18next.t('Payment request failed'))
+        }
+        return null
       } finally {
-        setCalculating(false)
+        if (currentRequest === requestId.current) setCalculating(false)
       }
     },
-    []
+    [currency.quotaDisplayType]
   )
+
+  // 币种或汇率保存后重新向服务器报价，不在浏览器按新汇率改旧冻结额度。
+  useEffect(() => {
+    requestId.current += 1
+    setQuote(null)
+    const last = lastRequest.current
+    if (last) void calculatePaymentAmount(last.amount, last.paymentType)
+  }, [
+    currency.quotaDisplayType,
+    currency.usdExchangeRate,
+    currency.customCurrencyExchangeRate,
+    calculatePaymentAmount,
+  ])
 
   // Process payment
   const processPayment = useCallback(
@@ -184,13 +236,14 @@ export function usePayment() {
   )
 
   return {
-    amount,
+    amount: quote?.amount ?? 0,
+    creditedQuota: quote?.creditedQuota ?? null,
+    quote,
     calculating,
     processing,
     qrPayment,
     calculatePaymentAmount,
     processPayment,
-    setAmount,
     clearQrPayment: () => setQrPayment(null),
   }
 }

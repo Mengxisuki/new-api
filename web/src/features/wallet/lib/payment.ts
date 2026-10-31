@@ -111,6 +111,17 @@ export function isWaffoPancakePayment(paymentType: string): boolean {
   return paymentType === PAYMENT_TYPES.WAFFO_PANCAKE
 }
 
+// 普通人民币渠道和国际美元渠道具有不同输入合同。
+// 已有国际渠道继续使用其专属报价和结算，不能套用一元充值一元公式。
+export function isLocalTopupPayment(paymentType: string): boolean {
+  return (
+    !isStripePayment(paymentType) &&
+    !isWaffoPayment(paymentType) &&
+    !isWaffoPancakePayment(paymentType) &&
+    paymentType !== PAYMENT_TYPES.CREEM
+  )
+}
+
 export interface PaymentProcessors {
   regular: (topupAmount: number, paymentType: string) => Promise<boolean>
   waffo: (topupAmount: number, payMethodIndex: number) => Promise<boolean>

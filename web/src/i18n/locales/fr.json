@@ -7585,6 +7585,7 @@
     "Any invoicing surcharge is included in the payment quote and does not increase platform credit.": "Le supplément de facturation est inclus dans le paiement et n'augmente pas le crédit.",
     "Assign finance role": "Attribuer le rôle Finance",
     "Awaiting invoicing": "En attente de facturation",
+    "Awaiting invoice": "En attente de facturation",
     "Awaiting payment": "En attente de paiement",
     "Bank account": "Compte bancaire",
     "Bank name": "Banque",

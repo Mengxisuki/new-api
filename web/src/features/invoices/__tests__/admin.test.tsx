@@ -17,10 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next, { createInstance } from 'i18next'
+import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import en from '@/i18n/locales/en.json'
+import fr from '@/i18n/locales/fr.json'
+import ja from '@/i18n/locales/ja.json'
+import ru from '@/i18n/locales/ru.json'
+import viLocale from '@/i18n/locales/vi.json'
+import zhTW from '@/i18n/locales/zh-TW.json'
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -70,7 +79,7 @@ const invoice = {
   issued_at: 0,
 }
 
-function renderFinance(write: boolean, status = 'pending') {
+function renderFinance(write: boolean, status = 'pending', i18n = i18next) {
   useAuthStore.getState().auth.setUser({
     // 通过公开store建立真实页面读取的身份。
     id: 5,
@@ -91,7 +100,9 @@ function renderFinance(write: boolean, status = 'pending') {
   clients.push(client) // 清理阶段统一释放后台查询，避免测试互相影响。
   render(
     <QueryClientProvider client={client}>
-      <FinanceInvoices />
+      <I18nextProvider i18n={i18n}>
+        <FinanceInvoices />
+      </I18nextProvider>
     </QueryClientProvider>
   )
 }
@@ -101,6 +112,67 @@ afterEach(() => {
   vi.restoreAllMocks() // 后续场景不能继承上传成功或固定列表响应。
   useAuthStore.getState().auth.reset('complete') // 不把财务能力泄漏给之后的普通用户测试。
 })
+
+// 使用真实语言资源复现漏译，空英文测试环境无法发现动态状态键缺失。
+// 筛选器收起后的标签、表格和详情均属于用户实际可见的翻译合同。
+test('中文开票状态与筛选标签正确显示并响应语言切换', async () => {
+  const user = userEvent.setup()
+  const i18n = createInstance() // 独立实例避免影响现有英文行为测试。
+  await i18n.use(initReactI18next).init({
+    lng: 'zh',
+    fallbackLng: 'en',
+    resources: { en, zh }, // 真实词条缺失时必须失败，不能在测试中伪造翻译。
+  })
+  renderFinance(true, 'pending', i18n)
+  const filter = screen.getByRole('combobox', { name: '开票状态' })
+  expect(filter).toHaveTextContent('全部状态') // 不能显示内部筛选值all。
+  expect(await screen.findByText('待开票')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: '处理开票' }))
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByText('待开票')).toBeVisible() // 详情复用相同状态词条。
+  await user.keyboard('{Escape}')
+  await user.click(filter)
+  await user.click(screen.getByRole('option', { name: '待开票' }))
+  expect(filter).toHaveTextContent('待开票') // 关闭弹层后也必须保留本地化标签。
+  await waitFor(() =>
+    expect(api.get).toHaveBeenLastCalledWith(
+      '/api/finance/invoices',
+      expect.objectContaining({
+        params: expect.objectContaining({ status: 'pending' }),
+      })
+    )
+  )
+  await act(() => i18n.changeLanguage('en')) // 已挂载页面切换语言时，标签不能冻结为中文。
+  expect(filter).toHaveTextContent('Awaiting invoice')
+  await user.click(filter)
+  await user.click(screen.getByRole('option', { name: 'All statuses' }))
+  expect(filter).toHaveTextContent('All statuses')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenLastCalledWith(
+      '/api/finance/invoices',
+      expect.objectContaining({
+        params: expect.objectContaining({ status: '' }),
+      })
+    )
+  ) // 全部只属于界面选项，不向服务端发送all。
+})
+
+// 发票状态是动态翻译键，七种语言都需要完整覆盖五个业务状态。
+// 这里直接检查发布资源，防止只补中文而遗漏其他受支持语言。
+test.each(Object.entries({ en, zh, 'zh-TW': zhTW, fr, ru, ja, vi: viLocale }))(
+  '%s包含完整发票状态译文',
+  (_language, resource) => {
+    for (const key of [
+      'Awaiting payment',
+      'Awaiting invoice',
+      'Invoice processing',
+      'Invoice issued',
+      'Invoice rejected',
+    ]) {
+      expect(resource.translation).toHaveProperty(key, expect.any(String))
+    } // 不从生产映射生成预期，确保五个公开状态都被独立核对。
+  }
+)
 
 // 待开票申请经真实 HTTP 操作推进，不能仅修改浏览器中的状态文字。
 test('财务打开待开票申请后可开始处理并刷新列表', async () => {

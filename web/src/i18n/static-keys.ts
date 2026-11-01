@@ -19,6 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // 发票列表、详情与本人账单共用动态状态键，静态登记避免同步时漏收录。
+  'Awaiting payment',
+  'Awaiting invoice',
+  'Invoice processing',
+  'Invoice issued',
+  'Invoice rejected',
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',

@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -70,6 +71,14 @@ export function FinanceInvoices() {
   const canWrite = hasPermission(user, 'finance', 'write') // 查看与办理能力独立，不能由列表可见推导可写。
   const [page, setPage] = useState(1) // 页码使用服务端的一基编号。
   const [status, setStatus] = useState('all') // all只存在于选择器，发送前转换为空筛选。
+  // Base UI按items显示收起后的选值，必须在渲染时翻译以响应语言切换。
+  const statusItems = [
+    { value: 'all', label: t('All statuses') },
+    ...Object.entries(INVOICE_STATUS_LABELS).map(([value, label]) => ({
+      value,
+      label: t(label), // 下拉项和触发器使用同一份译文，内部状态码只交给API。
+    })),
+  ]
   const [keyword, setKeyword] = useState('') // 搜索只传订单或发票号码，不拼接完整抬头资料。
   const search = useDebounce(keyword) // 键入期间复用已有搜索防抖。
   const [selected, setSelected] = useState<InvoiceRequest | null>(null) // null明确表示没有正在查看的申请。
@@ -110,6 +119,7 @@ export function FinanceInvoices() {
               className='max-w-sm'
             />
             <Select
+              items={statusItems}
               value={status} // 显示状态与服务端已知状态集合保持一致。
               onValueChange={(value) => {
                 if (value) {
@@ -123,12 +133,13 @@ export function FinanceInvoices() {
               </SelectTrigger>
               <SelectContent>
                 {/* 待支付与待开票分别展示，不能将付款未完成的记录混为可办理。 */}
-                <SelectItem value='all'>{t('All statuses')}</SelectItem>
-                {Object.entries(INVOICE_STATUS_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {t(label)}
-                  </SelectItem>
-                ))}
+                <SelectGroup>
+                  {statusItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </div>

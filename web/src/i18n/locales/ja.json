@@ -7585,6 +7585,7 @@
     "Any invoicing surcharge is included in the payment quote and does not increase platform credit.": "請求書発行の追加料金は支払額に含まれ、利用枠は増えません。",
     "Assign finance role": "財務ロールを割り当て",
     "Awaiting invoicing": "請求書発行待ち",
+    "Awaiting invoice": "請求書発行待ち",
     "Awaiting payment": "支払待ち",
     "Bank account": "銀行口座",
     "Bank name": "銀行名",

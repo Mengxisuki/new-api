@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Info, PencilLine, ReceiptText } from 'lucide-react'
 import { useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,10 +26,12 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import { InvoiceProfileForm } from '@/features/invoices/components/invoice-profile-form'
 import type { InvoiceProfile } from '@/features/invoices/types'
 
@@ -59,6 +62,7 @@ export function InvoiceSelection(props: Props) {
   const { t } = useTranslation()
   const [editing, setEditing] = useState(false) // 快捷对话框与是否开票是独立状态，取消不改变付款选择。
   const controlId = useId() // 钱包和订阅可能同时挂载，标签ID不能互相冲突。
+  const hintId = `${controlId}-hint` // 费用说明关联选择器，辅助技术也能读取开票影响。
   useEffect(() => {
     if (
       props.required &&
@@ -70,9 +74,17 @@ export function InvoiceSelection(props: Props) {
     }
   }, [props.required, props.profile, props.loading, props.error])
   return (
-    <div className='space-y-3 rounded-lg border p-3'>
-      <div className='flex flex-wrap items-center justify-between gap-3'>
-        <Label htmlFor={controlId}>{t('Do you need an invoice?')}</Label>
+    <div className='bg-muted/20 overflow-hidden rounded-xl border'>
+      {/* 标题与选择保持紧凑横排，沿用付款区的中性色和控件尺寸。 */}
+      <div className='flex items-center justify-between gap-3 p-3 sm:px-4'>
+        <div className='flex min-w-0 items-center gap-2.5'>
+          <span className='bg-background text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-lg border shadow-xs'>
+            <ReceiptText aria-hidden='true' className='size-4' />
+          </span>
+          <Label htmlFor={controlId} className='text-sm leading-5'>
+            {t('Do you need an invoice?')}
+          </Label>
+        </div>
         <Select
           value={props.required ? 'yes' : 'no'} // 使用显式否值，不把未选择当成同意开票。
           onValueChange={
@@ -83,53 +95,87 @@ export function InvoiceSelection(props: Props) {
             { value: 'yes', label: t('Yes') },
           ]}
         >
-          <SelectTrigger id={controlId} className='w-28'>
+          <SelectTrigger
+            id={controlId}
+            aria-describedby={props.required ? hintId : undefined}
+            className='bg-background w-24 shrink-0'
+          >
             {/* 标签与当前选值同属真实选择控件，支持键盘及辅助技术。 */}
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value='no'>{t('No')}</SelectItem>
-            <SelectItem value='yes'>{t('Yes')}</SelectItem>
+            <SelectGroup>
+              <SelectItem value='no'>{t('No')}</SelectItem>
+              <SelectItem value='yes'>{t('Yes')}</SelectItem>
+            </SelectGroup>
           </SelectContent>
         </Select>
       </div>
       {/* 默认不开票时不展示或预读常用抬头资料。 */}
       {props.required ? (
-        <div className='text-sm'>
-          {props.loading ? <p>{t('Loading invoice title...')}</p> : null}
-          {props.error ? (
-            <p role='alert'>
-              {t('Failed to load invoice title')}{' '}
-              <Button variant='link' onClick={props.onRetry}>
-                {/* 重试仍从服务端获取，不恢复上一份失败响应。 */}
-                {t('Retry')}
-              </Button>
-            </p>
-          ) : null}
-          {/* 已配置时显示服务器保存的名称，不以草稿代替有效抬头。 */}
-          {props.profile ? (
-            <p>
-              {t('Invoice title')}: {props.profile.title}
-            </p>
-          ) : null}
-          {/* 读取正常后才提供编辑入口，避免错误状态覆盖已有资料。 */}
-          {!props.loading && !props.error ? (
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={() => setEditing(true)} // 已配置抬头也可从付款区快速修正。
+        <>
+          <Separator />
+          <div className='space-y-3 p-3 sm:px-4'>
+            {/* 读取状态与配置结果分别显示；失败时不把旧资料当作已确认配置。 */}
+            {props.loading ? (
+              <p role='status' className='text-muted-foreground text-sm'>
+                {t('Loading invoice title...')}
+              </p>
+            ) : null}
+            {props.error ? (
+              <div
+                role='alert'
+                className='flex flex-wrap items-center gap-2 text-sm'
+              >
+                <p className='text-destructive'>
+                  {t('Failed to load invoice title')}
+                </p>
+                <Button variant='outline' size='sm' onClick={props.onRetry}>
+                  {/* 重试仍从服务端获取，不恢复上一份失败响应。 */}
+                  {t('Retry')}
+                </Button>
+              </div>
+            ) : null}
+            {/* 读取正常后才提供编辑入口，避免错误状态覆盖已有资料。 */}
+            {!props.loading && !props.error ? (
+              <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-2'>
+                {/* 抬头可换行完整阅读，窄屏时操作自然移到下一行。 */}
+                <dl className='min-w-0 flex-1 basis-40'>
+                  <dt className='text-muted-foreground text-xs'>
+                    {t('Invoice title')}
+                  </dt>
+                  <dd className='mt-1 text-sm leading-6 font-medium wrap-anywhere'>
+                    {props.profile?.title ??
+                      t('Save your invoice title to continue payment.')}
+                  </dd>
+                </dl>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='shrink-0'
+                  onClick={() => setEditing(true)} // 已配置抬头也可从付款区快速修正。
+                >
+                  <PencilLine aria-hidden='true' className='size-3.5' />
+                  {props.profile
+                    ? t('Edit invoice title')
+                    : t('Configure invoice title')}
+                </Button>
+              </div>
+            ) : null}
+            {/* 说明留在信息行下方，与抬头名称和编辑操作形成清晰层级。 */}
+            <p
+              id={hintId}
+              className='text-muted-foreground flex items-start gap-1.5 text-xs leading-5'
             >
-              {props.profile
-                ? t('Edit invoice title')
-                : t('Configure invoice title')}
-            </Button>
-          ) : null}
-          <p className='text-muted-foreground mt-2 text-xs'>
-            {t(
-              'Any invoicing surcharge is included in the payment quote and does not increase platform credit.'
-            )}
-          </p>
-        </div>
+              <Info aria-hidden='true' className='mt-0.5 size-3.5 shrink-0' />
+              <span>
+                {t(
+                  'Any invoicing surcharge is included in the payment quote and does not increase platform credit.'
+                )}
+              </span>
+            </p>
+          </div>
+        </>
       ) : null}
       <Dialog
         open={editing} // 对话框开关不代表资料已保存或付款已成功。

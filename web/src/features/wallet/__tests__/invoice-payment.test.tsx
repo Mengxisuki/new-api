@@ -253,7 +253,7 @@ test('订阅选择开票后展示服务端加价并向官方渠道直接付款',
     screen.getByRole('combobox', { name: 'Do you need an invoice?' })
   )
   await user.click(screen.getByRole('option', { name: 'Yes' }))
-  expect(await screen.findByText('Invoice title: Invoice Lab')).toBeVisible()
+  expect(await screen.findByText('Invoice Lab')).toBeVisible()
   await screen.findByText(/Invoicing surcharge/)
   await user.click(screen.getByRole('button', { name: 'WeChat Pay' }))
   expect(await screen.findByText('SUBUSR-invoice')).toBeVisible()

@@ -116,21 +116,21 @@ afterEach(() => {
 // 使用真实语言资源复现漏译，空英文测试环境无法发现动态状态键缺失。
 // 筛选器收起后的标签、表格和详情均属于用户实际可见的翻译合同。
 test('中文开票状态与筛选标签正确显示并响应语言切换', async () => {
-  const user = userEvent.setup()
+  const user = userEvent.setup() // 使用真实控件交互，不通过内部状态修改筛选。
   const i18n = createInstance() // 独立实例避免影响现有英文行为测试。
   await i18n.use(initReactI18next).init({
-    lng: 'zh',
+    lng: 'zh', // 从中文开始，才能直接复现界面回退为英文的问题。
     fallbackLng: 'en',
     resources: { en, zh }, // 真实词条缺失时必须失败，不能在测试中伪造翻译。
   })
-  renderFinance(true, 'pending', i18n)
+  renderFinance(true, 'pending', i18n) // 保留真实权限、表格及详情接线。
   const filter = screen.getByRole('combobox', { name: '开票状态' })
   expect(filter).toHaveTextContent('全部状态') // 不能显示内部筛选值all。
-  expect(await screen.findByText('待开票')).toBeVisible()
+  expect(await screen.findByText('待开票')).toBeVisible() // 列表状态不能仅在筛选器中正确。
   await user.click(screen.getByRole('button', { name: '处理开票' }))
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).getByText('待开票')).toBeVisible() // 详情复用相同状态词条。
-  await user.keyboard('{Escape}')
+  await user.keyboard('{Escape}') // 关闭详情后继续同一页面，不重新初始化查询与语言。
   await user.click(filter)
   await user.click(screen.getByRole('option', { name: '待开票' }))
   expect(filter).toHaveTextContent('待开票') // 关闭弹层后也必须保留本地化标签。
@@ -138,7 +138,7 @@ test('中文开票状态与筛选标签正确显示并响应语言切换', async
     expect(api.get).toHaveBeenLastCalledWith(
       '/api/finance/invoices',
       expect.objectContaining({
-        params: expect.objectContaining({ status: 'pending' }),
+        params: expect.objectContaining({ status: 'pending' }), // 显示译文不得改变API状态码。
       })
     )
   )
@@ -151,7 +151,7 @@ test('中文开票状态与筛选标签正确显示并响应语言切换', async
     expect(api.get).toHaveBeenLastCalledWith(
       '/api/finance/invoices',
       expect.objectContaining({
-        params: expect.objectContaining({ status: '' }),
+        params: expect.objectContaining({ status: '' }), // 清除筛选继续遵守原空串合同。
       })
     )
   ) // 全部只属于界面选项，不向服务端发送all。

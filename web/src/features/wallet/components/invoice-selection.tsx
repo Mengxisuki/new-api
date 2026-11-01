@@ -58,11 +58,14 @@ interface Props {
 // Dialog使用项目公共封装，保留键盘关闭、焦点恢复及手机尺寸。
 // 布尔选择与对话框开关只存在内存，不写入认证状态或localStorage。
 // 再次配置修改的是今后订单，已有发票快照不受此处影响。
+// 付款区只显示抬头名称，税号、邮箱和银行资料留在用户主动打开的表单。
 export function InvoiceSelection(props: Props) {
-  const { t } = useTranslation()
+  const { t } = useTranslation() // 选择项和费用说明订阅语言变化，不缓存已翻译的文案。
   const [editing, setEditing] = useState(false) // 快捷对话框与是否开票是独立状态，取消不改变付款选择。
   const controlId = useId() // 钱包和订阅可能同时挂载，标签ID不能互相冲突。
   const hintId = `${controlId}-hint` // 费用说明关联选择器，辅助技术也能读取开票影响。
+  // 自动配置只针对服务端明确返回null的场景，不能用undefined触发。
+  // 外层切回不开票时不清空常用抬头；再次选择仍复用已保存资料。
   useEffect(() => {
     if (
       props.required &&
@@ -74,10 +77,12 @@ export function InvoiceSelection(props: Props) {
     }
   }, [props.required, props.profile, props.loading, props.error])
   return (
+    // 使用全站语义颜色和圆角，浅色与深色主题共用同一套布局。
     <div className='bg-muted/20 overflow-hidden rounded-xl border'>
       {/* 标题与选择保持紧凑横排，沿用付款区的中性色和控件尺寸。 */}
       <div className='flex items-center justify-between gap-3 p-3 sm:px-4'>
         <div className='flex min-w-0 items-center gap-2.5'>
+          {/* 图标仅作视觉识别，控件的可访问名称始终由文字标签提供。 */}
           <span className='bg-background text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-lg border shadow-xs'>
             <ReceiptText aria-hidden='true' className='size-4' />
           </span>
@@ -91,6 +96,7 @@ export function InvoiceSelection(props: Props) {
             (value) => value && props.onRequiredChange(value === 'yes') // 下拉关闭的空值不覆盖真实选择。
           }
           items={[
+            // 显示译文与布尔提交值分离，切换语言不会改变报价选择。
             { value: 'no', label: t('No') },
             { value: 'yes', label: t('Yes') },
           ]}
@@ -114,6 +120,7 @@ export function InvoiceSelection(props: Props) {
       {/* 默认不开票时不展示或预读常用抬头资料。 */}
       {props.required ? (
         <>
+          {/* 分隔线只在展开时出现，默认否保持一行高度。 */}
           <Separator />
           <div className='space-y-3 p-3 sm:px-4'>
             {/* 读取状态与配置结果分别显示；失败时不把旧资料当作已确认配置。 */}
@@ -145,6 +152,7 @@ export function InvoiceSelection(props: Props) {
                     {t('Invoice title')}
                   </dt>
                   <dd className='mt-1 text-sm leading-6 font-medium wrap-anywhere'>
+                    {/* 使用已保存的完整名称，长字符串换行而非截断关键抬头。 */}
                     {props.profile?.title ??
                       t('Save your invoice title to continue payment.')}
                   </dd>
@@ -155,6 +163,7 @@ export function InvoiceSelection(props: Props) {
                   className='shrink-0'
                   onClick={() => setEditing(true)} // 已配置抬头也可从付款区快速修正。
                 >
+                  {/* 点击文字或图标均进入同一个公共表单，不提供独立草稿入口。 */}
                   <PencilLine aria-hidden='true' className='size-3.5' />
                   {props.profile
                     ? t('Edit invoice title')
@@ -169,6 +178,7 @@ export function InvoiceSelection(props: Props) {
             >
               <Info aria-hidden='true' className='mt-0.5 size-3.5 shrink-0' />
               <span>
+                {/* 这里只解释报价组成，不能在读取中或失败时承诺确定费率。 */}
                 {t(
                   'Any invoicing surcharge is included in the payment quote and does not increase platform credit.'
                 )}

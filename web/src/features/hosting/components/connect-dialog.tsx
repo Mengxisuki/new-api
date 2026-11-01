@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { Textarea } from '@/components/ui/textarea'
 import {
   SecureVerificationDialog,
   useSecureVerification,
@@ -57,9 +58,9 @@ import {
   type HostingAuthorization,
 } from '../types'
 
-// 只借鉴参考项目的手动授权顺序，不复制管理员代理、批量导入或凭据输入。
+// 按参考项目展示生成链接、浏览器授权、提交回调三步，不提供授权方式选择。
 // 业务弹窗复用项目 Dialog；仓库没有可复用的 Steps 或 FormDialog。
-// 三步采用语义化有序列表，复制、字段、提示和加载仍使用已有组件。
+// 三步始终展示为有序卡片，复制、字段、提示和加载仍使用已有组件。
 // 账号备注先填写，让用户在申请授权之前知道自己正在添加哪个资源。
 // 原厂身份授权和模型调用验证不同；本流程不发送真实模型请求。
 // 完成按钮授权整条“交换回调→保存账号”流程，无需再次点击保存。
@@ -238,7 +239,36 @@ export function ConnectHostingDialog(props: {
   const complete = useMutation({
     mutationFn: async () => {
       if (!authorization) throw new Error(t('Start authorization first'))
-      const callback = form.getValues('callback_url').trim()
+      let callback = form.getValues('callback_url').trim()
+      // 完整回调原样交给后端校验，不替换其中的 state 或错误参数。
+      // 仅输入 code 时，只使用当前授权链接中的 state 和服务端返回的回调地址。
+      // 不猜测状态或回调端口；缺少上下文时仍要求完整回调。
+      // 服务端继续校验所属会话、state、单次使用和原厂 PKCE，不放宽认证合同。
+      // 解码仅用于复制出来的 code 参数值，避免百分号转义被二次编码。
+      // URLSearchParams 负责参数转义，code 不能注入额外的查询字段。
+      // 整个回调地址不经同样解码，保留用户实际返回的 state 与原始结构。
+      // 非 URL 输入只接受单个紧凑 code，不把说明文字或多个参数当成授权码。
+      // 校验异常发生在清空输入之前，用户可修正粘贴内容。
+      // 原厂拒绝则保留已发送标记，不根据本地错误猜测 code 仍可复用。
+      // 服务器响应不包含回调正文，因此同步状态不会重新写入敏感输入。
+      // 仅复制 code 的便捷交互不新增后端接口，也不传递 PKCE verifier。
+      if (!/^https?:\/\//i.test(callback)) {
+        const stateValue = authorizationURL
+          ? new URL(authorizationURL).searchParams.get('state')
+          : null
+        const redirect = current?.redirect_uri ?? authorization.redirect_uri
+        if (
+          !stateValue ||
+          !redirect ||
+          !/^[A-Za-z0-9._~%+-]+$/.test(callback)
+        ) {
+          throw new Error(t('Enter the complete callback URL.'))
+        }
+        const callbackURL = new URL(redirect)
+        callbackURL.searchParams.set('state', stateValue)
+        callbackURL.searchParams.set('code', decodeURIComponent(callback))
+        callback = callbackURL.href
+      }
       form.setValue('callback_url', '')
       setCallbackSent(true)
       return completeHostingAuthorization(authorization.id, callback)
@@ -356,9 +386,29 @@ export function ConnectHostingDialog(props: {
   // 正常的 localhost 回调无法打开不代表身份授权失败。
   // 帮助文字解释复制完整地址，而不是让用户修复本机服务。
   let authorizationURL: string | undefined
-  if (current?.authorization_url) {
+  // 浏览器 OAuth 的状态 GET 不返回初始 URL；省略字段不能抹掉已经取得的链接。
+  // 只复用同一授权编号的首次响应，重开、过期和提交回调后不再开放旧链接。
+  // 原始链接仅驻留当前弹窗，不能写入持久存储或另一会话的查询结果。
+  // 查询返回显式的新链接时采用新值，只有省略字段才使用初始链接。
+  // 初始响应与状态响应的编号必须相同，防止重新开始后串用旧登录页。
+  // pending 是允许用户打开授权页的唯一阶段。
+  // 进入 exchanging 后继续展示旧链接会诱导用户重复授权。
+  // 本地 callbackSent 先于远端状态变化生效，关闭这段延迟窗口。
+  // 过期与取消即使仍残留 URL，也不会产生可点击或可复制入口。
+  // 链接可用性只负责浏览器导航，不代替后端原厂身份校验。
+  // 服务端没有提供链接时不拼接 OAuth 参数，避免创建不匹配的 PKCE 流程。
+  const initialURL =
+    current?.id === authorization?.id
+      ? authorization?.authorization_url
+      : undefined
+  const candidateURL = current?.authorization_url ?? initialURL
+  if (
+    current?.status === 'pending_authorization' &&
+    !callbackSent &&
+    candidateURL
+  ) {
     try {
-      const url = new URL(current.authorization_url)
+      const url = new URL(candidateURL)
       if (
         url.protocol === 'https:' &&
         !url.username &&
@@ -387,6 +437,23 @@ export function ConnectHostingDialog(props: {
     progress = t('Authorization is complete. Retry adding the account.')
   }
   const canSave = ['ready', 'consumed'].includes(current?.status ?? '')
+  // 主操作固定在页脚，与参考手动授权窗口保持一致。
+  // 页脚和字段读取同一份表单，不能让快捷提交绕过备注校验。
+  // 完成后保留成功页，由用户决定返回账号详情或进入 Key 管理。
+  // 关闭按钮沿用已有取消逻辑，异步写入期间不销毁操作上下文。
+  // 按钮禁用只用于反馈；资源归属和单次消费仍由后端执行。
+  // 回调尚未生成或已经提交时禁用，不让用户用空会话重复换码。
+  // 输入校验先于提交，失败时保持草稿供修正。
+  // 发送后的结果恢复沿用原会话与幂等编号，不重新申请授权。
+  const submit = form.handleSubmit((values) => {
+    if (!values.callback_url.trim()) {
+      form.setError('callback_url', {
+        message: t('Enter the authorization link or code.'),
+      })
+      return
+    }
+    complete.mutate()
+  })
   return (
     <>
       <Dialog
@@ -398,23 +465,41 @@ export function ConnectHostingDialog(props: {
           props.account ? t('Reauthorize account') : t('Connect Codex account')
         }
         description={t(
-          'Authorize your own account in the browser, then return here to add it.'
+          'Please follow the steps below to authorize your OpenAI account:'
         )}
-        contentClassName='sm:max-w-xl'
+        contentClassName='sm:max-w-3xl'
         showCloseButton={!busy}
         footer={
-          <Button
-            variant='outline'
-            disabled={busy}
-            onClick={() => cancel.mutate(false)}
-          >
-            {save.isSuccess ? t('Done') : t('Cancel')}
-          </Button>
+          <>
+            <Button
+              variant='outline'
+              disabled={busy}
+              onClick={() => cancel.mutate(false)}
+            >
+              {save.isSuccess ? t('Done') : t('Cancel')}
+            </Button>
+            {!save.isSuccess && (
+              <Button
+                disabled={
+                  busy ||
+                  Boolean(props.disabledReason) ||
+                  callbackSent ||
+                  current?.status !== 'pending_authorization'
+                }
+                onClick={() => {
+                  void submit()
+                }}
+              >
+                {(complete.isPending || save.isPending) && <Spinner />}
+                {t('Complete authorization')}
+              </Button>
+            )}
+          </>
         }
       >
         {save.isSuccess ? (
           <FieldGroup>
-            {/* 身份连接不是模型测试，成功页解释剩余步骤而不显示“模型已验证”。 */}
+            {/* 授权成功不等于模型调用验证成功，不自动执行耗额测试。 */}
             <Alert>
               <AlertDescription>
                 <p className='font-medium'>{t('Account added')}</p>
@@ -438,113 +523,102 @@ export function ConnectHostingDialog(props: {
                 <AlertDescription>{props.disabledReason}</AlertDescription>
               </Alert>
             )}
-            {/* 按用户任务顺序展开，未生成链接前不要求用户理解回调或服务器状态。 */}
             {/*
-             * 步骤结构只是帮助用户完成当前任务，不是另建通用步骤组件。
-             * 首屏只有备注和生成链接，减少尚未开始时的无关信息。
-             * 取得会话后才出现原厂授权和回调步骤。
-             * 有序列表提供天然阅读顺序，不需要用户理解后台服务部署。
-             * 每个步骤标题说明动作，按钮名称说明实际产生的结果。
-             * 不展示代理、倍率、令牌导入或管理员渠道选项。
+             * 备注不占授权步骤编号，用户先区分账号，再按三步完成手动授权。
+             * 备注是平台显示名称，不作为原厂身份依据。
+             * 已提交回调后锁定备注，自动保存继续使用用户确认的名称。
+             * 重授权仍初始化已有名称，不把旧账号变为新账号。
+             * 字段保留错误状态，生成链接前即可修正长度或空值。
              */}
-            <ol className='list-inside list-decimal space-y-5 marker:font-semibold'>
-              <li className='space-y-3'>
-                <span className='font-medium'>{t('Name this account')}</span>
-                {/*
-                 * 备注首先校验，避免先申请一个最终因空备注无法保存的授权。
-                 * 输入和错误说明通过稳定字段标识关联，支持辅助技术定位。
-                 * 回调已发送后禁用编辑，保存期间不会偷偷改变账号名称。
-                 * 重授权时展示原备注，让用户确认当前处理的是哪个账号。
-                 */}
-                <Field data-invalid={Boolean(form.formState.errors.alias)}>
-                  <FieldLabel htmlFor='hosting-alias'>
-                    {t('Account alias')}
-                  </FieldLabel>
-                  <Input
-                    id='hosting-alias'
-                    autoComplete='off'
-                    maxLength={64}
-                    disabled={busy || callbackSent}
-                    aria-invalid={Boolean(form.formState.errors.alias)}
-                    {...form.register('alias')}
-                  />
-                  {form.formState.errors.alias && (
-                    <FieldDescription>
-                      {t('Enter an account alias of 1 to 64 characters.')}
-                    </FieldDescription>
-                  )}
-                </Field>
-                {!authorization && (
-                  <Button
-                    disabled={busy || Boolean(props.disabledReason)}
-                    onClick={async () => {
-                      if (await form.trigger('alias')) start.mutate()
-                    }}
-                  >
-                    {start.isPending && <Spinner />}
-                    {t('Generate authorization link')}
-                  </Button>
-                )}
-              </li>
-              {current && (
-                <>
-                  <li className='space-y-3'>
-                    <span className='font-medium'>
-                      {t('Open the link and authorize')}
-                    </span>
-                    {/* 链接能打开也能复制，使用其他浏览器登录时不必手选长 URL。 */}
-                    {authorizationURL && !failed ? (
-                      <FieldGroup>
-                        <Field>
-                          <FieldLabel htmlFor='hosting-auth-url'>
-                            {t('Authorization link')}
-                          </FieldLabel>
-                          <Input
-                            id='hosting-auth-url'
-                            value={authorizationURL}
-                            readOnly
-                            className='font-mono text-xs'
-                          />
-                        </Field>
-                        <div className='flex flex-wrap gap-2'>
-                          <Button
-                            nativeButton={false}
-                            render={
-                              <a
-                                href={authorizationURL}
-                                target='_blank'
-                                rel='noopener noreferrer'
-                              />
-                            }
-                          >
-                            {t('Open provider authorization')}
-                          </Button>
-                          {/*
-                           * 复制链接复用站点的成功和失败反馈，不另写剪贴板状态。
-                           * 用户可能需要换浏览器登录，保留复制入口比只提供打开按钮更可靠。
-                           * 此按钮仅复制授权链接，不复制敏感回调、原厂凭据或平台 Key。
-                           * 复制失败不会中止当前授权，用户仍可使用打开链接入口。
-                           */}
-                          <CopyButton
-                            value={authorizationURL}
-                            variant='outline'
-                            size='default'
-                            aria-label={t('Copy authorization link')}
-                          >
-                            {t('Copy authorization link')}
-                          </CopyButton>
-                        </div>
-                      </FieldGroup>
-                    ) : (
-                      <Alert>
-                        <AlertDescription>
-                          {t(
-                            'The authorization link is unavailable. Resume or start again.'
-                          )}
-                        </AlertDescription>
-                      </Alert>
+            <Field data-invalid={Boolean(form.formState.errors.alias)}>
+              <FieldLabel htmlFor='hosting-alias'>
+                {t('Account alias')}
+              </FieldLabel>
+              <Input
+                id='hosting-alias'
+                autoComplete='off'
+                maxLength={64}
+                disabled={busy || callbackSent}
+                aria-invalid={Boolean(form.formState.errors.alias)}
+                {...form.register('alias')}
+              />
+              {form.formState.errors.alias && (
+                <FieldDescription>
+                  {t('Enter an account alias of 1 to 64 characters.')}
+                </FieldDescription>
+              )}
+            </Field>
+            <section className='min-w-0 space-y-4 rounded-xl border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-800 dark:bg-blue-950/20'>
+              <h3 className='font-semibold text-blue-900 dark:text-blue-200'>
+                {t('OpenAI account authorization')}
+              </h3>
+              {/*
+               * 三步一直展示；尚未生成链接属于正常初始状态，不是假定的失败。
+               * 有序列表给辅助技术提供步骤顺序，不依靠颜色表达先后。
+               * 首次进入不渲染授权方式选择，也不预先申请 OAuth 会话。
+               * 蓝色卡片承载说明，真正失败仍使用独立错误提示。
+               * 长 URL 留在可滚动输入框内，不能撑开移动端窗口。
+               */}
+              <ol className='list-inside list-decimal space-y-4 marker:font-semibold marker:text-blue-600'>
+                <li className='bg-background space-y-3 rounded-lg border border-blue-200 p-4 dark:border-blue-800'>
+                  <span className='font-medium'>
+                    {t(
+                      'Click the button below to generate an authorization link'
                     )}
-                    {current.status === 'starting' && (
+                  </span>
+                  {!authorization && (
+                    <Button
+                      disabled={busy || Boolean(props.disabledReason)}
+                      onClick={async () => {
+                        if (await form.trigger('alias')) start.mutate()
+                      }}
+                    >
+                      {start.isPending && <Spinner />}
+                      {t('Generate authorization link')}
+                    </Button>
+                  )}
+                  {/*
+                   * 只读链接由首次授权响应保留；轮询只更新状态，不覆盖它。
+                   * 链接展示和复制引用相同的已校验值。
+                   * 复制失败沿用共享控件反馈，不把失败当成授权终止。
+                   * 本步骤不读取原厂访问令牌或平台 API Key。
+                   * 授权创建失败但带操作编号时保留恢复入口。
+                   */}
+                  {authorizationURL && (
+                    <FieldGroup>
+                      <Field>
+                        <FieldLabel htmlFor='hosting-auth-url'>
+                          {t('Authorization link')}
+                        </FieldLabel>
+                        <Input
+                          id='hosting-auth-url'
+                          value={authorizationURL}
+                          readOnly
+                          className='min-w-0 font-mono text-xs'
+                        />
+                      </Field>
+                      <CopyButton
+                        value={authorizationURL}
+                        variant='outline'
+                        size='default'
+                        aria-label={t('Copy authorization link')}
+                      >
+                        {t('Copy authorization link')}
+                      </CopyButton>
+                    </FieldGroup>
+                  )}
+                  {/*
+                   * starting 是尚未确认创建，不等于原厂授权失败；沿用原操作继续。
+                   * 恢复请求使用原授权编号，不能重复创建供应商登录会话。
+                   * 状态查询不消耗敏感证明，也不生成新授权链接。
+                   * pending 且没有初始链接才说明无法继续打开登录页面。
+                   * 已提交回调后不再显示链接缺失，避免正常换码被误报失败。
+                   */}
+                  {current?.status === 'starting' && (
+                    <>
+                      <p role='status' className='text-sm'>
+                        {t('Generating authorization link...')}
+                      </p>
                       <Button
                         variant='outline'
                         disabled={busy}
@@ -552,134 +626,183 @@ export function ConnectHostingDialog(props: {
                       >
                         {t('Resume authorization')}
                       </Button>
-                    )}
-                  </li>
-                  <li className='space-y-3'>
-                    <span className='font-medium'>
-                      {t('Paste the callback and add the account')}
-                    </span>
-                    {!callbackSent &&
-                      !failed &&
-                      current.status === 'pending_authorization' && (
-                        <Field>
-                          <FieldLabel htmlFor='hosting-callback'>
-                            {t('Authorization callback URL')}
-                          </FieldLabel>
-                          {/*
-                           * 回调以密码样式输入，避免公共屏幕直接暴露短期 code。
-                           * 不要求用户手工拆解 code 或 state，降低复制遗漏导致的失败。
-                           * 完整地址只交给同源 API，浏览器不会访问其 localhost 目标。
-                           * 格式与身份校验仍在服务端完成，前端提示不代替安全边界。
-                           * 字段错误不打印用户粘贴内容，只提供如何修正的说明。
-                           * 输入只在等待回调时存在，发送后从界面撤下。
-                           */}
-                          <Input
-                            id='hosting-callback'
-                            type='password'
-                            autoComplete='off'
-                            disabled={busy}
-                            aria-invalid={Boolean(
-                              form.formState.errors.callback_url
-                            )}
-                            {...form.register('callback_url')}
-                          />
-                          <FieldDescription>
-                            {t(
-                              'After authorizing, copy the full localhost URL from the address bar, even if that page cannot open. Keep it private.'
-                            )}
-                          </FieldDescription>
-                          {form.formState.errors.callback_url && (
-                            <FieldDescription>
-                              {t('Enter the complete callback URL.')}
-                            </FieldDescription>
-                          )}
-                          <Button
-                            disabled={busy || Boolean(props.disabledReason)}
-                            onClick={form.handleSubmit((values) => {
-                              if (!values.callback_url.trim()) {
-                                form.setError('callback_url', {
-                                  message: t(
-                                    'Enter the complete callback URL.'
-                                  ),
-                                })
-                                return
-                              }
-                              complete.mutate()
-                            })}
-                          >
-                            {t('Complete authorization and add')}
-                          </Button>
-                        </Field>
-                      )}
-                    {/* 原始生命周期状态不直接展示；用户只看到当前等待或需要采取的动作。 */}
-                    {callbackSent && (
-                      <p
-                        role='status'
-                        className='flex items-center gap-2 text-sm'
-                      >
-                        {(waiting || save.isPending || complete.isPending) && (
-                          <Spinner />
-                        )}
-                        {progress}
-                      </p>
-                    )}
-                    {/*
-                     * 只有保存阶段失败且授权已经完成，才提供重试添加。
-                     * 这个恢复按钮不重新发 callback，也不会重新申请登录链接。
-                     * 未知授权状态先查询结果，不能通过该按钮绕过状态门槛。
-                     * 成功后的下一步引导仍需用户自己决定是否运行耗额测试。
-                     */}
-                    {save.isError && canSave && (
-                      <Button disabled={busy} onClick={() => save.mutate()}>
-                        {t('Retry adding account')}
-                      </Button>
-                    )}
-                    {callbackSent && !waiting && !save.isPending && (
-                      <Button
-                        variant='outline'
-                        disabled={busy || state.isFetching}
-                        onClick={() => {
-                          void state.refetch()
-                        }}
-                      >
-                        {t('Check authorization result')}
-                      </Button>
-                    )}
-                    {/*
-                     * 终态提供重新开始入口，不让用户继续使用已经过期的链接。
-                     * 后台未决时仍保留查询结果的路径，不把未知状态涂成成功。
-                     * 新的授权只在旧会话明确取消之后创建，避免身份混用。
-                     * 页面不会为加快流程自动切换到其他账号或付费来源。
-                     */}
-                    {failed && (
+                    </>
+                  )}
+                  {current?.status === 'pending_authorization' &&
+                    !callbackSent &&
+                    !authorizationURL && (
                       <Alert variant='destructive'>
                         <AlertDescription>
                           {t(
-                            'Authorization ended. Start again to get a new link.'
+                            'Unable to retrieve the authorization link. Start again to generate a new one.'
                           )}
                         </AlertDescription>
                       </Alert>
                     )}
-                    {!waiting &&
-                      !busy &&
-                      (failed ||
-                        current.status === 'outcome_unknown' ||
-                        !authorizationURL) && (
-                        <Button
-                          variant='ghost'
-                          onClick={() => cancel.mutate(true)}
-                        >
-                          {t('Start again')}
-                        </Button>
+                  {/* 终态才能提示重新授权；换码中和保存中不能以新会话掩盖结果。 */}
+                  {failed && (
+                    <Alert variant='destructive'>
+                      <AlertDescription>
+                        {t(
+                          'Authorization ended. Start again to get a new link.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {current &&
+                    !waiting &&
+                    !busy &&
+                    (failed ||
+                      current.status === 'outcome_unknown' ||
+                      (!callbackSent && !authorizationURL)) && (
+                      <Button
+                        variant='ghost'
+                        onClick={() => cancel.mutate(true)}
+                      >
+                        {t('Start again')}
+                      </Button>
+                    )}
+                </li>
+                <li className='bg-background space-y-3 rounded-lg border border-blue-200 p-4 dark:border-blue-800'>
+                  <span className='font-medium'>
+                    {t(
+                      'Open the link in your browser and complete authorization'
+                    )}
+                  </span>
+                  <p className='text-sm'>
+                    {t(
+                      'Open the authorization link in a new tab, sign in to your OpenAI account, and authorize.'
+                    )}
+                  </p>
+                  {/*
+                   * 外链复用相同 URL 校验，不能从输入框或任意错误响应产生 href。
+                   * 新标签保留当前弹窗，用户完成登录后可回到原步骤。
+                   * noopener 隔离登录页面与当前控制台窗口。
+                   * 生成前仍可阅读操作说明，打开按钮等真实链接到达后才出现。
+                   * localhost 是手动复制回调的结束标志，不要求用户启动本地服务。
+                   */}
+                  {authorizationURL && (
+                    <Button
+                      nativeButton={false}
+                      render={
+                        <a
+                          href={authorizationURL}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        />
+                      }
+                    >
+                      {t('Open provider authorization')}
+                    </Button>
+                  )}
+                  <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200'>
+                    <AlertDescription>
+                      {t(
+                        'Important: The page may take some time to load after authorization. Please wait. When the address bar starts with http://localhost, authorization is complete.'
                       )}
-                  </li>
-                </>
-              )}
-            </ol>
+                    </AlertDescription>
+                  </Alert>
+                </li>
+                <li className='bg-background space-y-3 rounded-lg border border-blue-200 p-4 dark:border-blue-800'>
+                  <span className='font-medium'>
+                    {t('Enter authorization link or code')}
+                  </span>
+                  <p className='text-sm'>
+                    {t(
+                      'After authorization, when the page address becomes http://localhost:xxx/auth/callback?code=...:'
+                    )}
+                  </p>
+                  {/*
+                   * 输入只在当前弹窗驻留；发送后撤下并清空，不存浏览器或查询缓存。
+                   * 多行输入容纳参考说明与长回调，自动换行不修改实际值。
+                   * 禁用拼写检查，避免浏览器对临时 code 提供文字修正。
+                   * 用户可检查粘贴的内容，但成功页不会再次回显它。
+                   * 纯 code 会补充当前会话上下文，完整 URL 的 state 原样提交。
+                   * 地址只作为数据解析，浏览器和服务器都不抓取用户填入的 URL。
+                   */}
+                  {!callbackSent && (
+                    <Field
+                      data-invalid={Boolean(form.formState.errors.callback_url)}
+                    >
+                      <FieldLabel htmlFor='hosting-callback'>
+                        {t('Authorization link or code')}
+                      </FieldLabel>
+                      <Textarea
+                        id='hosting-callback'
+                        autoComplete='off'
+                        spellCheck={false}
+                        rows={3}
+                        disabled={
+                          busy || current?.status !== 'pending_authorization'
+                        }
+                        placeholder={t(
+                          'Option 1: Copy the full URL\n(http://localhost:xxx/auth/callback?code=...)\nOption 2: Copy only the code parameter value'
+                        )}
+                        aria-invalid={Boolean(
+                          form.formState.errors.callback_url
+                        )}
+                        {...form.register('callback_url')}
+                      />
+                      <FieldDescription>
+                        {t(
+                          'You can paste the full URL or just the code parameter value. The system will recognize it automatically.'
+                        )}
+                      </FieldDescription>
+                      {form.formState.errors.callback_url && (
+                        <FieldDescription>
+                          {t('Enter the authorization link or code.')}
+                        </FieldDescription>
+                      )}
+                    </Field>
+                  )}
+                  {/*
+                   * 结果未知时只查原操作，不能重新发送一次性 code。
+                   * ready 后的保存错误只开放重试添加，不要求再次登录供应商。
+                   * 校验阶段尚未发送的输入保留，用户可改成完整回调再提交。
+                   * 等待中的换码与保存共用进度位置，避免跳转让用户误以为完成。
+                   * 成功前不会自动测试模型，也不会改变任意 Key 的消费顺序。
+                   */}
+                  {callbackSent && (
+                    <p
+                      role='status'
+                      className='flex items-center gap-2 text-sm'
+                    >
+                      {(waiting || save.isPending || complete.isPending) && (
+                        <Spinner />
+                      )}
+                      {progress}
+                    </p>
+                  )}
+                  {complete.isError && !callbackSent && (
+                    <Alert variant='destructive'>
+                      <AlertDescription>
+                        {t('Enter the complete callback URL.')}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {save.isError && canSave && (
+                    <Button disabled={busy} onClick={() => save.mutate()}>
+                      {t('Retry adding account')}
+                    </Button>
+                  )}
+                  {callbackSent && !waiting && !save.isPending && (
+                    <Button
+                      variant='outline'
+                      disabled={busy || state.isFetching}
+                      onClick={() => {
+                        void state.refetch()
+                      }}
+                    >
+                      {t('Check authorization result')}
+                    </Button>
+                  )}
+                </li>
+              </ol>
+            </section>
           </FieldGroup>
         )}
       </Dialog>
-      {/* 站点二次验证暂时接管模态焦点，不会索取原厂密码。 */}
+      {/* 站点二次验证接管模态焦点，不与原厂授权方式混在一起。 */}
       <SecureVerificationDialog {...verification.dialogProps} />
     </>
   )

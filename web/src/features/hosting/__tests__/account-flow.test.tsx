@@ -174,146 +174,176 @@ describe('账号授权和原厂重置', () => {
   // 添加成功保留下一步引导，只有用户点击完成才关闭弹窗。
   // 模型实际可调用尚未在此证明，后续账号测试仍是独立动作。
   // 测试内容中的 private-code 是固定无效字符串，不来自真实登录。
-  it('换码仍在处理时等待 ready，保存时不再次发送已消费的回调', async () => {
-    const user = userEvent.setup()
-    const close = vi.fn()
-    // 导航回调属于父页面职责，这里只观察成功页是否提供明确入口。
-    // 前往API Key不会改变这次授权结果，也不要求再次读取原厂身份。
-    // Done和导航按钮分别可用，用户可以先返回详情做模型测试。
-    // 成功提示明确先测试连接，避免身份授权被误解成模型兼容性已验收。
-    // 额外检查没有test请求，保护自动添加流程不产生用户未点击的模型耗额。
-    // 等待成功文本后再检查关闭回调，避免异步渲染时序带来误判。
-    // 点击Done才退出，用户有机会阅读接入后的两步引导。
-    // 公共回调spy不会驱动组件内部状态，因此仍测试真实交互路径。
-    const manageKeys = vi.fn()
-    // 服务端状态是可控网络边界，允许精确安排交换前后的响应。
-    // GET 安全验证方法与 GET 授权状态使用不同响应，避免泛化 mock 误通过。
-    // POST 证明、创建授权、提交回调和保存账号各有真实 DTO。
-    // 没有把页面子组件 mock 掉，确认表单与缓存接线一并执行。
-    // 对 HTTP 响应保留 success/data 信封，让入口校验真正参与测试。
-    // 固定响应使测试结果不依赖原厂网络或账户额度。
-    let status = authorization.status
-    vi.spyOn(api, 'get').mockImplementation(async (url) => ({
-      data: {
-        success: true,
-        data:
-          url === '/api/verify/methods'
-            ? requirements
-            : { ...authorization, status },
-      },
-    }))
-    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-      if (url === '/api/verify') {
-        return {
-          data: {
-            success: true,
+  // 完整链接和纯 code 两种输入都沿用同一会话，不降低服务端校验。
+  // code 输入也必须提交原 state，不能把方便粘贴实现成新的无状态换码入口。
+  // 两种输入共用后续保存行为，避免仅验证表单接受却漏掉账号添加链路。
+  it.each(['full-url', 'code-only'])(
+    '输入 %s 后等待 ready，保存时不再次发送已消费的回调',
+    async (inputMode) => {
+      const user = userEvent.setup()
+      const close = vi.fn()
+      // 导航回调属于父页面职责，这里只观察成功页是否提供明确入口。
+      // 前往API Key不会改变这次授权结果，也不要求再次读取原厂身份。
+      // Done和导航按钮分别可用，用户可以先返回详情做模型测试。
+      // 成功提示明确先测试连接，避免身份授权被误解成模型兼容性已验收。
+      // 额外检查没有test请求，保护自动添加流程不产生用户未点击的模型耗额。
+      // 等待成功文本后再检查关闭回调，避免异步渲染时序带来误判。
+      // 点击Done才退出，用户有机会阅读接入后的两步引导。
+      // 公共回调spy不会驱动组件内部状态，因此仍测试真实交互路径。
+      const manageKeys = vi.fn()
+      // 服务端状态是可控网络边界，允许精确安排交换前后的响应。
+      // GET 安全验证方法与 GET 授权状态使用不同响应，避免泛化 mock 误通过。
+      // POST 证明、创建授权、提交回调和保存账号各有真实 DTO。
+      // 没有把页面子组件 mock 掉，确认表单与缓存接线一并执行。
+      // 对 HTTP 响应保留 success/data 信封，让入口校验真正参与测试。
+      // 固定响应使测试结果不依赖原厂网络或账户额度。
+      let status = authorization.status
+      vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+        data: {
+          success: true,
+          data:
+            url === '/api/verify/methods'
+              ? requirements
+              : { ...authorization, authorization_url: undefined, status },
+        },
+      }))
+      const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+        if (url === '/api/verify') {
+          return {
             data: {
-              proof_token: 'test-proof',
-              scope: 'hosting.manage',
-              method: 'session',
-              expires_at: 2000000000,
+              success: true,
+              data: {
+                proof_token: 'test-proof',
+                scope: 'hosting.manage',
+                method: 'session',
+                expires_at: 2000000000,
+              },
             },
-          },
+          }
         }
-      }
-      if (url === '/api/hosting/authorizations') {
-        return { data: { success: true, data: authorization } }
-      }
-      if (url.endsWith('/callback')) {
-        return {
-          data: {
-            success: true,
-            data: { ...authorization, status: 'exchanging' },
-          },
+        if (url === '/api/hosting/authorizations') {
+          return { data: { success: true, data: authorization } }
         }
-      }
-      return { data: { success: true, data: account } }
-    })
-    render(
-      <QueryClientProvider client={client}>
-        <ConnectHostingDialog onClose={close} onManageKeys={manageKeys} />
-      </QueryClientProvider>
-    )
-    // 备注先校验，再取得授权链接；首次展示不直接索要回调。
-    // 未填写备注时不应调用安全证明或创建授权会话。
-    // 第一步点击空备注时应停留在表单，不申请无用OAuth会话。
-    // 随后用同一组件填入备注并继续，保护校验错误可以正常恢复。
-    // 授权按钮只有在取得有效官方链接后才出现。
-    // 检查href内容能防止按钮意外指向站点自身或占位链接。
-    // 复制动作走真实CopyButton，剪贴板属于userEvent提供的浏览器边界。
-    // 复制成功的内容必须是官方授权链接，不能混入回调地址。
-    // 链接打开和复制是两种用户选择，不互相触发额外网络操作。
-    await user.click(
-      screen.getByRole('button', { name: 'Generate authorization link' })
-    )
-    expect(post).not.toHaveBeenCalled()
-    await user.type(screen.getByLabelText('Account alias'), 'Work')
-    await user.click(
-      screen.getByRole('button', { name: 'Generate authorization link' })
-    )
-    expect(
-      await screen.findByRole('button', { name: 'Copy authorization link' })
-    ).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: 'Open provider authorization' })
-    ).toHaveAttribute('href', authorization.authorization_url)
-    await user.click(
-      screen.getByRole('button', { name: 'Copy authorization link' })
-    )
-    expect(await navigator.clipboard.readText()).toBe(
-      authorization.authorization_url
-    )
-    await user.type(
-      screen.getByLabelText('Authorization callback URL'),
-      'http://localhost:1455/auth/callback?state=example&code=private-code'
-    )
-    await user.click(
-      screen.getByRole('button', { name: 'Complete authorization and add' })
-    )
-    await waitFor(() =>
-      expect(
-        screen.queryByLabelText('Authorization callback URL')
-      ).not.toBeInTheDocument()
-    )
-    expect(close).not.toHaveBeenCalled()
-    expect(
-      post.mock.calls.filter(([url]) => url === '/api/hosting/accounts')
-    ).toHaveLength(0)
-    // 此时应仍停留在同一弹窗和同一授权会话。
-    // 只读轮询能发现换码完成，不能隐式重新发送 code。
-    // 等待回调输入消失，是 ready 状态已被界面接收的可见证据。
-    // 无需再点击提交即可进入保存阶段，避免多余确认割裂完整用户动作。
-    // 若实现错误复用旧回调，这里的请求数量断言会失败。
-    // 不使用定时器快进替代真实 Query 更新，避免掩盖缓存键错误。
-    status = 'ready'
-    await act(async () => {
-      await client.invalidateQueries({ queryKey: ['hosting', 'authorization'] })
-    })
-    await waitFor(() =>
-      expect(
-        screen.queryByLabelText('Authorization callback URL')
-      ).not.toBeInTheDocument()
-    )
-    await screen.findByText('Account added')
-    expect(post.mock.calls.some(([url]) => url.endsWith('/test'))).toBe(false)
-    expect(close).not.toHaveBeenCalled()
-    expect(
-      screen.getByText(
-        'Test the connection in account details, then select this account in an API key’s resource settings.'
+        if (url.endsWith('/callback')) {
+          return {
+            data: {
+              success: true,
+              data: { ...authorization, status: 'exchanging' },
+            },
+          }
+        }
+        return { data: { success: true, data: account } }
+      })
+      render(
+        <QueryClientProvider client={client}>
+          <ConnectHostingDialog onClose={close} onManageKeys={manageKeys} />
+        </QueryClientProvider>
       )
-    ).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Go to API keys' }))
-    expect(manageKeys).toHaveBeenCalledOnce()
-    await user.click(screen.getByRole('button', { name: 'Done' }))
-    await waitFor(() => expect(close).toHaveBeenCalledOnce())
-    expect(
-      post.mock.calls.filter(([url]) => url.endsWith('/callback'))
-    ).toHaveLength(1)
-    expect(post).toHaveBeenCalledWith('/api/hosting/accounts', {
-      authorization_id: 'a-flow',
-      alias: 'Work',
-    })
-  })
+      // 备注先校验，再取得授权链接；首次展示不直接索要回调。
+      // 未填写备注时不应调用安全证明或创建授权会话。
+      // 第一步点击空备注时应停留在表单，不申请无用OAuth会话。
+      // 随后用同一组件填入备注并继续，保护校验错误可以正常恢复。
+      // 授权按钮只有在取得有效官方链接后才出现。
+      // 检查href内容能防止按钮意外指向站点自身或占位链接。
+      // 复制动作走真实CopyButton，剪贴板属于userEvent提供的浏览器边界。
+      // 复制成功的内容必须是官方授权链接，不能混入回调地址。
+      // 链接打开和复制是两种用户选择，不互相触发额外网络操作。
+      await user.click(
+        screen.getByRole('button', { name: 'Generate authorization link' })
+      )
+      expect(post).not.toHaveBeenCalled()
+      await user.type(screen.getByLabelText('Account alias'), 'Work')
+      await user.click(
+        screen.getByRole('button', { name: 'Generate authorization link' })
+      )
+      expect(
+        await screen.findByRole('button', { name: 'Copy authorization link' })
+      ).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: 'Open provider authorization' })
+      ).toHaveAttribute('href', authorization.authorization_url)
+      await user.click(
+        screen.getByRole('button', { name: 'Copy authorization link' })
+      )
+      expect(await navigator.clipboard.readText()).toBe(
+        authorization.authorization_url
+      )
+      // 浏览器授权的真实 GET 只带状态，不重复返回首次生成的 URL。
+      // 查询刷新不能抹掉当前弹窗已经取得的链接，也不能重新发起 OAuth。
+      // 用实际 Query 更新复现用户打开弹窗后几秒内看到“链接不可用”。
+      await act(async () => {
+        await client.invalidateQueries({
+          queryKey: ['hosting', 'authorization', authorization.id],
+        })
+      })
+      await user.click(screen.getByLabelText('Account alias'))
+      expect(
+        screen.getByRole('button', { name: 'Open provider authorization' })
+      ).toHaveAttribute('href', authorization.authorization_url)
+
+      await user.type(
+        screen.getByLabelText('Authorization link or code'),
+        inputMode === 'full-url'
+          ? 'http://localhost:1455/auth/callback?state=example&code=private-code'
+          : 'private-code'
+      )
+      await user.click(
+        screen.getByRole('button', { name: 'Complete authorization' })
+      )
+      await waitFor(() =>
+        expect(
+          screen.queryByLabelText('Authorization link or code')
+        ).not.toBeInTheDocument()
+      )
+      expect(close).not.toHaveBeenCalled()
+      expect(
+        post.mock.calls.filter(([url]) => url === '/api/hosting/accounts')
+      ).toHaveLength(0)
+      // 此时应仍停留在同一弹窗和同一授权会话。
+      // 只读轮询能发现换码完成，不能隐式重新发送 code。
+      // 等待回调输入消失，是 ready 状态已被界面接收的可见证据。
+      // 无需再点击提交即可进入保存阶段，避免多余确认割裂完整用户动作。
+      // 若实现错误复用旧回调，这里的请求数量断言会失败。
+      // 不使用定时器快进替代真实 Query 更新，避免掩盖缓存键错误。
+      status = 'ready'
+      await act(async () => {
+        await client.invalidateQueries({
+          queryKey: ['hosting', 'authorization'],
+        })
+      })
+      await waitFor(() =>
+        expect(
+          screen.queryByLabelText('Authorization link or code')
+        ).not.toBeInTheDocument()
+      )
+      await screen.findByText('Account added')
+      expect(post.mock.calls.some(([url]) => url.endsWith('/test'))).toBe(false)
+      expect(close).not.toHaveBeenCalled()
+      expect(
+        screen.getByText(
+          'Test the connection in account details, then select this account in an API key’s resource settings.'
+        )
+      ).toBeVisible()
+      await user.click(screen.getByRole('button', { name: 'Go to API keys' }))
+      expect(manageKeys).toHaveBeenCalledOnce()
+      await user.click(screen.getByRole('button', { name: 'Done' }))
+      await waitFor(() => expect(close).toHaveBeenCalledOnce())
+      expect(
+        post.mock.calls.filter(([url]) => url.endsWith('/callback'))
+      ).toHaveLength(1)
+      // 两种输入最终提交相同完整回调；state 来自当前会话，不生成随机替代值。
+      expect(
+        post.mock.calls.find(([url]) => url.endsWith('/callback'))?.[1]
+      ).toEqual({
+        callback_url:
+          'http://localhost:1455/auth/callback?state=example&code=private-code',
+      })
+      expect(post).toHaveBeenCalledWith('/api/hosting/accounts', {
+        authorization_id: 'a-flow',
+        alias: 'Work',
+      })
+    }
+  )
   // 保存账号失败和原厂换码失败是不同阶段，不能要求用户重新授权。
   // 此场景让回调直接 ready，以便单独验证保存响应失败后的恢复行为。
   // 首次保存拒绝只代表控制面写入未完成，不应自动申请另一会话。
@@ -383,11 +413,11 @@ describe('账号授权和原厂重置', () => {
       screen.getByRole('button', { name: 'Generate authorization link' })
     )
     await user.type(
-      await screen.findByLabelText('Authorization callback URL'),
+      await screen.findByLabelText('Authorization link or code'),
       'http://localhost:1455/auth/callback?state=example&code=private-code'
     )
     await user.click(
-      screen.getByRole('button', { name: 'Complete authorization and add' })
+      screen.getByRole('button', { name: 'Complete authorization' })
     )
     await user.click(
       await screen.findByRole('button', { name: 'Retry adding account' })
@@ -476,17 +506,17 @@ describe('账号授权和原厂重置', () => {
       screen.getByRole('button', { name: 'Generate authorization link' })
     )
     await user.type(
-      await screen.findByLabelText('Authorization callback URL'),
+      await screen.findByLabelText('Authorization link or code'),
       'http://localhost:1455/auth/callback?state=example&code=private-code'
     )
     await user.click(
-      screen.getByRole('button', { name: 'Complete authorization and add' })
+      screen.getByRole('button', { name: 'Complete authorization' })
     )
     const check = await screen.findByRole('button', {
       name: 'Check authorization result',
     })
     expect(
-      screen.queryByLabelText('Authorization callback URL')
+      screen.queryByLabelText('Authorization link or code')
     ).not.toBeInTheDocument()
     status = 'ready'
     await waitFor(() => expect(check).toBeEnabled())

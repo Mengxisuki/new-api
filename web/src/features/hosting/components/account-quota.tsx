@@ -16,142 +16,261 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import type { HostingObservation } from '../types'
 
-// 列表与详情共用额度投影，保持未知、零和过期数据的语义一致。
-// 不计算跨账号总百分比，也不把原厂额度换算成平台人民币金额。
-// 本组件只负责展示观测事实，不发起刷新或消费请求。
-// 列表摘要和详情查询可以使用同一份数据契约。
-// 没有观测与观测失败分别保留服务器提供的信息。
-// 原厂窗口可能同时包含短周期、长周期或模型专属窗口。
-// 这些窗口相互约束，不是能汇总成一个总余额的分账户。
-// 剩余数量、利用率和重置时间独立存在，不能互相反推。
-// 窗口没有百分比时不显示空进度条，避免暗示额度充足。
-// 显示进度限制到合理视觉范围，但不修改原始剩余数值。
-// 窗口名称保留原厂语义，不从标签推算固定七天周期。
-// 用户切换界面语言后日期和数字立即重新格式化。
-// 语言码先经过公共转换，兼容简体和繁体的内部名称。
-// 所有日期按浏览器时区展示，不混淆服务端 UTC 时间。
-// 重置机会是原厂一次性权益，不是平台钱包余额。
-// 重置机会子查询失败时不能借主额度的新鲜度显示旧次数。
-// 真实零次数应展示零，不能使用真假值判断丢失该事实。
-// 有到期时间的机会逐一提示，重复时间合并不改变可用总数。
-// 只返回卡子明细而没有总数时仍显示次数未知。
-// 原厂积分余额保留小数字符串，不做人民币汇率换算。
-// 缺少积分余额不能根据 unlimited 或 has_credits 编造数值。
-// 额度过期不代表账号被解绑，用户仍可主动刷新或重新授权。
-// 此处不以错误码直接触发任何补救操作。
-// 错误码只用于排查，不展示原厂返回的完整响应。
-// 时间戳为零仍是明确值，存在性检查不能写成真假判断。
-// 重置成功但额度同步中时由详情页提供额外提示。
-// 历史快照可继续显示，但必须同时保留过期状态标记。
-// 展示历史值不意味着允许消费，操作权限由详情重新判断。
-// 窗口顺序来自上游，避免前端重排让用户误解优先级。
-// 进度条可访问名称使用窗口名，屏幕阅读器可区分多个窗口。
-// 同一个账号的多个额度也不相加，避免双重计算可用量。
-// 长窗口名称允许换行，不通过截断隐去额度约束。
+// 列表与详情共享额度语义，不把免费挂靠展示成可购买的余额。
+// 只呈现窗口利用率、重置机会和时间，不渲染积分或任何金额。
+// 百分比指已用比例，与进度条方向一致，不用剩余数值反推。
+// 多个窗口彼此约束，不能相加，也不能按百分比排列消费顺序。
+// 原厂窗口名称保留，模型专属窗口不能被缩写成普通周额度。
+// 所有操作仍由详情统一处理，本组件不请求上游或消费重置权益。
+// 组件输入来自已校验的 HostingObservation，不在每个元素重复解析。
+// 快照可缺失，即使 observation 对象已经建立也不能默认额度完整。
+// 账号状态与额度状态各有来源，额度刷新不会替代模型连接测试。
+// 已连接、暂停、待验证等账号生命周期仍由外部账号列展示。
+// 此处不根据余额或利用率决定账号是否进入 Key 的可用资源池。
+// 任何刷新都不改变 Key 保存的资源顺序，也不触发平台扣费。
+// 页面两处复用此组件，修改字段时需要同时考虑列表和详情。
+// 服务端保留的 credits 字段用于接口兼容，不属于本组件展示范围。
+// 不以隐藏数字、货币符号或缩写的方式重新展示相关积分数据。
+// 窗口仍按照上游顺序呈现，以保留模型专属限制的相对关系。
+// 已用百分比和机会次数是不同维度，不能合并为一个进度条。
+// UI 仅描述观测时刻的事实，不保证下一次模型请求一定成功。
+// 观测是否新鲜由执行层判定，浏览器不拿自己的时钟重定义 fresh。
+// 浏览器时钟仅用于相对时间显示，不作为服务端路由或授权依据。
+// 已到重置点但尚未观测的窗口继续显示历史百分比。
+// 同一账号可能存在同时到期的窗口，各自保留原始重置点。
+// 可用机会的消耗顺序由原厂负责，前端日期排序只是信息展示。
+// 长错误码允许折行，不得通过省略号隐藏定位所需的错误类别。
+// 原厂的重置窗口可能滚动变化，不能用固定周期推算下次时间。
+// 缺少重置时间时只隐藏倒计时，不影响已确认的利用率显示。
+// 原始剩余字段不用于补算利用率，避免不同单位的含义混用。
+// 机会列表缺少总数时仍显示未知，不根据卡明细长度猜测次数。
+// 状态或时间说明使用完整语义，辅助技术无需理解原厂枚举。
+// 接口错误不会在这里触发重授权，用户应先查看详情确认原因。
 export function AccountQuota(props: {
   observation?: HostingObservation | null
 }) {
   const { t, i18n } = useTranslation()
+  // 语言来自订阅式 hook，切换后数字和日期同时重新渲染。
+  // 内部 zhCN、zhTW 必须先映射成 Intl 接受的语言标签。
+  // 不把格式化后的文本持久化，避免换语言后残留旧展示。
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const observation = props.observation
-  // 快照可能不存在，即使顶层观测对象已经创建。
-  // 该情况属于数据尚未取得，不应绘制一个空的正常窗口。
-  // 所有可选属性都按存在性使用，保留零和空值的业务区别。
-  // 数字格式化只用于显示，不回写服务端原始额度。
   const snapshot = observation?.snapshot
-  const date = (value: number) => new Date(value).toLocaleString(locale)
-  // 观测不是 fresh 时仍可显示历史值，但必须显式标注，不能伪装实时。
   const fresh = observation?.state === 'fresh'
-  // 卡子状态独立于主快照，主额度查询成功不保证卡子查询成功。
-  // 只有两层状态都新鲜，显示的次数才可以解释为当前可用次数。
-  // 这与消费按钮的门槛保持同样语义，但本组件不授予操作权限。
+  // 主额度和重置机会的查询独立成功，不能借主状态展示旧卡数。
+  // 明确零次必须显示零；缺失字段与过期快照均显示未知。
+  // 此处的展示门槛不代替服务端的所有权和消费资格校验。
   const resetFresh =
     fresh && snapshot?.reset_credit_observation?.state === 'fresh'
+  // 时间是组件唯一的本地状态，不复制服务端观测到本地 state。
+  // 服务器刷新替换 props 后，利用率和机会次数直接反映新快照。
+  const [now, setNow] = useState(Date.now)
+  const hasDeadline = snapshot?.quota_windows?.some(
+    (window) => window.reset_at_ms !== undefined
+  )
+  // 一个账号共用一个分钟时钟，不为每个窗口启动轮询。
+  // 时钟只更新倒计时文案，绝不自动查询或恢复额度。
+  // 切回浏览器时立即校准，避免后台节流造成过时提示。
+  // 无重置时间时不启用时钟；卸载时同时清理定时器和监听。
+  useEffect(() => {
+    if (!hasDeadline) return
+    const update = () => setNow(Date.now())
+    const timer = window.setInterval(update, 60_000)
+    document.addEventListener('visibilitychange', update)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [hasDeadline])
+  // 所有完整日期使用浏览器时区，避免把服务端 UTC 当成本地钟点。
+  // 时间戳为零也有含义，调用点一律用 undefined 判断缺失。
+  const date = (value: number) => new Date(value).toLocaleString(locale)
+  // 原始时间保留在 title，列表用短时间降低行高。
+  // 倒计时到点只说明需要刷新，不能猜测原厂已经恢复额度。
+  // 分钟向上取整，最后不足一分钟仍不提前显示已重置。
+  // 天、小时、分钟模板均翻译；数字沿用项目统一格式化。
+  const countdown = (deadline: number) => {
+    // 先统一成整数分钟，再分解天与小时，避免四舍五入跨过重置点。
+    // 到期提示没有修改快照，旧的耗尽百分比必须继续可见。
+    const minutes = Math.ceil((deadline - now) / 60_000)
+    if (minutes <= 0) return t('Awaiting quota refresh')
+    let duration = t('{{minutes}}m', { minutes: formatNumber(minutes, locale) })
+    if (minutes >= 1440) {
+      duration = t('{{days}}d {{hours}}h', {
+        days: formatNumber(Math.floor(minutes / 1440), locale),
+        hours: formatNumber(Math.floor(minutes / 60) % 24, locale),
+      })
+    } else if (minutes >= 60) {
+      duration = t('{{hours}}h {{minutes}}m', {
+        hours: formatNumber(Math.floor(minutes / 60), locale),
+        minutes: formatNumber(minutes % 60, locale),
+      })
+    }
+    return t('Resets in {{duration}}', { duration })
+  }
+  // 相同到期点合并展示，不改变服务器提供的机会总数。
+  // 最近到期日常驻一行，完整日期列表留在提示中供核对。
+  // 过期主快照仍保留历史事实，但头部明确标注不是实时数据。
+  // 排序只作用于独立的日期数组，不修改 props 内部明细。
+  // 同一天的不同到期时刻仍保留在完整提示中，不能按日期字符串去重。
+  // 过期快照中的到期日期保留为历史证据，不冒充当前可用权益。
+  const expiries = [
+    ...new Set(
+      snapshot?.reset_credits?.flatMap((credit) =>
+        credit.expires_at_ms === undefined ? [] : [credit.expires_at_ms]
+      ) ?? []
+    ),
+  ].sort((a, b) => a - b)
   return (
-    <div className='min-w-0 space-y-3 text-sm'>
-      {!observation && <p>{t('Quota is not available yet')}</p>}
-      {observation && (
-        <Badge variant={fresh ? 'secondary' : 'outline'}>
-          {fresh
-            ? t('Latest observation')
-            : t('Quota may be stale or unavailable')}
-        </Badge>
-      )}
-      {snapshot?.plan_summary?.name && <p>{snapshot.plan_summary.name}</p>}
-      {snapshot?.quota_windows?.map((window) => (
-        <div key={window.id} className='space-y-1'>
-          <div className='flex flex-wrap justify-between gap-1'>
-            <span>{window.label}</span>
-            <span>{window.state}</span>
-          </div>
-          {/* utilization 仅在确有数值时绘制；绝不把缺少额度当作未使用。 */}
-          {window.utilization !== undefined && (
-            <Progress
-              value={Math.min(100, Math.max(0, window.utilization * 100))}
-              aria-label={window.label}
-            />
-          )}
-          <p className='text-muted-foreground text-xs'>
-            {window.remaining !== undefined
-              ? t('Remaining: {{value}} {{unit}}', {
-                  value: formatNumber(window.remaining, locale),
-                  unit: window.unit,
-                })
-              : t('Remaining quota unknown')}
-            {window.reset_at_ms !== undefined && (
-              <>
-                {' '}
-                · {t('Resets at {{time}}', { time: date(window.reset_at_ms) })}
-              </>
-            )}
-          </p>
-        </div>
-      ))}
-      {/* 重置卡详情具有独立新鲜度，不借主额度成功掩盖子查询失败。 */}
-      <p>
-        {t('Reset opportunities')}:{' '}
-        {resetFresh && snapshot?.reset_credits_available !== undefined
-          ? formatNumber(snapshot.reset_credits_available, locale)
-          : t('Unknown')}
-      </p>
-      {[
-        ...new Set(
-          snapshot?.reset_credits?.flatMap((credit) =>
-            credit.expires_at_ms === undefined ? [] : [credit.expires_at_ms]
-          ) ?? []
-        ),
-      ].map((expires) => (
-        <p key={expires} className='text-muted-foreground text-xs'>
-          {t('Expires at {{time}}', { time: date(expires) })}
-        </p>
-      ))}
-      {/* 积分不是重置卡次数；未返回 balance 时显示未知而非零。 */}
-      {/*
-       * 积分区和重置机会区分开，避免把可用积分当作可重置次数。
-       * 没有提供余额时明确展示未知，服务端后来补全后自然更新。
-       * 数值字符串不经浮点数转换，以免损失原厂小数精度。
-       */}
-      <p>
-        {t('Codex credits')}: {snapshot?.credits?.balance ?? t('Unknown')}
-      </p>
-      {observation?.observed_at_ms !== undefined && (
-        <p className='text-muted-foreground text-xs'>
-          {t('Observed at {{time}}', {
-            time: date(observation.observed_at_ms),
-          })}
-        </p>
-      )}
+    <div className='min-w-0 space-y-2 text-xs whitespace-normal'>
+      {/* 套餐与观测状态压成一行，不把详情元数据逐段铺开。 */}
+      {/* 无观测的说明与过期警告分开，便于用户判断是否需要查询。 */}
+      {/* 成功观测只保留简短标签，完整观测时间放入原生提示。 */}
+      {/* 原厂套餐名是身份信息，不增加费率、价格或预估消耗。 */}
+      {/* 已用标题只在存在窗口时出现，避免空快照显示无意义列头。 */}
+      <div className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1'>
+        {snapshot?.plan_summary?.name && (
+          <Badge variant='outline'>{snapshot.plan_summary.name}</Badge>
+        )}
+        {!observation && <span>{t('Quota is not available yet')}</span>}
+        {observation && (
+          <span
+            title={
+              observation.observed_at_ms === undefined
+                ? undefined
+                : t('Observed at {{time}}', {
+                    time: date(observation.observed_at_ms),
+                  })
+            }
+          >
+            {fresh
+              ? t('Latest observation')
+              : t('Quota may be stale or unavailable')}
+          </span>
+        )}
+        {Boolean(snapshot?.quota_windows?.length) && (
+          <span>{t('Quota used')}</span>
+        )}
+      </div>
+      {/* 窗口间距小于账号间距，使同一账号的多个限制组成清晰整体。 */}
+      {/* 每个窗口独占起始行，窄屏只在该窗口内部折行。 */}
+      {/* 保持普通文档流，长名称或大字号不会被固定行高裁切。 */}
+      <div className='space-y-1.5'>
+        {snapshot?.quota_windows?.map((window) => {
+          // 只限制进度条的视觉范围，百分比文本保留真实超额值。
+          // 未提供利用率就不画空条，避免暗示未使用或无限额度。
+          // 低余量用警示色，耗尽同时有文字，不能只靠颜色判断。
+          const percent =
+            window.utilization === undefined
+              ? undefined
+              : window.utilization * 100
+          const exhausted = window.state === 'exhausted'
+          return (
+            <div
+              key={window.id}
+              className='flex flex-wrap items-center gap-x-2 gap-y-1'
+            >
+              {/* 长模型名可换行；短标签有统一最小宽度，方便纵向扫描。 */}
+              <span className='bg-muted max-w-32 min-w-8 rounded px-1.5 py-0.5 text-center font-medium break-words'>
+                {window.label}
+              </span>
+              {percent === undefined ? (
+                <span className='text-muted-foreground'>
+                  {t('Remaining quota unknown')}
+                </span>
+              ) : (
+                <>
+                  {/* 使用共享 Progress，保留数值和可访问名称的标准语义。 */}
+                  {/* 条宽固定以便比较多个窗口，不能随百分比改变整个控件宽度。 */}
+                  {/* 文本保留两位小数；0% 代表真实零用量，不代表缺省值。 */}
+                  {/* 条填满后仍显示原始百分比，避免把超额值伪装成恰好耗尽。 */}
+                  <Progress
+                    value={Math.min(100, Math.max(0, percent))}
+                    aria-label={window.label}
+                    className={cn(
+                      'w-16 shrink-0 [&_[data-slot=progress-track]]:h-1.5',
+                      percent >= 75 &&
+                        '[&_[data-slot=progress-indicator]]:bg-amber-500',
+                      (percent >= 90 || exhausted) &&
+                        '[&_[data-slot=progress-indicator]]:bg-destructive'
+                    )}
+                  />
+                  <span className='w-11 shrink-0 text-right font-medium tabular-nums'>
+                    {formatNumber(percent, locale)}%
+                  </span>
+                </>
+              )}
+              {exhausted && (
+                <span className='text-destructive'>{t('Quota exhausted')}</span>
+              )}
+              {/* available 和 percent 是协议枚举，不作为界面文案原样显示。 */}
+              {/* 非可用状态仍明确说明，不能让历史进度暗示当前可调用。 */}
+              {window.state !== 'available' &&
+                !exhausted &&
+                percent !== undefined && (
+                  <span className='text-muted-foreground'>
+                    {t('Quota status unknown')}
+                  </span>
+                )}
+              {/* 倒计时不使用 aria-live，避免每分钟打断屏幕阅读器。 */}
+              {/* 完整重置点与相对时长共用同一字段，不能出现两套时间来源。 */}
+              {window.reset_at_ms !== undefined && (
+                <span
+                  className='text-muted-foreground tabular-nums'
+                  title={t('Resets at {{time}}', {
+                    time: date(window.reset_at_ms),
+                  })}
+                >
+                  {countdown(window.reset_at_ms)}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {/* 重置机会是原厂权益，不与原厂积分余额混淆；列表和详情都隐藏金额。 */}
+      {/* 次数与到期信息共享一行，在窄屏自然换行，不扩大页面宽度。 */}
+      <div className='text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1'>
+        <span>
+          {t('Reset opportunities')}:{' '}
+          {resetFresh && snapshot?.reset_credits_available !== undefined
+            ? formatNumber(snapshot.reset_credits_available, locale)
+            : t('Unknown')}
+        </span>
+        {/* 常驻最近到期日，让用户能在列表比较哪张权益需要先处理。 */}
+        {/* title 保留年份和钟点；短日期不参与任何过期判断。 */}
+        {/* 重置入口仍在详情，查看到期提示不会启动不可撤销操作。 */}
+        {expiries.length > 0 && (
+          <span
+            title={expiries
+              .map((expires) =>
+                t('Expires at {{time}}', { time: date(expires) })
+              )
+              .join('\n')}
+          >
+            {t('Expires at {{time}}', {
+              time: new Date(expiries[0]).toLocaleDateString(locale, {
+                month: 'short',
+                day: 'numeric',
+              }),
+            })}
+          </span>
+        )}
+      </div>
+      {/* 错误码只用来定位失败，不能把原厂完整响应或凭据带到界面。 */}
       {observation?.last_error_code && (
-        <p role='status' className='text-destructive text-xs'>
+        <p role='status' className='text-destructive break-words'>
           {observation.last_error_code}
         </p>
       )}

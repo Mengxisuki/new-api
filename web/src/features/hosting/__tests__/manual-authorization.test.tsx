@@ -48,6 +48,11 @@ it('七语言挂靠词条位于实际翻译命名空间', () => {
     expect(Object.keys(resource)).toEqual(['translation']) // 文件存在不等于翻译器实际能读取。
     expect(resource.translation).toHaveProperty('Usage order') // 每 Key 菜单标题也属于漏译修复范围。
     expect(resource.translation).toHaveProperty('Generate authorization link') // 首要操作的翻译缺失会直接阻断用户理解。
+    // 额度词条同样需要进入真实命名空间，避免紧凑布局继续混杂英文。
+    // 所有七语言都检查，不能仅依赖中文回退掩盖漏译。
+    expect(resource.translation).toHaveProperty('Quota used')
+    expect(resource.translation).toHaveProperty('Resets in {{duration}}')
+    expect(resource.translation).toHaveProperty('Awaiting quota refresh')
     expect(resource.translation).toHaveProperty('Codex configuration') // 配置入口不能继续显示英文键。
   }
 })

@@ -7850,6 +7850,14 @@
     "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.": "Dùng tài nguyên đã bật từ trái sang phải. Bỏ qua nguồn không đủ hạn mức hoặc không hỗ trợ giao diện.",
     "No authorized model supports this application for this API key.": "Không có mô hình được phép nào của API Key này hỗ trợ ứng dụng này.",
     "Codex model": "Mô hình Codex",
-    "All resource sources are disabled. Requests with this key will be rejected.": "Tất cả nguồn tài nguyên đã tắt. Yêu cầu dùng Key này sẽ bị từ chối."
+    "All resource sources are disabled. Requests with this key will be rejected.": "Tất cả nguồn tài nguyên đã tắt. Yêu cầu dùng Key này sẽ bị từ chối.",
+    "Quota used": "Hạn mức đã dùng",
+    "Quota exhausted": "Đã hết hạn mức",
+    "Quota status unknown": "Chưa rõ trạng thái hạn mức",
+    "Awaiting quota refresh": "Chờ cập nhật",
+    "Resets in {{duration}}": "Đặt lại sau {{duration}}",
+    "{{minutes}}m": "{{minutes}} phút",
+    "{{hours}}h {{minutes}}m": "{{hours}} giờ {{minutes}} phút",
+    "{{days}}d {{hours}}h": "{{days}} ngày {{hours}} giờ"
   }
 }

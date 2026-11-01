@@ -7850,6 +7850,14 @@
     "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.": "從左到右使用已啟用資源；額度不足或不支援目前介面時，嘗試下一來源。",
     "No authorized model supports this application for this API key.": "此 API Key 的授權模型暫不支援該用戶端。",
     "Codex model": "Codex 模型",
-    "All resource sources are disabled. Requests with this key will be rejected.": "所有資源均已關閉，此 Key 的請求將被拒絕。"
+    "All resource sources are disabled. Requests with this key will be rejected.": "所有資源均已關閉，此 Key 的請求將被拒絕。",
+    "Quota used": "已用額度",
+    "Quota exhausted": "額度已用盡",
+    "Quota status unknown": "額度狀態未知",
+    "Awaiting quota refresh": "待重新整理",
+    "Resets in {{duration}}": "{{duration}}後重置",
+    "{{minutes}}m": "{{minutes}}分鐘",
+    "{{hours}}h {{minutes}}m": "{{hours}}小時{{minutes}}分",
+    "{{days}}d {{hours}}h": "{{days}}天{{hours}}小時"
   }
 }

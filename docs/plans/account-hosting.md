@@ -633,3 +633,16 @@ bun run build
 最终后端相关包完整回归通过：`go test ./controller ./model ./middleware ./relay/... ./service/... ./router -count=1`。注册自动创建默认 Key 的真实入口随后定向通过，并随最新策略矩阵在 MySQL/PostgreSQL 复验。前后端生产构建通过；临时验证库已清理，未修改生产配置。
 
 后端核心导航：`model/token_resource_policy.go`、`service/resource_billing.go`、`controller/resource_relay.go`、`controller/resource_models.go`、`service/midjourney.go`、`controller/midjourney.go`。前端入口：`web/src/features/keys/components/api-keys-mutate-drawer.tsx` 与 `resource-priority-editor.tsx`。真实原厂授权/消费、实际客户端联调及商户付款仍需部署后验收；本地模拟上游和真实数据库回归不能替代这些证据。
+
+
+## 16. 挂靠列表精简与 Codex 连接测试修复
+
+更新时间：2026-11-01 18:53:12 +00:00。本轮为本地实现，未提交、推送或部署，未重放用户登录凭据，也未请求真实原厂耗额。
+
+列表参考本地 sub2api 的紧凑窗口展示：短进度条与已用百分比保持一致，重置点显示倒计时；到点但未刷新时明确显示“待刷新”，不擅自恢复额度。保留套餐、观测新鲜度、原厂重置次数及最近到期日，完整时间可通过提示核对。列表和详情共用 `AccountQuota`，均不显示 A/U 费用、预估费用或 Codex 积分。重置机会子查询失败仍显示未知，查询与消费继续使用原详情入口。
+
+`gpt-load` 的挂靠测试之前误走 `TestGroupCredential`，订阅账号被该普通探测入口直接拒绝为 403；简单放开门禁仍会遇到 Codex 不支持 `OperationProbe`。现在仅挂靠入口走指定账号的原生 `ResponsesCreate`，复用订阅执行器及凭据准备，保留普通探测禁令和归属检查。固定短输入、关闭存储、不自动重试或换账号；真实测试会少量消耗原厂额度。暂停账号须显式恢复后才能测试。接口与根因见 [gpt-load 执行契约](../../../gpt-load/docs/hosting-api.md#账号读取额度与连接测试) 和其项目排障记忆。
+
+验证：挂靠前端 5 文件 18 项回归通过，`bunx tsgo -b`、受影响文件 lint、`bun run build` 通过。浏览器使用隔离模拟账号验证真实 `/hosting` 页面：桌面三账号行高约 139px，390px/320px 无页面横向溢出，暗色模式及金额隐藏通过；未触发任何模型或重置请求。开发模式共享 Combobox 的既有 nativeButton 警告仍存在，本轮未改该通用控件。
+
+后端先以真实挂靠 HTTP 入口复现 403，再验证通过；回归覆盖本人/他人隔离、暂停/删除、非法模型与协议、401/429/超时，以及真实 CPA 转换、凭据准备和 SSE 聚合（只替换网络 transport）。`go test ./internal/control -count=1 -timeout=180s`、`go test ./internal/execution/cpa ./internal/subscription -count=1 -timeout=180s`、`go vet ./internal/control`、gpt-load 构建通过。New API 的 `TestHostingCredentialAndProbeBoundaries` 接口契约回归亦通过。没有表结构或数据库写入规则变更。真实线上模型连接仍需发布后由用户测试，离线回归不代表该账号在原厂必然可用。

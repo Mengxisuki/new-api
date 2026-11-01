@@ -7850,6 +7850,14 @@
     "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.": "Utilisez les ressources activées de gauche à droite. Ignorez celles dont le quota est insuffisant ou l’interface incompatible.",
     "No authorized model supports this application for this API key.": "Aucun modèle autorisé pour cette clé API ne prend en charge cette application.",
     "Codex model": "Modèle Codex",
-    "All resource sources are disabled. Requests with this key will be rejected.": "Toutes les sources sont désactivées. Les requêtes utilisant cette clé seront refusées."
+    "All resource sources are disabled. Requests with this key will be rejected.": "Toutes les sources sont désactivées. Les requêtes utilisant cette clé seront refusées.",
+    "Quota used": "Quota utilisé",
+    "Quota exhausted": "Quota épuisé",
+    "Quota status unknown": "État du quota inconnu",
+    "Awaiting quota refresh": "En attente d’actualisation",
+    "Resets in {{duration}}": "Réinitialisation dans {{duration}}",
+    "{{minutes}}m": "{{minutes}} min",
+    "{{hours}}h {{minutes}}m": "{{hours}} h {{minutes}} min",
+    "{{days}}d {{hours}}h": "{{days}} j {{hours}} h"
   }
 }

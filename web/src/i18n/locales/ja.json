@@ -7850,6 +7850,14 @@
     "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.": "有効なリソースを左から順に使用します。残量不足やインターフェース未対応のリソースはスキップします。",
     "No authorized model supports this application for this API key.": "この API キーで許可されたモデルに、このアプリへの対応モデルがありません。",
     "Codex model": "Codex モデル",
-    "All resource sources are disabled. Requests with this key will be rejected.": "すべてのリソースが無効です。このキーのリクエストは拒否されます。"
+    "All resource sources are disabled. Requests with this key will be rejected.": "すべてのリソースが無効です。このキーのリクエストは拒否されます。",
+    "Quota used": "使用済み枠",
+    "Quota exhausted": "利用枠を使い切りました",
+    "Quota status unknown": "利用枠の状態は不明です",
+    "Awaiting quota refresh": "更新待ち",
+    "Resets in {{duration}}": "{{duration}}後にリセット",
+    "{{minutes}}m": "{{minutes}}分",
+    "{{hours}}h {{minutes}}m": "{{hours}}時間{{minutes}}分",
+    "{{days}}d {{hours}}h": "{{days}}日{{hours}}時間"
   }
 }

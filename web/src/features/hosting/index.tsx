@@ -31,6 +31,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
+import { cn } from '@/lib/utils'
 
 import { getHostingAccounts, getHostingStatus } from './api'
 import { HostingAccountDetails } from './components/account-details'
@@ -179,6 +180,22 @@ export function HostingWorkspace() {
     if (account.status === 'deleting') return t('Removing account')
     return t('Connecting account')
   }
+  // 只有真实验证通过且未暂停才使用可用色，授权成功不能伪装可调用。
+  // 异常、暂停仍保留文字标签，颜色只是辅助，不替代状态语义。
+  // 桌面和手机复用同一徽标，避免响应式切换时出现不同结论。
+  const statusBadge = (account: HostingAccount) => (
+    <Badge
+      variant={account.status === 'error' ? 'destructive' : 'secondary'}
+      className={cn(
+        'h-auto min-h-5 max-w-full whitespace-normal',
+        account.status === 'active' &&
+          !account.paused &&
+          'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+      )}
+    >
+      {status(account)}
+    </Badge>
+  )
   const quota = (account: HostingAccount) => (
     <AccountQuota observation={account.observation} />
   )
@@ -280,14 +297,20 @@ export function HostingWorkspace() {
               {/* 桌面沿用静态表封装，移动端折成账号卡，长身份不撑宽页面。 */}
               <div className='hidden md:block'>
                 <StaticDataTable
+                  // 固定列宽把空间留给窗口摘要，长备注不会挤压额度区。
+                  // 单元格顶部对齐，短操作不再漂浮在高行中央。
+                  // 小屏继续使用下方卡片，不把桌面表格缩成横向滚动。
+                  tableClassName='table-fixed [&_td]:px-4 [&_td]:py-4 [&_td]:align-top [&_th]:px-4'
+                  headerRowClassName='bg-muted/40 hover:bg-muted/40'
                   data={filtered}
                   getRowKey={(account) => account.id} // 稳定身份使备注修改不会重建错误行。
                   columns={[
                     {
                       id: 'account',
+                      className: 'w-[23%]',
                       header: t('Account'),
                       cell: (account) => (
-                        <div className='max-w-56 break-words'>
+                        <div className='space-y-1 break-words whitespace-normal'>
                           <p className='font-medium'>{account.alias}</p>
                           <p className='text-muted-foreground text-xs'>
                             {account.email_mask}
@@ -297,14 +320,15 @@ export function HostingWorkspace() {
                     },
                     {
                       id: 'status',
+                      className: 'w-[19%]',
                       header: t('Status'),
-                      cell: (account) => (
-                        <Badge variant='secondary'>{status(account)}</Badge>
-                      ),
+                      cell: statusBadge,
                     },
                     { id: 'quota', header: t('Provider quota'), cell: quota },
                     {
                       id: 'actions',
+                      className: 'w-28 text-right',
+                      cellClassName: 'text-right',
                       header: t('Actions'),
                       cell: (account) => (
                         <Button
@@ -329,7 +353,7 @@ export function HostingWorkspace() {
                       <p className='text-muted-foreground text-xs break-all'>
                         {account.email_mask}
                       </p>
-                      <Badge variant='secondary'>{status(account)}</Badge>
+                      {statusBadge(account)}
                     </CardHeader>
                     <CardContent className='space-y-3'>
                       {quota(account)}

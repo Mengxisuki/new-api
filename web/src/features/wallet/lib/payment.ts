@@ -213,18 +213,45 @@ export function generatePresetAmounts(minAmount: number): PresetAmount[] {
 }
 
 /**
- * Merge custom preset amounts with discounts
+ * 生成充值页预设套餐列表（PresetAmount[]）。
+ * 输入约束：amountOptions 为候选充值金额数组，discounts 为充值面额到折扣率的映射（如 { 100: 0.98, 30000: 0.9 }）。
+ * 关键流程：先提取 discounts 中正数面额与正数折扣率并按金额升序排列；若存在有效折扣配置则直接作为充值 Plan 返回。
+ * 设计取舍：管理员配置金额折扣后，用户端应展示全部已配置折扣套餐（如 30000），不再混入默认的 10/20/50/100 档位。
+ * 回退规则：仅在未配置任何有效金额折扣时，才使用 amountOptions 生成无折扣预设。
  */
 export function mergePresetAmounts(
   amountOptions: number[],
   discounts: Record<number, number>
 ): PresetAmount[] {
+  // 从折扣映射中提取合法的正数面额与正数折扣，过滤掉 0、负数或 NaN 等异常项。
+  const discountPresets = Object.entries(discounts || {})
+    .map(([amount, discount]) => ({
+      value: Number(amount),
+      discount: Number(discount),
+    }))
+    .filter(
+      (item) =>
+        Number.isFinite(item.value) &&
+        item.value > 0 &&
+        Number.isFinite(item.discount) &&
+        item.discount > 0
+    )
+    // 按充值面额从小到大排序，确保大额套餐（如 30000）排在小额套餐（如 100）之后稳定展示。
+    .sort((a, b) => a.value - b.value)
+
+  // 只要配置了有效的充值折扣档位，就直接使用折扣档位作为充值页套餐。
+  if (discountPresets.length > 0) {
+    return discountPresets
+  }
+
+  // 未配置任何折扣且无自定义金额选项时返回空数组，由上层按最低充值额生成默认档位。
   if (!amountOptions || amountOptions.length === 0) {
     return []
   }
 
+  // 无折扣配置时按原充值金额选项顺序生成原价套餐。
   return amountOptions.map((amount) => ({
     value: amount,
-    discount: discounts[amount] || 1.0,
+    discount: 1.0,
   }))
 }

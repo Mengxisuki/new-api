@@ -134,6 +134,11 @@ function parseAmountOptions(data: unknown): number[] {
     .filter((item) => Number.isFinite(item) && item > 0)
 }
 
+/**
+ * 解析后端返回的充值金额折扣映射（支持对象或 JSON 字符串）。
+ * 输入约束：data 可为对象、JSON 字符串或空值；非对象结构统一返回空映射。
+ * 过滤规则：仅保留正数充值面额与正数折扣率，避免非法键或零/负值污染前端套餐计算。
+ */
 function parseDiscountMap(data: unknown): Record<number, number> {
   if (!data) {
     return {}
@@ -141,6 +146,7 @@ function parseDiscountMap(data: unknown): Record<number, number> {
 
   let parsedData = data
 
+  // 兼容后端或缓存可能返回未反序列化 JSON 字符串的情况。
   if (typeof data === 'string') {
     try {
       parsedData = JSON.parse(data)
@@ -149,6 +155,7 @@ function parseDiscountMap(data: unknown): Record<number, number> {
     }
   }
 
+  // 排除数组与原始类型，仅接受键值映射对象。
   if (
     !parsedData ||
     typeof parsedData !== 'object' ||
@@ -157,12 +164,18 @@ function parseDiscountMap(data: unknown): Record<number, number> {
     return {}
   }
 
+  // 将字符串键与折扣值转为数值，并校验必须为大于 0 的有限数。
   return Object.entries(parsedData).reduce<Record<number, number>>(
     (result, [key, value]) => {
       const numericKey = Number(key)
       const numericValue = Number(value)
 
-      if (Number.isFinite(numericKey) && Number.isFinite(numericValue)) {
+      if (
+        Number.isFinite(numericKey) &&
+        numericKey > 0 &&
+        Number.isFinite(numericValue) &&
+        numericValue > 0
+      ) {
         result[numericKey] = numericValue
       }
 
@@ -172,6 +185,10 @@ function parseDiscountMap(data: unknown): Record<number, number> {
   )
 }
 
+/**
+ * 获取并规范化用户端充值配置与预设充值套餐列表。
+ * 当服务端配置了金额折扣时，即使 amount_options 为空或仍为默认值，也会生成对应的折扣充值 Plan。
+ */
 export function useTopupInfo() {
   const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null)
   const [presetAmounts, setPresetAmounts] = useState<PresetAmount[]>([])
@@ -183,11 +200,13 @@ export function useTopupInfo() {
 
       const response = await getTopupInfo()
 
+      // 接口返回失败或空数据时直接交由统一错误处理，不写入残缺状态。
       if (!response.success || !response.data) {
         handleServerError(response)
         return
       }
 
+      // 入口处集中校验并归一化支付渠道、套餐金额与折扣表。
       const processedData: TopupInfo = {
         ...response.data,
         pay_methods: parsePaymentMethods(
@@ -204,11 +223,13 @@ export function useTopupInfo() {
 
       setTopupInfo(processedData)
 
-      if (processedData.amount_options.length > 0) {
-        const customPresets = mergePresetAmounts(
-          processedData.amount_options,
-          processedData.discount || {}
-        )
+      // 优先以配置的充值折扣生成充值套餐；未配置折扣时才回退到 amount_options 或默认最低充值倍率档位。
+      // 不能仅在 amount_options 非空时调用 mergePresetAmounts，否则清空 amount_options 后折扣套餐会被忽略。
+      const customPresets = mergePresetAmounts(
+        processedData.amount_options,
+        processedData.discount || {}
+      )
+      if (customPresets.length > 0) {
         setPresetAmounts(customPresets)
       } else {
         const minTopup = getMinTopupAmount(processedData)

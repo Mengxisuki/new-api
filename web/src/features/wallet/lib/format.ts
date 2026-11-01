@@ -64,13 +64,16 @@ export function formatCurrency(amount: number | string): string {
 }
 
 /**
- * Get discount label for display (e.g., "20% OFF")
+ * 生成充值套餐折扣展示文案（如 "2% OFF" / "优惠 2%"）。
+ * 输入约束：discount 为大于 0 且小于 1 的倍率（如 0.98 表示 98 折）；原价或非法值返回空字符串。
+ * 精度处理：保留最多两位小数并去除尾随零，避免二进制浮点尾差或非整数折扣被四舍五入截断。
  */
 export function getDiscountLabel(discount: number, t: TFunction): string {
-  if (discount >= DEFAULT_DISCOUNT_RATE) {
+  if (discount <= 0 || discount >= DEFAULT_DISCOUNT_RATE) {
     return ''
   }
-  const off = Math.round((1 - discount) * 100)
+  // 将折扣倍率换算为减免百分比（如 0.98 -> 2，0.9 -> 10）。
+  const off = Number(((1 - discount) * 100).toFixed(2))
   return t('{{percent}}% OFF', { percent: off })
 }
 

@@ -40,6 +40,7 @@ import { BillingHistoryDialog } from '../components/dialogs/billing-history-dial
 import { PaymentConfirmDialog } from '../components/dialogs/payment-confirm-dialog'
 import { RechargeFormCard } from '../components/recharge-form-card'
 import { usePayment } from '../hooks/use-payment'
+import { useTopupInfo } from '../hooks/use-topup-info'
 
 // 覆盖人民币输入、服务端冻结额度和付款展示的真实接线。
 // HTTP 是唯一替换边界，不模拟 Hook、货币工具或付款弹窗。
@@ -374,4 +375,72 @@ test.each([
     { amount: 1 },
     expect.any(Object)
   )
+})
+
+// 配置金额折扣（如 100 享 0.98、30000 享 0.9）时，充值页必须展示所有配置的折扣套餐，不再展示默认的 10/20/50。
+// 同时验证即使后端仍返回旧的默认 amount_options，前端 Hook 也会以折扣配置为准生成升序充值 Plan。
+test('配置金额折扣时充值页展示全部折扣套餐并过滤默认档位', async () => {
+  await i18n.changeLanguage('zh') // 切换到中文界面，验证折扣与实付节省金额的中文文案。
+  // 模拟后端返回默认 10/20/50/100 选项以及管理员配置的 100 和 30000 两个折扣档位。
+  vi.spyOn(api, 'get').mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        enable_online_topup: true,
+        enable_stripe_topup: false,
+        pay_methods: [{ name: 'WeChat', type: 'wxpay' }],
+        min_topup: 1,
+        stripe_min_topup: 1,
+        amount_options: [10, 20, 50, 100], // 旧默认档位不应覆盖或截断折扣套餐。
+        discount: {
+          '100': 0.98, // 100 元享 98 折（优惠 2%，实付 98，节省 2）。
+          '30000': 0.9, // 30000 元享 9 折（优惠 10%，实付 27,000，节省 3,000）。
+        },
+      },
+    },
+  })
+
+  // 通过真实 Hook 拉取并解析充值配置，验证生成的 presetAmounts 只含配置的折扣档位。
+  const { result } = renderHook(() => useTopupInfo())
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  expect(result.current.presetAmounts).toEqual([
+    { value: 100, discount: 0.98 },
+    { value: 30000, discount: 0.9 },
+  ])
+
+  // 将 Hook 产出的套餐传入真实充值卡片组件，验证用户可见的套餐按钮与折扣金额。
+  render(
+    <I18nextProvider i18n={i18n}>
+      <RechargeFormCard
+        topupInfo={result.current.topupInfo}
+        presetAmounts={result.current.presetAmounts}
+        selectedPreset={null}
+        topupAmount={100}
+        paymentAmount={98}
+        priceRatio={7.3}
+        usdExchangeRate={7.3}
+        localCnyInput // 本地人民币渠道按元面额计算实付與优惠额。
+        calculating={false}
+        paymentLoading={null}
+        redemptionCode=''
+        redeeming={false}
+        onSelectPreset={vi.fn()}
+        onTopupAmountChange={vi.fn()}
+        onPaymentMethodSelect={vi.fn()}
+        onRedemptionCodeChange={vi.fn()}
+        onRedeem={vi.fn()}
+      />
+    </I18nextProvider>
+  )
+
+  // 断言 100 与 30000 两个充值 Plan 完整展示，且未配置折扣的默认 10/20/50 不再出现。
+  expect(screen.getByRole('button', { name: /^100 / })).toHaveTextContent(
+    '优惠 2%支付 98 • 节省 2'
+  )
+  expect(screen.getByRole('button', { name: /^30,000 / })).toHaveTextContent(
+    '优惠 10%支付 27,000 • 节省 3,000'
+  )
+  expect(screen.queryByRole('button', { name: /^10 / })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /^20 / })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /^50 / })).not.toBeInTheDocument()
 })

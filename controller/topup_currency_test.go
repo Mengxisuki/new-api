@@ -142,3 +142,42 @@ func TestLocalTopUpKeepsOtherInputContracts(t *testing.T) {
 		assert.EqualValues(t, common.QuotaPerUnit, quota) // 一美元数量仍换成原内部单位，不误用CNY汇率。
 	}
 }
+
+// 配置金额折扣后，充值信息接口应直接以折扣档位升序作为充值套餐，不再沿用默认 10/20/50/100 选项。
+// 未配置金额折扣时，继续保留原有的 amount_options 列表。
+// 验证 /api/user/topup/info 真实入口返回的 amount_options 与 discount 保持一致。
+func TestGetTopUpInfoUsesConfiguredDiscountPlans(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payment := operation_setting.GetPaymentSetting()
+	oldOptions := payment.AmountOptions  // 保存原预设金额列表，避免污染后续用例。
+	oldDiscount := payment.AmountDiscount // 保存原折扣配置映射，测试结束后完整恢复。
+	t.Cleanup(func() {
+		payment.AmountOptions = oldOptions
+		payment.AmountDiscount = oldDiscount
+	})
+
+	// 模拟系统保留默认 10/20/50/100 选项，同时管理员配置了 100 与 30000 的金额折扣。
+	payment.AmountOptions = []int{10, 20, 50, 100}
+	payment.AmountDiscount = map[int]float64{
+		30000: 0.9,  // 大额套餐不在默认选项内，也必须出现在充值套餐列表中。
+		100:   0.98, // 已配置的折扣档位应按金额升序排列。
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/topup/info", nil)
+	GetTopUpInfo(ctx) // 直接调用真实控制器入口，检验序列化后的公开响应结构。
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			AmountOptions []int           `json:"amount_options"` // 期望返回由折扣档位升序构成的套餐金额。
+			Discount      map[int]float64 `json:"discount"`       // 期望原样返回折扣映射供前端展示折扣率。
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	// 断言返回 [100, 30000] 而非默认的 [10, 20, 50, 100]。
+	assert.Equal(t, []int{100, 30000}, response.Data.AmountOptions)
+	assert.Equal(t, map[int]float64{100: 0.98, 30000: 0.9}, response.Data.Discount)
+}

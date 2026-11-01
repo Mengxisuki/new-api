@@ -69,3 +69,13 @@
 验证：三库 controller/invoice_test.go 覆盖费率修改后继续支付仍按原6%、到账额度不变；前端 invoice-payment.test.tsx 覆盖每次打开与快捷配置，invoice-rates.test.tsx 覆盖0费率及超精度拒绝。
 
 补充验证：新增开票订单不能只信任易支付签名，签名证明来源但不证明足额收款。充值通知、订阅通知及订阅回跳均对冻结的含附加费总额作十进制精确匹配；真实SDK签名回归验证100.00、105.999、106.001不能兑付106.00订单，106.00及重复通知正确。非开票旧合同保持原样。
+
+## 2026-11-01 12:38:07 +00:00 — 配置金额折扣时充值套餐不能被默认金额选项截断
+
+现象：管理员在支付网关配置金额折扣 `{"100": 0.98, "30000": 0.9}` 后，充值页只展示默认的 `10、20、50、100`，不在默认列表中的 `30000` 套餐丢失。
+
+根因：`GetTopUpInfo` 始终返回默认 `AmountOptions`，而前端 `useTopupInfo` 与 `mergePresetAmounts` 仅遍历 `amount_options` 匹配折扣，忽略了仅在 `discount` 中配置的档位，且未配置折扣的默认档位仍被保留。
+
+修复：当存在正数面额与正数折扣率的 `AmountDiscount` 配置时，后端 `controller/topup.go` 与前端 `web/src/features/wallet/lib/payment.ts`、`hooks/use-topup-info.ts` 统一按配置的折扣档位升序生成充值 Plan，不再返回默认的 `10/20/50/100`；仅当未配置任何有效充值折扣时才回退到 `amount_options` 或最低充值倍率档位。同时 `web/src/features/wallet/lib/format.ts` 消除折扣百分比计算的浮点尾差。验证见 `controller/topup_currency_test.go` 与 `web/src/features/wallet/__tests__/currency-payment.test.tsx`。
+
+适用边界：仅影响用户端充值页预设套餐按钮与 `/api/user/topup/info` 的套餐输出；自定义金额输入、下单报价及后台设置持久化保持原契约。

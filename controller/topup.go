@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -116,6 +117,25 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	paymentSetting := operation_setting.GetPaymentSetting()
+	// 充值页预设套餐优先取已配置的金额折扣档位，避免配置折扣后仍显示默认 10/20/50/100 选项。
+	// Map 遍历顺序不稳定，必须收集正数面额与正数折扣后按金额升序输出。
+	// 仅当未配置任何有效金额折扣时，才回退使用原有的 AmountOptions 列表。
+	amountOptions := paymentSetting.AmountOptions
+	if len(paymentSetting.AmountDiscount) > 0 {
+		discountAmounts := make([]int, 0, len(paymentSetting.AmountDiscount))
+		for amount, discount := range paymentSetting.AmountDiscount {
+			// 忽略非正金额或无效折扣率，防止坏配置进入用户可选套餐。
+			if amount > 0 && discount > 0 {
+				discountAmounts = append(discountAmounts, amount)
+			}
+		}
+		if len(discountAmounts) > 0 {
+			slices.Sort(discountAmounts) // 固定升序返回，保证每次刷新界面套餐排列一致。
+			amountOptions = discountAmounts
+		}
+	}
+
 	data := gin.H{
 		"enable_online_topup":              isEpayTopUpEnabled() || len(officialChannels) > 0,
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
@@ -137,8 +157,8 @@ func GetTopUpInfo(c *gin.Context) {
 		"stripe_min_topup":        setting.StripeMinTopUp,
 		"waffo_min_topup":         setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
-		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
-		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
+		"amount_options":          amountOptions,
+		"discount":                paymentSetting.AmountDiscount,
 		"topup_link":              common.TopUpLink,
 	}
 	common.ApiSuccess(c, data)

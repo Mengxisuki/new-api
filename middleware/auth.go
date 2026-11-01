@@ -663,12 +663,8 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 
-		// 首期仅支持同步 OpenAI 文本协议和模型目录，其他路径显式拒绝。
-		// 这一门禁覆盖所有使用 TokenAuth 的历史路由，避免绕过统一策略收费。
-		if resourcePolicy != nil && !resourcePolicyPathAllowed(c.Request.Method, c.Request.URL.Path) {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgResourceEndpointUnsupported))
-			return
-		}
+		// Key 策略不缩小平台协议；具体平台来源统一在发送前计费入口校验。
+		// 挂靠能力仍由独立执行器限制，不能把其协议边界套到收费平台。
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {
 			return
@@ -751,22 +747,4 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 		}
 	}
 	return nil
-}
-
-// resourcePolicyPathAllowed 是统一策略首期协议边界。
-// GET responses 包括 WebSocket，不在同步请求的可回退合同内。
-// 模型查询不消耗任何来源，但仍由目录处理器按归属与 Key 限制筛选。
-func resourcePolicyPathAllowed(method, path string) bool {
-	if method == http.MethodGet { // 只开放模型发现，不开放原厂持久资源查询。
-		return path == "/v1/models" || strings.HasPrefix(path, "/v1/models/")
-	}
-	if method != http.MethodPost { // 删除或其他方法不能借同路径绕过策略限制。
-		return false
-	}
-	switch path {
-	case "/v1/chat/completions", "/v1/responses", "/v1/responses/compact": // 与统一同步执行器注册保持一致。
-		return true
-	default:
-		return false
-	}
 }

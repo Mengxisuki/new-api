@@ -322,7 +322,9 @@ func Register(c *gin.Context) {
 		if setting.DefaultUseAutoGroup {
 			token.Group = "auto"
 		}
-		if err := token.Insert(); err != nil {
+		// 注册生成的默认 Key 也是新授权，必须与手动创建使用相同三来源顺序。
+		// 两张记录原子保存，不能留下绕过统一策略的新 Key。
+		if _, err := token.InsertWithResourcePolicy(nil); err != nil {
 			common.ApiErrorT(c, "Failed to create default token")
 			return
 		}

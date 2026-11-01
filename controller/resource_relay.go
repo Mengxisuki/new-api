@@ -22,23 +22,22 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/hosting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // ResourceRelay 在平台选渠道之前执行一次完整来源策略。
-// 未配置策略的 Key 继续原调用链；配置后的请求由本处理器独占结束。
+// 未配置策略的 Key 继续原调用链；同步挂靠候选由本处理器执行。
 // 每个候选使用独立上下文，防止渠道密钥、计费会话和重试状态互相污染。
 // 路由装配约束：本处理器必须位于 TokenAuth 与总请求限流之后。
 // 它必须位于 Distribute 之前，否则免费来源也会被平台渠道门禁拒绝。
-// 不调用普通 Relay：后者自行重试并在退出时异步退款，不适合跨来源决策。
+// 挂靠与同步跨来源分支不调用普通 Relay；其余平台协议沿用原适配器和统一预扣。
 // Gin Copy 得到的上下文没有可继续执行的 handler 链，仅作为一次尝试的数据容器。
 // 所有尝试共享同一个下游 Writer，因此“已经输出”始终是整个请求的事实。
 // Request.Clone 隔离请求头，避免平台适配器修改下一来源的认证头。
 // 请求正文仍由现有 BodyStorage 复用，最外层中间件负责最终关闭存储。
 // 策略快照在鉴权时读取；处理中用户修改排序只影响下一次请求。
-// 遍历最多包含已保存的有限来源，不回到先前尝试过的来源形成循环。
+// 遍历当前策略快照的来源与池展开账号，不回到先前候选形成循环。
 // 用户勾选钱包就是付费回退授权，执行器不能另外插入隐含钱包来源。
 // 来源改变不改变请求模型；模型映射仅由平台既有渠道设置决定。
 // 用户要求不同模型的 Auto 选择属于另一层功能，不在这里猜测替代模型。
@@ -57,7 +56,15 @@ func ResourceRelay() gin.HandlerFunc {
 			resourceRelayError(c, "invalid_resource_policy", http.StatusInternalServerError)
 			return
 		}
-		c.Abort() // 阻断剩余handler，避免来源执行后又落到旧收费链。
+		// 原平台协议接管前只检查授权，余额与真实来源留给统一预扣入口。
+		// 预检不会冻结第一来源，保证钱包不足仍能按 Key 顺序使用订阅。
+		nextPlatform := func() {
+			if apiErr := service.ValidateResourcePlatformAccess(c); apiErr != nil {
+				resourceRelayError(c, string(apiErr.GetErrorCode()), apiErr.StatusCode)
+				return
+			}
+			c.Next()
+		}
 		format := types.RelayFormatOpenAI
 		switch c.Request.URL.Path {
 		case "/v1/responses":
@@ -66,7 +73,8 @@ func ResourceRelay() gin.HandlerFunc {
 			format = types.RelayFormatOpenAIResponsesCompaction
 		case "/v1/chat/completions":
 		default:
-			resourceRelayError(c, "resource_policy_endpoint_unsupported", http.StatusBadRequest)
+			// 图片、音频及其他平台协议继续原适配器，发送前仍须通过 Key 资金授权。
+			nextPlatform()
 			return
 		}
 		// 复用同一严格 JSON 入口，拒绝重复 model 键，避免目录校验和上游解析分歧。
@@ -97,9 +105,14 @@ func ResourceRelay() gin.HandlerFunc {
 			Background         bool   `json:"background"`
 			PreviousResponseID string `json:"previous_response_id"`
 		}
-		// 异步任务与上游持久会话需要来源绑定，首期不能允许自动切换账号。
-		if err := common.UnmarshalBodyReusable(c, &stateful); err != nil || stateful.Background || stateful.PreviousResponseID != "" {
-			resourceRelayError(c, "resource_policy_stateful_request_unsupported", http.StatusBadRequest)
+		// 异步任务与上游持久会话需要来源绑定，不能由同步挂靠分支切换账号。
+		if err := common.UnmarshalBodyReusable(c, &stateful); err != nil {
+			resourceRelayError(c, "invalid_request", http.StatusBadRequest)
+			return
+		}
+		// 持久会话与后台任务由原平台链处理；不让免费账号接管未绑定的状态。
+		if stateful.Background || stateful.PreviousResponseID != "" {
+			nextPlatform()
 			return
 		}
 		if _, err := helper.GetAndValidateRequest(c, format); err != nil {
@@ -145,7 +158,14 @@ func ResourceRelay() gin.HandlerFunc {
 				}
 				return
 			}
+			if skipped == "platform_handler_required" {
+				// 尚未发送上游，把当前及后续来源交给任务原链，保留宿主协议编排。
+				c.Set("oak.resource_policy", &model.ResourcePolicySnapshot{Revision: policy.Revision, Sources: slices.Clone(policy.Sources[index:])})
+				nextPlatform()
+				return
+			}
 			if skipped == "" { // 空原因表示已执行结束，不能继续遍历其他资源。
+				c.Abort()
 				return
 			}
 			reasons = append(reasons, fmt.Sprintf("%s:%d:%s", source.Kind, source.AccountID, skipped))
@@ -165,30 +185,13 @@ func resourceRelayError(c *gin.Context, code string, status int) {
 	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"type": "resource_error", "code": code, "message": i18n.T(c, i18n.MsgResourceRequestFailed, map[string]any{"Code": code})}})
 }
 
-// resourcePlatformAllowed 保留用户组、令牌组与平台倍率组的既有权限交集。
-// 挂靠不依赖这些组；平台候选必须在选择渠道前通过检查。
-// 空令牌分组继承用户分组，遵守平台已有的分组默认值。
-// 显式 auto 仍需出现在用户可用组中，不能通过自由排序增加组权限。
-// 非 auto 组还需有当前倍率定义，已下架组不能被策略持久引用复活。
-// 这只是平台权限校验，不把账号归属换算成平台组名称。
-// 管理员固定渠道的既有行为由选渠道器处理，但不会绕过此处资金来源选择。
-func resourcePlatformAllowed(c *gin.Context) bool {
-	group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup) // 使用鉴权解析的组，而非客户端正文的group。
-	if group == "" {
-		return true
-	}
-	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	_, allowed := service.GetUserUsableGroups(userGroup)[group]
-	return allowed && (group == "auto" || ratio_setting.ContainsGroupRatio(group))
-}
-
 // relayPlatformResource 只对发送前明确不可用的候选返回 skipped。
 // 进入 relayHandler 后，无论 429、超时还是断流，均不再跨来源重放。
-// 预算检查与实际预留分开：此处零预算预检省去不必要的渠道查询。
+// 价格解析之后再检查预算，平台免费模型不能被零余额提前拒绝。
 // 非零预算仍由数据库原子预留约束，不能依赖鉴权时的余额快照承诺可用。
 // 用户钱包金额与 Key 上限是两个约束，任何一个不足都不能透支执行新请求。
 // 渠道选择沿用模型、路径、自动组与会话亲和性规则，不另造渠道调度器。
-// 首期同步执行器不接任务插件，避免把异步提交结果误当成完整回答结算。
+// 任务插件交回宿主执行链，保留异步持久化和冻结来源后的结算。
 // 定价仍由 PrepareRequestBilling 产生，动态价格和倍率的可信来源没有变化。
 // ForcePreConsume 关闭信任用户旁路，跨来源回退必须建立在真实预留之上。
 // 预留来源通过请求上下文指定，用户旧 BillingPreference 不参与二次回退。
@@ -205,13 +208,16 @@ func resourcePlatformAllowed(c *gin.Context) bool {
 // 亲和性只在成功后更新，失败候选不能污染后续请求的渠道绑定。
 // 流已经输出时只能追加同协议错误事件，不能写第二份 HTTP 响应。
 func relayPlatformResource(c *gin.Context, source, modelName string, format types.RelayFormat, index int) (string, error) {
-	if !resourcePlatformAllowed(c) {
+	if !service.ResourcePlatformAllowed(c) {
 		return "group_forbidden", nil
 	}
-	// 预算耗尽只跳过付费候选，免费挂靠不受钱包/令牌预算约束。
-	if !c.GetBool("token_unlimited_quota") && c.GetInt("token_quota") <= 0 {
-		return "token_budget_exhausted", nil
+	// 插件声明的共享端点必须经过原宿主桥接，保留异步持久化与后台结算。
+	// 尚未发出上游请求，因此可以安全归还当前和后续平台候选。
+	if middleware.HasTaskPluginEndpoint(c.Request.Method, c.Request.URL.Path, modelName) {
+		return "platform_handler_required", nil
 	}
+	// 是否收费由真实价格决定；零预算不能在此误伤平台免费模型。
+	// 收费模型与 Key 上限交由统一原子预扣校验，不依赖鉴权余额快照。
 	constraints := service.GetChannelConstraints(c)
 	constraints.AddFilter(hostdto.ChannelFilter{Kind: hostdto.FilterRequestPath, RequestPath: c.Request.URL.Path})
 	channel, _, selectErr := service.SelectChannelForRequest(c, modelName, &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, constant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path})
@@ -221,9 +227,9 @@ func relayPlatformResource(c *gin.Context, source, modelName string, format type
 		}
 		return "", errors.New("platform_channel_selection_failed")
 	}
-	// 首期平台来源沿用同步内置适配器；任务插件不得意外被当成同步文本适配器。
+	// 任务专用渠道必须进入宿主任务桥接，不得意外使用内置同步文本适配器。
 	if channel.Type == constant.ChannelTypeTaskPlugin || channel.GetSetting().TaskPluginKey != "" {
-		return "protocol_unavailable", nil
+		return "platform_handler_required", nil
 	}
 	if err := middleware.SetupContextForSelectedChannel(c, channel, modelName); err != nil {
 		return "", errors.New("platform_channel_setup_failed")

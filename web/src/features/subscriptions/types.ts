@@ -142,8 +142,9 @@ export interface SubscriptionResetResult {
 // Self Subscription Data (user-facing)
 // ============================================================================
 
+// 本人订阅响应只暴露页面消费的套餐数据；调用顺序由具体 Key 的策略表示。
+// 保留完整历史与活跃集合，移除偏好字段不改变购买、续期或限购依据。
 export interface SelfSubscriptionData {
-  billing_preference: string
   subscriptions: UserSubscriptionRecord[]
   all_subscriptions: UserSubscriptionRecord[]
 }

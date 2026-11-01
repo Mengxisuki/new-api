@@ -324,7 +324,13 @@ func (token *Token) Update() (err error) {
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog(common.LogText("failed to invalidate token cache before update: %s", cacheErr.Error()))
 	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+	return token.updateFields(DB)
+}
+
+// updateFields 保持已有字段白名单，普通更新与策略原子更新共用一处实现。
+// 查询条件额外限定本人用户，不更新密钥、历史使用量或其他内部字段。
+func (token *Token) updateFields(tx *gorm.DB) error {
+	return tx.Model(token).Where("user_id = ?", token.UserId).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
 		"allow_user_quota_query").Updates(token).Error
 }

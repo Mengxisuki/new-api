@@ -190,7 +190,7 @@ func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjo
 	return
 }
 
-func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyResponse {
+func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) (result *dto.MidjourneyResponse) {
 	var swapFaceRequest dto.SwapFaceRequest
 	err := common.UnmarshalBodyReusable(c, &swapFaceRequest)
 	if err != nil {
@@ -212,20 +212,22 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(info.UserId, false)
-	if err != nil {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: err.Error(),
-		}
+	// 发送前按当前 Key 顺序真实预扣，钱包不足可选择已授权的订阅。
+	// 零价动作同样验证平台权限，不能绕过空策略或仅挂靠策略。
+	if err := service.PreConsumeMidjourneyBilling(c, info, priceData.Quota, true); err != nil {
+		logger.LogError(c, "Midjourney funding authorization failed: "+err.Error())
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_failed")
 	}
-
-	if userQuota-priceData.Quota < 0 {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: "quota_not_enough",
+	// 任意未接受、持久化失败或提前返回都释放本次会话预留。
+	// 成功保存并等额结算后会话已关闭，异步失败由任务原来源退款。
+	defer func() {
+		if err := service.RefundMidjourneyPreConsume(info); err != nil {
+			common.SysError("Midjourney reservation release failed: " + err.Error())
+			if !c.Writer.Written() {
+				result = service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_refund_failed")
+			}
 		}
-	}
+	}()
 	requestURL := getMjRequestPath(c.Request.URL.String())
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
@@ -258,10 +260,11 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		info,
 		midjourneyTask,
 		priceData.Quota,
-		mjResp.StatusCode == http.StatusOK && midjResponse.Code == 1,
+		accepted && midjResponse.Code == 1,
 	)
 	if billingErr != nil {
 		common.SysLog(common.LogText("error consuming Midjourney quota: %s", billingErr.Error()))
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_failed")
 	}
 	err = midjourneyTask.Insert()
 	if err != nil {
@@ -270,6 +273,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	billingApplied, billingErr := service.SettleMidjourneyTaskBilling(info, midjourneyTask, billingPrepared)
 	if billingErr != nil {
 		common.SysLog(common.LogText("error settling Midjourney quota: %s", billingErr.Error()))
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_failed")
 	}
 	if accepted {
 		service.MarkRequestPolicySuccess(c, nil)
@@ -283,6 +287,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			"action":      constant.MjActionSwapFace,
 		})}
 		other := service.GenerateMjOtherInfo(info, priceData)
+		service.AppendResourceLogInfo(c, other) // 日志记录实际冻结来源，而不是默认钱包。
 		service.AppendRelayLogAdminInfo(c, info, other)
 		model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 			ChannelId: billingChannelId,
@@ -407,7 +412,7 @@ func RelayMidjourneyTask(c *gin.Context, relayMode int) *dto.MidjourneyResponse 
 	return nil
 }
 
-func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dto.MidjourneyResponse {
+func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) (result *dto.MidjourneyResponse) {
 	consumeQuota := true
 	var midjRequest dto.MidjourneyRequest
 	err := common.UnmarshalBodyReusable(c, &midjRequest)
@@ -535,20 +540,22 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
-	if err != nil {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: err.Error(),
-		}
+	// 发送前按当前 Key 顺序真实预扣，钱包不足可选择已授权的订阅。
+	// 零价动作同样验证平台权限，不能绕过空策略或仅挂靠策略。
+	if err := service.PreConsumeMidjourneyBilling(c, relayInfo, priceData.Quota, consumeQuota); err != nil {
+		logger.LogError(c, "Midjourney funding authorization failed: "+err.Error())
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_failed")
 	}
-
-	if consumeQuota && userQuota-priceData.Quota < 0 {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: "quota_not_enough",
+	// 任意未接受、持久化失败或提前返回都释放本次会话预留。
+	// 成功保存并等额结算后会话已关闭，异步失败由任务原来源退款。
+	defer func() {
+		if err := service.RefundMidjourneyPreConsume(relayInfo); err != nil {
+			common.SysError("Midjourney reservation release failed: " + err.Error())
+			if !c.Writer.Written() {
+				result = service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_refund_failed")
+			}
 		}
-	}
+	}()
 
 	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, relayInfo.UsingGroup)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
@@ -633,10 +640,11 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		relayInfo,
 		midjourneyTask,
 		priceData.Quota,
-		consumeQuota && midjResponseWithStatus.StatusCode == http.StatusOK,
+		consumeQuota && accepted,
 	)
 	if billingErr != nil {
 		common.SysLog(common.LogText("error consuming Midjourney quota: %s", billingErr.Error()))
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_failed")
 	}
 	err = midjourneyTask.Insert()
 	if err != nil {
@@ -648,6 +656,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	billingApplied, billingErr := service.SettleMidjourneyTaskBilling(relayInfo, midjourneyTask, billingPrepared)
 	if billingErr != nil {
 		common.SysLog(common.LogText("error settling Midjourney quota: %s", billingErr.Error()))
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_failed")
 	}
 	if accepted {
 		service.MarkRequestPolicySuccess(c, nil)
@@ -662,6 +671,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			"id":          midjResponse.Result,
 		})}
 		other := service.GenerateMjOtherInfo(relayInfo, priceData)
+		service.AppendResourceLogInfo(c, other) // 异步任务的来源与消费详情保持一致。
 		service.AppendRelayLogAdminInfo(c, relayInfo, other)
 		model.RecordConsumeLog(c, relayInfo.UserId, model.RecordConsumeLogParams{
 			ChannelId: billingChannelId,

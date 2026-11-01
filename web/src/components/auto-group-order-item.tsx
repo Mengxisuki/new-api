@@ -21,6 +21,7 @@ import {
   ArrowUp01Icon,
   Cancel01Icon,
   Drag01Icon,
+  ArrowRight01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Reorder, useDragControls } from 'motion/react'
@@ -28,6 +29,7 @@ import type { KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 type AutoGroupOrderItemProps = {
   group: string
@@ -40,13 +42,16 @@ type AutoGroupOrderItemProps = {
   leading?: ReactNode
   children?: ReactNode
   onMove: (index: number, direction: 'up' | 'down') => void
-  onRemove: (group: string) => void
+  onRemove?: (group: string) => void
+  // 横向面包屑复用相同手柄，纵向分组保持原交互。
+  orientation?: 'horizontal' | 'vertical'
 }
 
 export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
   const { t } = useTranslation()
   const dragControls = useDragControls()
   const label = props.label ?? props.group
+  const horizontal = props.orientation === 'horizontal'
 
   const handleDragStart = (event: PointerEvent<HTMLButtonElement>) => {
     if (props.disabled) return // 不能通过手柄绕过只读策略。
@@ -55,11 +60,11 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
 
   const handleDragKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (props.disabled) return // 鼠标、键盘和按钮遵循同一禁用状态。
-    if (event.key === 'ArrowUp') {
+    if (event.key === (horizontal ? 'ArrowLeft' : 'ArrowUp')) {
       event.preventDefault()
       props.onMove(props.index, 'up')
     }
-    if (event.key === 'ArrowDown') {
+    if (event.key === (horizontal ? 'ArrowRight' : 'ArrowDown')) {
       event.preventDefault()
       props.onMove(props.index, 'down')
     }
@@ -71,7 +76,12 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
       dragListener={false}
       dragMomentum={false}
       dragControls={dragControls}
-      className='bg-background relative flex min-w-0 items-center gap-2 rounded-lg border p-2'
+      // 横向项不压缩，窄屏由父容器滚动；箭头只表达阅读顺序。
+      // 手柄在两种布局下都支持键盘，不能依赖指针拖动。
+      className={cn(
+        'bg-background relative flex min-w-0 items-center gap-2 rounded-lg border p-2',
+        horizontal && 'shrink-0 gap-1 rounded-md px-1 py-0.5'
+      )}
     >
       <Button
         type='button'
@@ -93,50 +103,62 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
         </span>
         {props.children}
       </div>
-      <div className='flex shrink-0 gap-1'>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          disabled={props.disabled || props.index === 0}
-          aria-label={t('Move {{group}} up', { group: label })}
-          onClick={() => props.onMove(props.index, 'up')}
-        >
-          <HugeiconsIcon
-            icon={ArrowUp01Icon}
-            strokeWidth={2}
-            aria-hidden='true'
-          />
-        </Button>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          disabled={props.disabled || props.index === props.count - 1}
-          aria-label={t('Move {{group}} down', { group: label })}
-          onClick={() => props.onMove(props.index, 'down')}
-        >
-          <HugeiconsIcon
-            icon={ArrowDown01Icon}
-            strokeWidth={2}
-            aria-hidden='true'
-          />
-        </Button>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          disabled={props.disabled}
-          aria-label={t('Remove {{group}}', { group: label })}
-          onClick={() => props.onRemove(props.group)}
-        >
-          <HugeiconsIcon
-            icon={Cancel01Icon}
-            strokeWidth={2}
-            aria-hidden='true'
-          />
-        </Button>
-      </div>
+      {!horizontal && (
+        <div className='flex shrink-0 gap-1'>
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon-sm'
+            disabled={props.disabled || props.index === 0}
+            aria-label={t('Move {{group}} up', { group: label })}
+            onClick={() => props.onMove(props.index, 'up')}
+          >
+            <HugeiconsIcon
+              icon={ArrowUp01Icon}
+              strokeWidth={2}
+              aria-hidden='true'
+            />
+          </Button>
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon-sm'
+            disabled={props.disabled || props.index === props.count - 1}
+            aria-label={t('Move {{group}} down', { group: label })}
+            onClick={() => props.onMove(props.index, 'down')}
+          >
+            <HugeiconsIcon
+              icon={ArrowDown01Icon}
+              strokeWidth={2}
+              aria-hidden='true'
+            />
+          </Button>
+          {props.onRemove && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon-sm'
+              disabled={props.disabled}
+              aria-label={t('Remove {{group}}', { group: label })}
+              onClick={() => props.onRemove?.(props.group)}
+            >
+              <HugeiconsIcon
+                icon={Cancel01Icon}
+                strokeWidth={2}
+                aria-hidden='true'
+              />
+            </Button>
+          )}
+        </div>
+      )}
+      {/* 分隔符跟随来源移动，最后一项不显示尾箭头。 */}
+      {horizontal && props.index < props.count - 1 && (
+        <HugeiconsIcon
+          icon={ArrowRight01Icon}
+          aria-hidden='true'
+          className='text-muted-foreground pointer-events-none absolute -right-5 size-4'
+        />
+      )}
     </Reorder.Item>
   )
 }

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
+import { sourceSchema } from '@/features/hosting/types'
 import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
 
 import { DEFAULT_GROUP } from '../constants'
@@ -34,6 +35,8 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
 
   return z
     .object({
+      // 空列表和全部关闭表示明确拒绝所有来源，不能强迫旧 Key 启用钱包。
+      resource_sources: z.array(sourceSchema),
       name: z.string().min(1, t('Please enter a name')),
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().nullable(),
@@ -105,6 +108,12 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 // ============================================================================
 
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
+  // 默认顺序只用于新建或用户明确恢复，不覆盖旧 Key。
+  resource_sources: [
+    { kind: 'wallet', enabled: true },
+    { kind: 'subscription', enabled: true },
+    { kind: 'hosting_pool', enabled: true },
+  ],
   name: '',
   remain_quota_dollars: 10,
   expired_time: null,
@@ -179,6 +188,9 @@ export function transformApiKeyToFormDefaults(
   const autoGroupsMode = storedAutoGroups.length > 0 ? 'custom' : 'inherit'
 
   return {
+    // 详情必须提供策略投影；缺失时显示空值并由抽屉阻止提交。
+    // 不以新建默认值猜测存量 Key 的资金授权。
+    resource_sources: apiKey.resource_policy?.sources ?? [],
     name: apiKey.name,
     remain_quota_dollars: apiKey.unlimited_quota
       ? 0

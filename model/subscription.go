@@ -1180,11 +1180,13 @@ func AdminResetPlanSubscriptions(planId int, advanceResetTime bool) (*Subscripti
 }
 
 type SubscriptionPreConsumeResult struct {
-	UserSubscriptionId int
-	PreConsumed        int64
-	AmountTotal        int64
-	AmountUsedBefore   int64
-	AmountUsedAfter    int64
+	// 周期快照供异步任务原来源退款，不能从回调时的当前套餐推断。
+	SubscriptionResetTime int64
+	UserSubscriptionId    int
+	PreConsumed           int64
+	AmountTotal           int64
+	AmountUsedBefore      int64
+	AmountUsedAfter       int64
 }
 
 // ExpireDueSubscriptions marks expired subscriptions and handles group downgrade.
@@ -1292,14 +1294,17 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 
 // SubscriptionPreConsumeRecord stores idempotent pre-consume operations per request.
 type SubscriptionPreConsumeRecord struct {
-	Id                 int    `json:"id"`
-	RequestId          string `json:"request_id" gorm:"type:varchar(64);uniqueIndex"`
-	UserId             int    `json:"user_id" gorm:"index"`
-	UserSubscriptionId int    `json:"user_subscription_id" gorm:"index"`
-	PreConsumed        int64  `json:"pre_consumed" gorm:"type:bigint;not null;default:0"`
-	Status             string `json:"status" gorm:"type:varchar(32);index"` // consumed/refunded
-	CreatedAt          int64  `json:"created_at" gorm:"bigint"`
-	UpdatedAt          int64  `json:"updated_at" gorm:"bigint;index"`
+	// 与预扣同事务记录周期，幂等重放也必须返回原来的快照。
+	// nil 表示升级前没有快照；真实周期零必须保存为非空零值。
+	SubscriptionResetTime *int64 `json:"-"`
+	Id                    int    `json:"id"`
+	RequestId             string `json:"request_id" gorm:"type:varchar(64);uniqueIndex"`
+	UserId                int    `json:"user_id" gorm:"index"`
+	UserSubscriptionId    int    `json:"user_subscription_id" gorm:"index"`
+	PreConsumed           int64  `json:"pre_consumed" gorm:"type:bigint;not null;default:0"`
+	Status                string `json:"status" gorm:"type:varchar(32);index"` // consumed/refunded
+	CreatedAt             int64  `json:"created_at" gorm:"bigint"`
+	UpdatedAt             int64  `json:"updated_at" gorm:"bigint;index"`
 }
 
 func (r *SubscriptionPreConsumeRecord) BeforeCreate(tx *gorm.DB) error {
@@ -1386,6 +1391,9 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				return err
 			}
 			returnValue.UserSubscriptionId = sub.Id
+			if existing.SubscriptionResetTime != nil {
+				returnValue.SubscriptionResetTime = *existing.SubscriptionResetTime
+			}
 			returnValue.PreConsumed = existing.PreConsumed
 			returnValue.AmountTotal = sub.AmountTotal
 			returnValue.AmountUsedBefore = sub.AmountUsed
@@ -1421,11 +1429,12 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				}
 			}
 			record := &SubscriptionPreConsumeRecord{
-				RequestId:          requestId,
-				UserId:             userId,
-				UserSubscriptionId: sub.Id,
-				PreConsumed:        amount,
-				Status:             "consumed",
+				SubscriptionResetTime: common.GetPointer(sub.LastResetTime),
+				RequestId:             requestId,
+				UserId:                userId,
+				UserSubscriptionId:    sub.Id,
+				PreConsumed:           amount,
+				Status:                "consumed",
 			}
 			if err := tx.Create(record).Error; err != nil {
 				var dup SubscriptionPreConsumeRecord
@@ -1434,6 +1443,9 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 						return errors.New("subscription pre-consume already refunded")
 					}
 					returnValue.UserSubscriptionId = sub.Id
+					if dup.SubscriptionResetTime != nil {
+						returnValue.SubscriptionResetTime = *dup.SubscriptionResetTime
+					}
 					returnValue.PreConsumed = dup.PreConsumed
 					returnValue.AmountTotal = sub.AmountTotal
 					returnValue.AmountUsedBefore = sub.AmountUsed
@@ -1447,6 +1459,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				return err
 			}
 			returnValue.UserSubscriptionId = sub.Id
+			returnValue.SubscriptionResetTime = sub.LastResetTime
 			returnValue.PreConsumed = amount
 			returnValue.AmountTotal = sub.AmountTotal
 			returnValue.AmountUsedBefore = usedBefore
@@ -1461,7 +1474,12 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 	return returnValue, nil
 }
 
-// RefundSubscriptionPreConsume is idempotent and refunds pre-consumed subscription quota by requestId.
+// RefundSubscriptionPreConsume 用原请求编号幂等释放订阅预扣。
+// 所有写入共用事务，金额与记录状态要么一起成功，要么一起回滚。
+// 不使用当前用户偏好选套餐，原请求编号已经固定真实资金来源。
+// 周期推进后旧预扣不减少新周期用量，但仍完成原记录的释放状态。
+// 历史NULL快照没有可信周期证据，继续其既有退款解释。
+// 同一请求的再次释放只读取终态，不能再增加一份可用额度。
 func RefundSubscriptionPreConsume(requestId string) error {
 	if strings.TrimSpace(requestId) == "" {
 		return errors.New("requestId is empty")
@@ -1472,18 +1490,27 @@ func RefundSubscriptionPreConsume(requestId string) error {
 			Where("request_id = ?", requestId).First(&record).Error; err != nil {
 			return err
 		}
-		if record.Status == "refunded" {
+		if record.Status == "refunded" { // 并发调用会等待前一事务提交后看到该终态。
 			return nil
 		}
-		if record.PreConsumed <= 0 {
+		if record.PreConsumed <= 0 { // 没有正向预扣时不产生反向资金调整。
 			record.Status = "refunded"
-			return tx.Save(&record).Error
+			return tx.Save(&record).Error // 保存失败不能留下已释放金额和旧状态。
 		}
-		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
+		// 释放与幂等标记必须共用事务；嵌套全局 DB 事务会在单连接 SQLite 死锁。
+		// 同时锁原订阅，不能让重置恰好发生在周期检查与减额之间。
+		var sub UserSubscription
+		if err := lockForUpdate(tx).Where("id = ?", record.UserSubscriptionId).First(&sub).Error; err != nil {
 			return err
 		}
+		// 历史记录无快照保留原合同；真实零周期也不能退到后来的非零周期。
+		if record.SubscriptionResetTime == nil || sub.LastResetTime == *record.SubscriptionResetTime {
+			if err := tx.Model(&sub).Update("amount_used", max(sub.AmountUsed-record.PreConsumed, 0)).Error; err != nil {
+				return err
+			}
+		}
 		record.Status = "refunded"
-		return tx.Save(&record).Error
+		return tx.Save(&record).Error // 保存失败不能留下已释放金额和旧状态。
 	})
 }
 

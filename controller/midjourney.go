@@ -48,6 +48,14 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 	taskM := make(map[string]*model.Midjourney)
 	nullTaskIds := make([]int, 0)
 	for _, task := range tasks {
+		// 新来源任务已经确认失败时，重试的是本地退款，不再查询原厂状态。
+		// 上次退款可能因数据库故障未提交；事务 marker 会防止重复入账。
+		// 渠道已被删除或原厂不可达，也不能阻断已确定失败任务的资金归还。
+		// 旧任务没有冻结来源，继续沿用原合同，不猜测它当时使用的资金。
+		if task.BillingSource != "" && task.Status == "FAILURE" && task.Quota > 0 {
+			service.RefundMidjourneyQuota(ctx, task, "Composition failed")
+			continue
+		}
 		if task.MjId == "" {
 			// 统计失败的未完成任务
 			nullTaskIds = append(nullTaskIds, task.Id)

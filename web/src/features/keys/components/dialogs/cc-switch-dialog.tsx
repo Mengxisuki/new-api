@@ -38,6 +38,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 const APP_CONFIGS = {
   claude: {
     label: 'Claude',
+    protocol: 'claude',
     defaultName: 'My Claude',
     modelFields: [
       { key: 'model', labelKey: 'Primary Model', required: true },
@@ -48,11 +49,13 @@ const APP_CONFIGS = {
   },
   codex: {
     label: 'Codex',
+    protocol: 'responses',
     defaultName: 'My Codex',
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
   gemini: {
     label: 'Gemini',
+    protocol: 'gemini',
     defaultName: 'My Gemini',
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
@@ -108,10 +111,10 @@ interface Props {
 // 策略尚未读取或读取失败时不能假定旧合同。
 // 启用统一策略后只读取该 Key 的有效模型交集。
 // 该交集已经应用来源权限和 Key 模型限制，前端不再扩大范围。
-// 挂靠已连接不等于可导出，需要模型与协议有真实验证记录。
-// 首期统一资源只验证 Codex 的 Responses 配置。
-// Claude 和 Gemini 仍对旧合同开放，对统一策略暂时禁用。
-// 禁用用可访问状态表达，避免只在点击后才发现不支持。
+// 平台来源沿用实际渠道协议，不能因没有挂靠实测而隐藏原有客户端。
+// 私有挂靠仍只以真实 Responses 验证记录开放 Codex 导出。
+// 同名模型的总协议与平台协议分开判断，避免不同来源互相借用验证事实。
+// Claude、Codex、Gemini 均可切换，当前协议无授权模型时显式解释原因。
 // 界面切换 Key 时清空模型和应用选择，避免旧权限状态残留。
 // 模型目录变化后提交前重新核对所有已选字段。
 // 可选备用模型同样不能越过当前 Key 的目录。
@@ -121,7 +124,7 @@ interface Props {
 // 查询键包含 Key 编号，避免不同令牌共享一份资源目录。
 // 打开弹窗才查询，不让后台未使用的导出入口持续请求服务。
 // 查询错误显示重试，不把失败当成空目录再推荐默认模型。
-// 模型缺少 verified 时按未验证处理，不能以协议存在代替。
+// 私有挂靠缺少 verified 时按未验证处理，平台渠道由专属协议目录授权。
 // 原有应用名称与默认配置名不参与授权判断。
 // 改变应用时清空原模型，避免 Claude 的备用字段带入 Codex。
 // 配置中的模型名必须是实际目录 ID，不从显示标签生成。
@@ -168,8 +171,8 @@ export function CCSwitchDialog(props: Props) {
     queryFn: () => getTokenResourceModels(props.tokenId as number),
     enabled: props.open && unified && props.tokenId !== undefined,
   })
-  // 首期只验证 Responses 客户端，不从 OpenAI 风格模型名推断其他协议。
-  // 此限制只作用于统一策略，原有 Claude/Gemini 导出继续沿用既有行为。
+  // 历史 Key 沿用原用户目录，不借本次修复改变存量导出合同。
+  // 新 Key 的三类客户端仍只使用自己的协议目录，不能扩大到历史全站缓存。
   const { data: modelsData } = useQuery({
     queryKey: ['user-models-ccswitch'],
     queryFn: async () => requireServerSuccess(await getUserModels()),
@@ -179,21 +182,26 @@ export function CCSwitchDialog(props: Props) {
     staleTime: 5 * 60 * 1000,
   })
 
-  // 选项从当前应用协议与服务端验证事实共同过滤。
-  // 统一策略首期不支持的应用直接没有可导出选项。
-  // 模型名即使看起来像 GPT，也不能推断它经过 Responses 验证。
-  // 协议存在而 verified=false 的发现项仍被排除。
+  // 每个客户端固定映射实际请求协议，不按模型名称猜测能力。
+  // 平台 verified=false 仅表示未做挂靠实测，不妨碍已配置协议的正常导出。
+  // platform_protocols 是当前 Key 启用的平台来源能力，不是全站能力。
+  // 仅挂靠来源仍须模型实测通过，且只能导出已验收的 Responses 配置。
+  // 总协议并集中的 Claude 不能替另一来源的 Responses 验证背书。
+  // 没有平台协议字段的旧响应保持保守，不猜测钱包来源可用能力。
   // 旧目录缓存可能同时存在，但 unified 分支不能读取它。
   // 所有选项使用稳定 ID，显示文字不改写请求模型名。
   // 依赖包含 Key 策略和目录，变化后重新计算，不冻结首次加载结果。
   // 待定策略返回空选项，避免权限读取过程中的瞬时越权推荐。
   const modelOptions = useMemo(() => {
     if (unified) {
-      if (app !== 'codex') return []
+      const protocol = APP_CONFIGS[app].protocol
       return (keyModels.data?.models ?? [])
         .filter(
           (model) =>
-            model.verified === true && model.protocols?.includes('responses')
+            model.platform_protocols?.includes(protocol) ||
+            (app === 'codex' &&
+              model.verified === true &&
+              model.protocols?.includes('responses'))
         )
         .map((model) => ({ value: model.id, label: model.id }))
     }
@@ -210,7 +218,7 @@ export function CCSwitchDialog(props: Props) {
   ])
 
   // 打开或更换 Key 后重置选择，避免导出上一个令牌的模型。
-  // 策略从待定转为统一后默认选择已验证的 Codex 应用。
+  // 策略从待定转为统一后沿用原 Codex 默认，其他应用可由用户显式切换。
   // 旧合同继续使用原 Claude 默认，不改变存量用户习惯。
   // 该效果只更新界面草稿，不写入 Key 配置或资源策略。
   // 每次打开恢复默认名称，延续原弹窗行为。
@@ -247,7 +255,7 @@ export function CCSwitchDialog(props: Props) {
   // 所有非空模型字段必须仍属于当前目录。
   // 空主模型保留既有提示，用户需要明确选择而非使用猜测默认值。
   // 有效性失败不会调用 window.open，避免输出不受支持的配置。
-  // 模型验证与密钥前缀规范化是不同职责，不能互相替代。
+  // 协议能力、挂靠验证与密钥前缀规范化是不同职责，不能互相替代。
   // 一次点击只生成一个外部协议请求，关闭弹窗不意味着模型已运行。
   // 外部 CC Switch 是否启动由用户设备处理，不伪造安装成功状态。
   // 接口地址由既有站点地址逻辑处理，当前变更不另建域名配置。
@@ -313,7 +321,7 @@ export function CCSwitchDialog(props: Props) {
         {unified && keyModels.isSuccess && !modelOptions.length && (
           <p role='status'>
             {t(
-              'No model has a verified Responses connection for this key. Test the account before exporting configuration.'
+              'No authorized model supports this application for this API key.'
             )}
           </p>
         )}
@@ -331,11 +339,7 @@ export function CCSwitchDialog(props: Props) {
               ][]
             ).map(([key, cfg]) => (
               <div key={key} className='flex items-center gap-2'>
-                <RadioGroupItem
-                  value={key}
-                  id={`app-${key}`}
-                  disabled={unified && key !== 'codex'}
-                />
+                <RadioGroupItem value={key} id={`app-${key}`} />
                 <Label htmlFor={`app-${key}`} className='cursor-pointer'>
                   {cfg.label}
                 </Label>

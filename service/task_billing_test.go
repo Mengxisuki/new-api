@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -1809,4 +1810,76 @@ func TestSettle_TokenRecalcFallsBackToCompletionTokens(t *testing.T) {
 			assert.Equal(t, testCase.wantQuota, task.Quota)
 		})
 	}
+}
+
+// 订阅预扣退款必须在同一事务释放额度并更新幂等记录。
+// 单连接真实 SQLite 能发现嵌套全局事务导致的等待，外层超时保证失败可见。
+// 错误注入只阻止最后的记录保存，不替换真实资金更新。
+// 回滚后同时检查金额与状态，不能只凭返回错误推断原子性。
+// 预扣幂等重放必须返回原周期，不能从已重置订阅重新构造快照。
+// 新周期已有别的请求时，旧预扣退款不释放那些请求消耗的额度。
+// 历史零快照记录仍按旧合同退款，不追溯推断未知周期。
+func TestMidjourneySubscriptionPreConsumeRefundAtomicPeriod(t *testing.T) {
+	truncate(t) // 真实持久记录在结束时清理，不依赖执行顺序。
+	require.NoError(t, model.DB.AutoMigrate(&model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+	seedUser(t, 7201, 0) // 零钱包排除把错误退款误落钱包的可能。
+	// 创建真实计划以经过模型的候选选择、锁与预扣记录写入。
+	plan := &model.SubscriptionPlan{Title: "mj-refund-period", Enabled: true, TotalAmount: 1000, QuotaResetPeriod: "never"}
+	require.NoError(t, model.DB.Create(plan).Error)
+	t.Cleanup(func() {
+		model.DB.Delete(plan)
+		model.DB.Where("user_id = ?", 7201).Delete(&model.SubscriptionPreConsumeRecord{})
+	})
+	seedSubscription(t, 7201, 7201, 1000, 0)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", 7201).Updates(map[string]any{"plan_id": plan.Id, "last_reset_time": 100}).Error)
+	result, err := model.PreConsumeUserSubscription("mj-atomic-period", 7201, "mj_imagine", 0, 100)
+	require.NoError(t, err)
+	require.EqualValues(t, 100, result.SubscriptionResetTime) // 周期读取必须发生在真实预扣事务中。
+	// 最后一步持久标记失败时，前面的订阅加额必须随整个事务撤销。
+	injected := errors.New("refund marker unavailable")
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("mj-sub-refund-failure", func(tx *gorm.DB) {
+		if tx.Statement.Table == "subscription_pre_consume_records" {
+			tx.AddError(injected)
+		}
+	}))
+	t.Cleanup(func() { model.DB.Callback().Update().Remove("mj-sub-refund-failure") })
+	require.ErrorIs(t, model.RefundSubscriptionPreConsume("mj-atomic-period"), injected)
+	model.DB.Callback().Update().Remove("mj-sub-refund-failure")
+	var sub model.UserSubscription
+	var record model.SubscriptionPreConsumeRecord
+	require.NoError(t, model.DB.First(&sub, 7201).Error)
+	require.NoError(t, model.DB.Where("request_id = ?", "mj-atomic-period").First(&record).Error)
+	assert.EqualValues(t, 100, sub.AmountUsed)
+	assert.Equal(t, "consumed", record.Status) // 失败后仍可凭同一requestId恢复。
+	// 模拟下一周发生新的70额度消费；旧任务与这个消费没有资金关系。
+	require.NoError(t, model.DB.Model(&sub).Updates(map[string]any{"last_reset_time": 200, "amount_used": 70}).Error)
+	replay, err := model.PreConsumeUserSubscription("mj-atomic-period", 7201, "mj_imagine", 0, 100)
+	require.NoError(t, err)
+	assert.EqualValues(t, 100, replay.SubscriptionResetTime) // 幂等重放不能改写历史周期归属。
+	// 原UUID可重复完成退款，但不能向当前周期释放旧的100额度。
+	require.NoError(t, model.RefundSubscriptionPreConsume("mj-atomic-period"))
+	require.NoError(t, model.RefundSubscriptionPreConsume("mj-atomic-period"))
+	require.NoError(t, model.DB.First(&sub, 7201).Error)
+	assert.EqualValues(t, 70, sub.AmountUsed)
+	require.NoError(t, model.DB.First(&record, record.Id).Error)
+	assert.Equal(t, "refunded", record.Status) // 第二次调用依赖此持久状态拒绝重复加额。
+	// 真实周期零不是历史缺失：首次周期推进后同样不能释放新消费。
+	require.NoError(t, model.DB.Model(&sub).Updates(map[string]any{"last_reset_time": 0, "amount_used": 0}).Error)
+	zeroPeriod, err := model.PreConsumeUserSubscription("mj-zero-period", 7201, "mj_imagine", 0, 100)
+	require.NoError(t, err)
+	require.Zero(t, zeroPeriod.SubscriptionResetTime)
+	var zeroRecord model.SubscriptionPreConsumeRecord
+	require.NoError(t, model.DB.Where("request_id = ?", "mj-zero-period").First(&zeroRecord).Error)
+	require.NotNil(t, zeroRecord.SubscriptionResetTime) // 非空零快照与升级前NULL有不同的合同。
+	require.Zero(t, *zeroRecord.SubscriptionResetTime)
+	require.NoError(t, model.DB.Model(&sub).Updates(map[string]any{"last_reset_time": 300, "amount_used": 70}).Error)
+	require.NoError(t, model.RefundSubscriptionPreConsume("mj-zero-period"))
+	require.NoError(t, model.DB.First(&sub, 7201).Error)
+	assert.EqualValues(t, 70, sub.AmountUsed) // 首次周期也不能被旧预扣金额抵扣。
+	// 已发布老记录没有周期快照，保持其已约定的原订阅退款解释。
+	legacy := &model.SubscriptionPreConsumeRecord{RequestId: "mj-legacy-period", UserId: 7201, UserSubscriptionId: 7201, PreConsumed: 20, Status: "consumed"}
+	require.NoError(t, model.DB.Create(legacy).Error)
+	require.NoError(t, model.RefundSubscriptionPreConsume(legacy.RequestId))
+	require.NoError(t, model.DB.First(&sub, 7201).Error)
+	assert.EqualValues(t, 50, sub.AmountUsed) // 老记录沿用原解释，不因新增字段丢失退款。
 }

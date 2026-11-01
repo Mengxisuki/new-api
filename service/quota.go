@@ -89,15 +89,6 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if relayInfo.UsePrice {
 		return nil
 	}
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
-	if err != nil {
-		return err
-	}
-
-	token, err := model.GetTokenByKey(strings.TrimPrefix(relayInfo.TokenKey, "sk-"), false)
-	if err != nil {
-		return err
-	}
 
 	modelName := relayInfo.OriginModelName
 	textInputTokens := usage.InputTokenDetails.TextTokens
@@ -137,6 +128,27 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
+
+	// 实时会话传入累计 usage，只补足已冻结资金来源的累计预留。
+	// 最后结算同一会话一次，避免逐事件钱包扣款叠加最终结算。
+	// 订阅不足必须结束当前会话，不能在输出后切换到钱包。
+	// 会话中记录的预留量包含最初估算，累计消费低于该值时无需再次扣款。
+	// 请求结束后 SettleBilling 只调整实际总量与预留的差，不按事件重新收费。
+	// 这也让零余额钱包但订阅充足的连接继续使用其已授权的资金来源。
+	if relayInfo.Billing != nil {
+		return relayInfo.Billing.ReserveBeforeSubmit(quota)
+	}
+	// 没有统一会话的历史调用保留原增量钱包合同，不把累计量送入该分支。
+
+	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	if err != nil {
+		return err
+	}
+
+	token, err := model.GetTokenByKey(strings.TrimPrefix(relayInfo.TokenKey, "sk-"), false)
+	if err != nil {
+		return err
+	}
 
 	if userQuota < quota {
 		return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
@@ -193,8 +205,10 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  modelName,
-		UsePrice:   usePrice,
+		ModelName: modelName,
+		UsePrice:  usePrice,
+		// 按次计费必须带冻结价格，否则会把有效预扣错误结算为零。
+		ModelPrice: modelPrice,
 		ModelRatio: modelRatio,
 		GroupRatio: groupRatio,
 	}
@@ -332,8 +346,10 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 			TextTokens:  textOutTokens,
 			AudioTokens: audioOutTokens,
 		},
-		ModelName:  billingModelName,
-		UsePrice:   usePrice,
+		ModelName: billingModelName,
+		UsePrice:  usePrice,
+		// 与预扣使用同一价格快照，不能因音频计费分支漏字段而全额退款。
+		ModelPrice: modelPrice,
 		ModelRatio: modelRatio,
 		GroupRatio: groupRatio,
 	}

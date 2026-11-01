@@ -256,7 +256,7 @@ export function DataTableRowActions<TData>({
         <DropdownMenuItem
           onClick={() => {
             setCurrentRow(apiKey)
-            setOpen('resource-policy')
+            setOpen('update')
           }}
         >
           {t('Usage order')}

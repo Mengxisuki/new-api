@@ -7838,6 +7838,18 @@
     "Complete authorization": "Complete authorization",
     "Generating authorization link...": "Generating authorization link...",
     "Unable to retrieve the authorization link. Start again to generate a new one.": "Unable to retrieve the authorization link. Start again to generate a new one.",
-    "Enter the authorization link or code.": "Enter the authorization link or code."
+    "Enter the authorization link or code.": "Enter the authorization link or code.",
+    "Personal accounts": "Personal accounts",
+    "Personal account #{{id}}": "Personal account #{{id}}",
+    "Enable {{source}}": "Enable {{source}}",
+    "Enable at least one resource source.": "Enable at least one resource source.",
+    "Drag to reorder, or focus a handle and use the left and right arrow keys.": "Drag to reorder, or focus a handle and use the left and right arrow keys.",
+    "Personal accounts use your connected accounts for free. Disabled resources are never used.": "Personal accounts use your connected accounts for free. Disabled resources are never used.",
+    "Enable all three resources in the default order": "Enable all three resources in the default order",
+    "Configure resource priority in each API key.": "Configure resource priority in each API key.",
+    "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.": "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.",
+    "No authorized model supports this application for this API key.": "No authorized model supports this application for this API key.",
+    "Codex model": "Codex model",
+    "All resource sources are disabled. Requests with this key will be rejected.": "All resource sources are disabled. Requests with this key will be rejected."
   }
 }

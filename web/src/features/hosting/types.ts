@@ -25,7 +25,7 @@ import { z } from 'zod'
 // 禁用项仍保留在数组中，让用户恢复时保持原位置。
 // 实际所有权和重复来源限制由服务端再次校验。
 export const sourceSchema = z.object({
-  kind: z.enum(['hosting', 'subscription', 'wallet']),
+  kind: z.enum(['hosting', 'hosting_pool', 'subscription', 'wallet']),
   account_id: z.number().int().positive().optional(),
   enabled: z.boolean(),
 })

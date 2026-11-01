@@ -16,9 +16,12 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/hosting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -121,6 +124,18 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 			io.WriteString(w, `{"error":{"code":"rate_limit_exceeded"}}`)
 			return
 		}
+		// 原平台协议返回真实格式，回归经过适配器解析、结算而非只验证路由命中。
+		switch r.URL.Path {
+		case "/v1/embeddings":
+			io.WriteString(w, `{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"gpt-4","usage":{"prompt_tokens":2,"total_tokens":2}}`)
+			return
+		case "/v1/images/generations":
+			io.WriteString(w, `{"created":1,"data":[{"b64_json":"dGVzdA=="}]}`)
+			return
+		case "/v1/audio/speech":
+			io.WriteString(w, "test-pcm-audio")
+			return
+		}
 		io.WriteString(w, `{"id":"response-test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
 	}))
 	t.Cleanup(server.Close)
@@ -140,7 +155,10 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 	f.engine.Use(middleware.TokenAuth())
 	f.engine.POST("/v1/chat/completions", ResourceRelay(), func(c *gin.Context) { c.JSON(418, gin.H{"legacy": true}) })
 	f.engine.POST("/v1/responses", ResourceRelay())
-	f.engine.POST("/v1/images/generations", func(c *gin.Context) { c.Status(418) })
+	f.engine.POST("/v1/images/generations", ResourceRelay(), middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatOpenAIImage) })
+	f.engine.POST("/v1/embeddings", ResourceRelay(), middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatEmbedding) })
+	f.engine.POST("/v1/audio/speech", ResourceRelay(), middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatOpenAIAudio) })
+	f.engine.POST("/v1/messages", ResourceRelay(), middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatClaude) })
 	f.engine.GET("/v1/models", func(c *gin.Context) { ListModels(c, constant.ChannelTypeOpenAI) })
 	f.engine.GET("/v1/models/:model", func(c *gin.Context) { RetrieveModel(c, constant.ChannelTypeOpenAI) })
 	return f
@@ -254,8 +272,8 @@ func TestResourceRelayExhaustionAndNoReplay(t *testing.T) {
 // 模型限制、未支持协议、重复 model 与异步请求都在上游调用前拒绝。
 // 先保存可用来源，再保存空数组，证明旧来源不会被保留。
 // 重新显式保存来源后继续校验输入，不通过删除触发隐式收费。
-// 不支持的图片协议必须在统一鉴权入口阻断，不能落回旧付费通道。
-// 后台异步请求不属于当前同步调度契约，应在发送前明确拒绝。
+// 纯挂靠策略没有平台授权，图片仍须在发送前拒绝而不能落回旧钱包。
+// 后台异步请求由平台处理；仅启用挂靠时没有可执行来源。
 // 重复 model 字段存在解析歧义，不能让不同阶段使用不同模型名。
 // Key 模型白名单同时约束推理入口、目录列表和单模型详情。
 // 最后要求执行调用为空，证明所有输入拒绝都发生在外部执行之前。
@@ -266,8 +284,8 @@ func TestResourceRelayPolicyAndInputBoundaries(t *testing.T) {
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
 	require.Equal(t, 503, f.request(t, "POST", "/v1/chat/completions", body).Code)
 	f.setPolicy(t, model.ResourceSource{Kind: "hosting", AccountID: f.accounts[0].ID, Enabled: true})
-	require.Equal(t, 400, f.request(t, "POST", "/v1/images/generations", body).Code)
-	require.Equal(t, 400, f.request(t, "POST", "/v1/responses", `{"model":"gpt-4","input":"hi","background":true}`).Code)
+	require.Equal(t, 403, f.request(t, "POST", "/v1/images/generations", body).Code)
+	require.Equal(t, 403, f.request(t, "POST", "/v1/responses", `{"model":"gpt-4","input":"hi","background":true}`).Code)
 	require.Equal(t, 400, f.request(t, "POST", "/v1/chat/completions", `{"model":"gpt-4","model":"forbidden","messages":[]}`).Code)
 	require.NoError(t, model.DB.Model(f.token).Updates(map[string]any{"model_limits_enabled": true, "model_limits": "another-model"}).Error)
 	require.Equal(t, 403, f.request(t, "POST", "/v1/chat/completions", body).Code)
@@ -439,6 +457,10 @@ func TestResourceRelayStaleObservationDoesNotSkip(t *testing.T) {
 // 所有平台模型都应保持未验证，渠道配置并不是本人账号实测结果。
 // 最后切换为免费来源并查询单模型，确认此次裁剪没有改变原挂靠能力。
 // 整组不发送推理请求，调用计数为空也是目录无原厂消费副作用的证据。
+// platform_protocols 与总协议集合分别断言，防止前端错误借用挂靠验证状态。
+// 图片和向量保留可见性，但专用模型不能被通用渠道默认 Chat 标签误标。
+// 未加载插件的配置保留模型名，协议空数组如实反映尚无已知宿主协议。
+// 混合来源最后验证同名能力合并，避免修复非文本目录时覆盖私人模型协议。
 func TestResourceRelayPlatformCatalogProtocols(t *testing.T) {
 	f := newResourceFixture(t)
 	// 绕开定价门槛以隔离能力判断，不能让未定价偶然掩盖目录泄露。
@@ -485,17 +507,23 @@ func TestResourceRelayPlatformCatalogProtocols(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
 	expected := map[string][]string{
-		"gpt-4":            {"chat_completions"},
-		"o3-pro":           {"responses"},
-		"catalog-chat":     {"chat_completions"},
-		"catalog-response": {"responses"},
-		"catalog-shared":   {"chat_completions"},
-		"catalog-full":     {"responses", "chat_completions", "responses_compact"},
+		"gpt-4":                  {"chat_completions"},
+		"o3-pro":                 {"responses"},
+		"catalog-chat":           {"chat_completions"},
+		"catalog-response":       {"responses"},
+		"catalog-shared":         {"chat_completions"},
+		"catalog-full":           {"responses", "chat_completions", "responses_compact", "claude", "gemini", "alpha_search"},
+		"gpt-image-1":            {"images"},
+		"text-embedding-3-small": {"embeddings"},
+		"catalog-image":          {"images"},
+		"catalog-task":           {},
+		"catalog-bound-task":     {},
 	}
-	require.Len(t, catalog.Data.Models, len(expected)) // 不允许图片、embedding、任务或其他组模型混入。
+	require.Len(t, catalog.Data.Models, len(expected)) // 保留本组全部平台模型，禁止其他组模型混入。
 	for _, item := range catalog.Data.Models {
 		require.Contains(t, expected, item.ID)
 		require.ElementsMatch(t, expected[item.ID], item.Protocols)
+		require.ElementsMatch(t, expected[item.ID], item.PlatformProtocols)
 		require.False(t, item.Verified) // 平台渠道可用不能伪造本人挂靠实测事实。
 	}
 	// OpenAI 列表不能重新使用全站 supported_endpoint_types 把隔离能力又加回来。
@@ -520,4 +548,152 @@ func TestResourceRelayPlatformCatalogProtocols(t *testing.T) {
 	var privateModel dto.OpenAIModels
 	require.NoError(t, common.Unmarshal(privateResponse.Body.Bytes(), &privateModel))
 	require.ElementsMatch(t, []constant.EndpointType{constant.EndpointTypeOpenAI, constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAIResponseCompact}, privateModel.SupportedEndpointTypes)
+	// 同名模型合并后，挂靠的 Responses 仍不能冒充平台可导出能力。
+	f.setPolicy(t, model.ResourceSource{Kind: "hosting_pool", Enabled: true}, model.ResourceSource{Kind: "wallet", Enabled: true})
+	mergedPolicy, err := model.GetEffectiveResourcePolicy(f.user.Id, f.token.Id)
+	require.NoError(t, err)
+	merged, err := resourceModels(c, mergedPolicy)
+	require.NoError(t, err)
+	for _, item := range merged {
+		if item.ID == "gpt-4" {
+			require.ElementsMatch(t, []string{"responses", "chat_completions", "responses_compact"}, item.Protocols)
+			require.Equal(t, []string{"chat_completions"}, item.PlatformProtocols)
+		}
+	}
+}
+
+// TestResourceRelayPlatformProtocols 保证默认 Key 的平台能力没有被挂靠协议白名单缩小。
+// 请求经过真实鉴权、分发、适配器、预扣和结算，本地 HTTP 仅隔离原厂。
+// 四种协议均先尝试不可用订阅，再按 Key 显式顺序使用钱包。
+// 同一模型固定按次价格，让数据库消费可精确断言，避免只看 HTTP 成功。
+// 用户旧偏好故意设成仅订阅，证明新合同不会被旧全局配置重新排序。
+// 关闭钱包后再发相同请求必须失败且不能到达上游。
+// 这些行为在 SQLite、MySQL、PostgreSQL 使用同一套断言。
+// 每个协议使用独立数据库，前一请求的扣款或渠道状态不会掩盖本例行为。
+// 本地原厂返回各协议有效响应体，不能通过空响应或占位成功跳过结算。
+// 不把配额设置为无限，Key 预算和钱包实际扣减必须同时可观察。
+// 订阅缺失是确定不可用，允许回退；该场景不模拟网络失败后重放生成。
+// 挂靠池虽排在末尾，平台成功后不能再发起任何私人账号调用。
+// 第二次请求只有挂靠池，仍使用同一有效身份，隔离拒绝原因确为来源权限。
+// 上游调用计数在撤销授权后不增加，证明拒绝发生在不可逆提交之前。
+// 旧偏好在本例只用于制造冲突，测试完成不需要迁移或写回它。
+func TestResourceRelayPlatformProtocols(t *testing.T) {
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/embeddings", `{"model":"gpt-4","input":"hi"}`},
+		{"/v1/images/generations", `{"model":"gpt-4","prompt":"hi","n":1}`},
+		{"/v1/audio/speech", `{"model":"gpt-4","input":"hi","voice":"alloy","response_format":"pcm"}`},
+		{"/v1/messages", `{"model":"gpt-4","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			f := newResourceFixture(t)
+			require.NoError(t, model.DB.Model(f.user).Update("quota", 100000).Error)
+			require.NoError(t, model.DB.Model(f.token).Update("remain_quota", 100000).Error)
+			require.NoError(t, model.UpdateUserSetting(f.user.Id, dto.UserSetting{BillingPreference: "subscription_only"}))
+			f.setPolicy(t, model.ResourceSource{Kind: "subscription", Enabled: true}, model.ResourceSource{Kind: "wallet", Enabled: true}, model.ResourceSource{Kind: "hosting_pool", Enabled: true})
+			response := f.request(t, "POST", tc.path, tc.body)
+			require.Equal(t, 200, response.Code, response.Body.String())
+			require.Equal(t, "wallet", response.Header().Get("X-Oak-Resource-Source"))
+			require.Equal(t, []string{"Bearer platform-only"}, f.calls)
+			// 实际消费仅来自已冻结钱包，订阅失败没有留下 Key 预算扣减。
+			var owner model.User
+			var key model.Token
+			require.NoError(t, model.DB.First(&owner, f.user.Id).Error)
+			require.NoError(t, model.DB.First(&key, f.token.Id).Error)
+			require.Equal(t, 95000, owner.Quota)
+			require.Equal(t, 95000, key.RemainQuota)
+			// 撤销平台来源后不得因为接口兼容而走旧钱包收费链。
+			f.setPolicy(t, model.ResourceSource{Kind: "hosting_pool", Enabled: true})
+			denied := f.request(t, "POST", tc.path, tc.body)
+			require.Equal(t, 403, denied.Code, denied.Body.String())
+			require.Len(t, f.calls, 1)
+		})
+	}
+}
+
+// TestResourcePlatformFundingAndRealtime 验证统一资金工厂与实时累计预留的数据库结果。
+// 钱包余额为零但订阅有额度，来源排序必须落到订阅而非拒绝整把 Key。
+// 已完成首次预扣后即使策略顺序改变，也不能把本次流后续用量改扣钱包。
+// 两次累计 usage 只补差额，最终结算不能再重复消费一次。
+// 零价模型允许显式启用的平台来源，但空策略与纯挂靠不能偷用免费平台。
+// 断言同时覆盖订阅、钱包、令牌预算，防止只修改日志上的来源字段。
+// 订阅窗口尚未到期，额度充足，让来源选择结果不受时间边界影响。
+// 第一次预扣为十，后续累计二十、三十，最终只能消费三十。
+// 若逐事件误按钱包收费，零钱包会直接失败；若累计当增量，订阅会超过三十。
+// 两类错误因此都能由同一真实资金状态复现，不能只检查函数返回值。
+// 最终令牌预算从一千变为九百七十，与冻结订阅消费精确一致。
+// 免费授权检查使用独立请求上下文，不继承上一个会话的冻结来源。
+// 原始订阅计划和账号表均由夹具真实迁移创建，不模拟数据库预扣结果。
+// 本例不向原厂建立 WebSocket；真实传输与逐生成重鉴权另由 WS 集成测试覆盖。
+func TestResourcePlatformFundingAndRealtime(t *testing.T) {
+	f := newResourceFixture(t)
+	require.NoError(t, model.DB.Model(f.user).Update("quota", 0).Error)
+	require.NoError(t, model.DB.Model(f.token).Update("remain_quota", 1000).Error)
+	plan := &model.SubscriptionPlan{Title: "policy-realtime", Enabled: true, TotalAmount: 1000, QuotaResetPeriod: "never"}
+	require.NoError(t, model.DB.Create(plan).Error)
+	sub := &model.UserSubscription{UserId: f.user.Id, PlanId: plan.Id, Status: "active", AmountTotal: 1000, StartTime: time.Now().Unix(), EndTime: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, model.DB.Create(sub).Error)
+	f.setPolicy(t, model.ResourceSource{Kind: "wallet", Enabled: true}, model.ResourceSource{Kind: "subscription", Enabled: true})
+	policy, err := model.GetEffectiveResourcePolicy(f.user.Id, f.token.Id)
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/v1/realtime", nil)
+	c.Set("oak.resource_policy", policy)
+	info := &relaycommon.RelayInfo{UserId: f.user.Id, TokenId: f.token.Id, TokenKey: f.token.Key, RequestId: "realtime-policy", OriginModelName: "gpt-4", UsingGroup: "default", UserGroup: "default"}
+	require.Nil(t, service.PreConsumeBilling(c, 10, info))
+	require.Equal(t, "subscription", info.BillingSource)
+	// 固定模型倍率；事件传入累计量，第二次累计不能当新增用量收费。
+	originalRatios := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4":1}`))
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(originalRatios)) })
+	usage := &dto.RealtimeUsage{InputTokenDetails: dto.InputTokenDetails{TextTokens: 20}}
+	require.NoError(t, service.PreWssConsumeQuota(c, info, usage))
+	usage.InputTokenDetails.TextTokens = 30
+	require.NoError(t, service.PreWssConsumeQuota(c, info, usage))
+	require.NoError(t, service.SettleBilling(c, info, 30))
+	require.NoError(t, model.DB.First(sub, sub.Id).Error)
+	require.Equal(t, int64(30), sub.AmountUsed)
+	quota, err := model.GetUserQuota(f.user.Id, false)
+	require.NoError(t, err)
+	require.Zero(t, quota)
+	key, err := model.GetTokenById(f.token.Id)
+	require.NoError(t, err)
+	require.Equal(t, 970, key.RemainQuota)
+	// 免费授权检查不依赖余额，且不会额外扣订阅来证明来源可用。
+	free, _ := gin.CreateTestContext(httptest.NewRecorder())
+	free.Set("oak.resource_policy", &model.ResourcePolicySnapshot{Sources: []model.ResourceSource{{Kind: "wallet", Enabled: true}}})
+	require.Nil(t, service.AuthorizeFreePlatformResource(free, &relaycommon.RelayInfo{UserId: f.user.Id}))
+	free.Set("oak.resource_policy", &model.ResourcePolicySnapshot{Sources: []model.ResourceSource{}})
+	require.NotNil(t, service.AuthorizeFreePlatformResource(free, &relaycommon.RelayInfo{UserId: f.user.Id}))
+}
+
+// TestResourceRelayFreePlatformWithZeroBudget 覆盖零钱包、零 Key 预算的免费文本请求。
+// 模型定价决定是否收费，不能在价格解析前把合法免费平台请求拦为预算不足。
+// 零扣费仍须明确启用平台来源，未授权的平台能力不能因免费绕过来源策略。
+// 真实调用和消费日志都正常完成，随后核对两个预算保持零而没有负数。
+// 测试显式关闭免费模型预扣，尊重站点已有开关而不改变它的默认值。
+// 价格为零是合法业务配置，和计费配置缺失或解析失败不同。
+// 若提前检查 token_quota，调用会被错误拒绝，因此必须经过实际同步执行器。
+// 返回内容由本地原厂提供，成功不是直接绕开 relayHandler 写出的假响应。
+// 钱包与 Key 使用有限零预算，更容易发现免费分支误建付费会话的回归。
+// 测试结束恢复站点开关，后续收费测试不能继承此免费策略。
+// 独立数据库保证零余额来自本例设置，而非其他测试已经消费后的偶然结果。
+func TestResourceRelayFreePlatformWithZeroBudget(t *testing.T) {
+	f := newResourceFixture(t)
+	// 沿用站点显式允许免费模型免预扣的配置，不覆盖管理员已有门槛。
+	previous := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+	operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
+	t.Cleanup(func() { operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = previous })
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-4":0}`))
+	require.NoError(t, model.DB.Model(f.user).Update("quota", 0).Error)
+	require.NoError(t, model.DB.Model(f.token).Update("remain_quota", 0).Error)
+	f.setPolicy(t, model.ResourceSource{Kind: "wallet", Enabled: true})
+	response := f.request(t, "POST", "/v1/chat/completions", `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	require.Equal(t, []string{"Bearer platform-only"}, f.calls)
+	quota, err := model.GetUserQuota(f.user.Id, false)
+	require.NoError(t, err)
+	require.Zero(t, quota)
+	key, err := model.GetTokenById(f.token.Id)
+	require.NoError(t, err)
+	require.Zero(t, key.RemainQuota)
 }

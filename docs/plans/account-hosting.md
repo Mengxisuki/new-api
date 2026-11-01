@@ -1,6 +1,6 @@
 # Oak 免费账号挂靠：产品方案与实施记录
 
-更新时间：2026-11-01 16:12:11 +00:00。用户已明确每个 Key 独立排序，并否定共享 gpt-load 管理凭据。第 2 节保留实施前调研基线，实际代码、配置与验证边界见第 14 节。
+更新时间：2026-11-01 18:28:35 +00:00。用户已明确每个 Key 独立排序，并否定共享 gpt-load 管理凭据。第 2 节保留调研基线，第 14 节为前次实施记录，第 15 节为本轮抽屉、接口兼容及支付修复。
 
 上一版挂靠已部署；本文本轮修订已在本地 new-api / gpt-load 工作区实施，尚未提交、推送或部署。真实原厂 OAuth、Codex 客户端与重置机会消费尚未验证；本地自动化验证不替代上线验收。
 
@@ -577,3 +577,59 @@ go test ./service -run '^TestResourceBilling' -count=1
 修复七语言 31 个词条放错根级命名空间的问题，并补齐手动流程提示。链接只在首次响应中取得；状态查询省略 URL 不再使链接消失，相同会话 pending 阶段复用初始链接，提交和终态停止显示。详见 [排障经验](../memory/lessons.md)。本轮未改服务端、未提交或部署。
 
 本轮验证：挂靠六文件 20 项测试、`bunx tsgo -b`、定向 oxlint 与 `bun run build` 全部通过；123 个挂靠界面直接翻译键在七语言实际 `translation` 中均存在。未执行真实原厂 OAuth，也未部署。
+
+## 15. API Key 抽屉资源顺序与平台接口兼容
+
+本节更新时间：2026-11-01 18:28:35 +00:00；本地实现，未提交、推送或部署。替代第 14 节“仅 Key 菜单编辑顺序”和“配置策略后限制所有接口为同步文本”的描述；自有账号首期能力与私有执行安全边界不变。
+
+### 用户行为与保存合同
+
+- 创建/更新 API Key 抽屉在分组前显示横向顺序。采用“按量计费、订阅额度、自有账号”名称；新 Key 默认依次启用三类，可拖拽、左右键排序、关闭来源。窄屏排序栏横向滚动，不撑宽抽屉。
+- 来源选择与渠道分组是两层规则。先按当前 Key 选来源，平台来源内继续原模型权限、分组与渠道选择。挂靠免费，不购买套餐，也不会自动消费原厂重置机会。
+- 新 `hosting_pool` 在请求时读取本人 active 且未暂停账号，按 ID 排序；新增或暂停账号无需重写每个 Key。旧逐账号 `hosting` 顺序保留，池与逐账号不能混用。
+- `POST /api/token/` 默认原子建立三类策略；可传 `resource_policy: {revision, sources}`。`PUT` 仅在用户改变来源时携带此字段，Key 与策略同事务提交；省略保留旧合同。`status_only` 拒绝夹带策略。详情返回 `resource_policy: {revision, legacy, sources}`；列表不预读全部策略。
+- 版本随表单草稿冻结，后台 refetch 不能替旧草稿取得新版本。冲突不会部分保存 Key 字段。空列表或全部关闭是合法的明确拒绝配置；普通改名不强迫用户启用付费来源。
+- 旧无策略 Key 仅投影原计费偏好，读取或改名不自动转换。原逐账号交错顺序也不折叠成池。用户主动恢复默认顺序时明确启用全部三类。
+- 删除订阅页全局偏好选择及 `PUT /api/subscription/self/preference`。历史用户字段只为旧无策略 Key 保留读取；不做无依据的数据重排。
+
+### 接口与资金路径
+
+自有账号仍只执行同步 Chat/Responses/compact。图片、音频、embedding、原生 Claude/Gemini、Realtime、Responses WebSocket、后台/持久请求及任务接口使用原平台适配器，按本 Key 已启用的按量/订阅顺序预扣；没有平台来源明确拒绝。免费平台模型也检查授权，按原免费模型预扣设置执行。
+
+统一资金工厂只在发送前、确定额度不足且原预留已撤销时尝试下一个平台来源。成功预扣后冻结来源，实时增量、任务结算和退款不得重新选钱包；未知数据库提交、退款或上游结果停止，不能以重新发送掩盖故障。Realtime 按累计用量补足同一会话预留，避免逐事件钱包扣款与最后结算双扣。音频与实时按次结算传入真实 ModelPrice。
+
+Midjourney 两个提交入口同步接入资金工厂；任务保存资金来源、原订阅与周期。异步失败把资金、Key 预算和任务退款标记同事务恢复；已确认失败的待退款任务由本地轮询补偿，不再依赖上游可达。跨周只释放原周期占用，不扣减新周期其他请求的已用额度。周期取原订阅 LastResetTime；不推进周期的管理员清额操作保留现有同周期语义。
+
+数据库新增 `midjourneys.billing_source/subscription_id/subscription_reset_time` 和 `subscription_pre_consume_records.subscription_reset_time`。预扣周期列可空：历史 NULL 与真实零值分开，防止新计划首次周期被误判为历史无快照。预扣释放和幂等标记共用原事务，移除嵌套全局事务造成的 SQLite 单连接等待与非原子退款。
+
+模型目录 `protocols` 是启用来源能力并集，`platform_protocols` 是当前 Key 平台渠道的准确协议，`verified` 仅代表自有账号该型号实测。CCSwitch 与 Codex 配置允许授权平台协议直接导出；同名模型的其他平台协议不能替未验证挂靠 Responses 背书。Anthropic/Gemini 模型列表保留原响应格式。
+
+### 微信订阅支付
+
+上游三次 `PARAM_ERROR` 的脱敏消息为“商户订单号错误，请核实后再试”。原订阅号至少 34 字符，超过微信 `out_trade_no` 的 6–32 字符约束；现使用 `SUBUSR` 加 26 位随机字符，保留既有回调分流。真实控制器→SDK 请求/响应验签→订单持久化回归先红后绿，并覆盖两个用户 ID 长度及重复下单。未真实下单、付款或调整生产商户配置。
+
+### 验证与维护入口
+
+前端相关 14 个测试文件原 107 项通过，随后新增中文切换回归与抽屉 13 项定向通过，合计 108 项覆盖；类型、受影响 lint、生产构建通过。浏览器验证真实抽屉拖拽和键盘顺序、中文标签，以及 390px 无页面横向溢出。排序复用 `AutoGroupOrderItem`，仅扩展横向方向和可选删除行为；没有新增拖拽依赖。
+
+真实 SQLite **3.50.4**、MySQL **8.0.46**、PostgreSQL **16.15** 验证包括 Key 原子保存/版本冲突/所有权、账号池、平台接口资金切换、支付入口，以及 MJ/预扣表新建、旧表升级、连续迁移和失败任务退款恢复。Responses WebSocket 真连接及 Realtime 累计订阅预留有独立回归。以下命令不写入连接凭据，外部库仅通过测试环境提供：
+
+```sh
+# 平台行为矩阵：SQLite 默认；MySQL/PostgreSQL 同时设置三个方言变量。
+# TEST_SECURITY_DIALECT / TEST_RESOURCE_DB_DIALECT / TEST_TASK_DB_DIALECT
+# 连接分别读取 TEST_MYSQL_DSN / TEST_POSTGRES_DSN。
+go test ./controller -run 'TestHostingPolicyContracts|TestResourceRelay|TestTokenResourcePolicy|TestResourcePlatform|TestImmediateTaskSettlementDatabase' -count=1
+# 三库新旧 schema 与真实系统任务补偿；缺外部 DSN 的子用例会明确跳过。
+go test ./controller -run '^TestMidjourneyFailedFundingRecoveryDatabaseMatrix$' -count=1
+# 支付入口按 TEST_OFFICIAL_PAYMENT_DB_DIALECT 选择实际数据库。
+go test ./controller -run '^TestOfficialSubscriptionPaymentTradeNumberFitsWechat$' -count=1
+go test ./model ./service ./relay -run 'Midjourney|Subscription' -count=1 -timeout=120s
+cd web
+bun run test src/features/keys src/features/hosting src/features/wallet/__tests__/official-payment.test.tsx --maxWorkers=1
+bunx tsgo -b
+bun run build
+```
+
+最终后端相关包完整回归通过：`go test ./controller ./model ./middleware ./relay/... ./service/... ./router -count=1`。注册自动创建默认 Key 的真实入口随后定向通过，并随最新策略矩阵在 MySQL/PostgreSQL 复验。前后端生产构建通过；临时验证库已清理，未修改生产配置。
+
+后端核心导航：`model/token_resource_policy.go`、`service/resource_billing.go`、`controller/resource_relay.go`、`controller/resource_models.go`、`service/midjourney.go`、`controller/midjourney.go`。前端入口：`web/src/features/keys/components/api-keys-mutate-drawer.tsx` 与 `resource-priority-editor.tsx`。真实原厂授权/消费、实际客户端联调及商户付款仍需部署后验收；本地模拟上游和真实数据库回归不能替代这些证据。

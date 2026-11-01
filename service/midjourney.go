@@ -30,28 +30,100 @@ func CovertMjpActionToModelName(mjAction string) string {
 	return modelName
 }
 
-// PrepareMidjourneyTaskBilling sets the durable refund marker before the task is inserted.
+// PreConsumeMidjourneyBilling 在调用上游前执行 Key 的平台来源授权。
+// 显式策略由统一会话按顺序预扣，不能用钱包查询替代真实预留。
+// 免费动作仍检查平台权限，空策略与仅挂靠策略不能借零价绕过。
+// 未配置策略的旧 Key 保留历史钱包预检及后扣行为。
+func PreConsumeMidjourneyBilling(c *gin.Context, info *relaycommon.RelayInfo, quota int, shouldBill bool) error {
+	if _, exists := c.Get("oak.resource_policy"); exists { // 有策略与旧Key缺省是两种不同授权合同。
+		if !shouldBill || quota == 0 { // 纯平台授权不制造一笔最小订阅扣款。
+			if apiErr := AuthorizeFreePlatformResource(c, info); apiErr != nil {
+				return apiErr
+			}
+			return nil
+		}
+		if apiErr := PreConsumeBilling(c, quota, info); apiErr != nil {
+			return apiErr
+		}
+		return nil
+	}
+	// 原始非付费动作没有钱包金额门槛，不改变旧客户端合同。
+	if !shouldBill { // 取消付费动作仍由上层请求权限保护。
+		return nil
+	}
+	userQuota, err := model.GetUserQuota(info.UserId, false)
+	if err != nil {
+		return err
+	}
+	if userQuota < quota { // 旧合同保持预检，不能将不足解释为网络故障。
+		return ErrInsufficientWalletQuota
+	}
+	return nil
+}
+
+// RefundMidjourneyPreConsume 仅释放尚未交付持久任务的真实预留。
+// 接受并保存后的等额结算会关闭会话，异步失败转由任务原子退款。
+// 失败结果向上传递，不能把清理失败伪装成已退款成功。
+func RefundMidjourneyPreConsume(info *relaycommon.RelayInfo) error {
+	if info == nil || info.Billing == nil { // 免费与旧后扣请求没有预留需要释放。
+		return nil
+	}
+	session, ok := info.Billing.(*BillingSession)
+	if !ok {
+		return errors.New("invalid Midjourney billing session")
+	}
+	return session.RefundSync() // 会话自身确保结算后不退款、重复释放不重复加额。
+}
+
+// PrepareMidjourneyTaskBilling 将预扣事实冻结到即将持久化的任务。
+// 输入金额是本次固定价格，任务不能在后台按新的倍率重新估价。
+// 新会话已经完成资金预留，旧调用则仍由后扣路径负责资金写入。
+// 先清空标记，确保被拒绝的提交不会进入异步退款队列。
+// 只有真实扣过的 Token 才参与退款，不能根据调用身份推断扣款。
+// 来源与原订阅周期一起保存，用户随后改 Key 顺序不改变原任务。
+// 这里不写数据库，由调用方将完整任务与计费标记一次插入。
+// 任务插入失败仍由请求会话释放，不能交给无主键的后台记录。
+// 返回值只表达是否需要结算，不代表任务已接受或已经落库。
 func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, quota int, shouldBill bool) (bool, error) {
-	if task == nil {
+	if task == nil { // 无承载记录不能建立后台退款授权。
 		return false, errors.New("Midjourney task is nil")
 	}
 	task.Quota = 0
 	task.TokenId = 0
 	task.BillingChannelId = 0
-	if !shouldBill {
+	task.BillingSource = "" // 清除复用对象上可能残留的旧资金归属。
+	task.SubscriptionId = 0
+	task.SubscriptionResetTime = 0
+	if !shouldBill { // 上游明确拒绝时只释放原会话，不留任务扣款。
 		return false, nil
 	}
 	if relayInfo == nil {
 		return false, errors.New("relay info is nil")
 	}
-	if quota < 0 {
+	if quota < 0 { // 负金额不能转换为向用户增加预算。
 		return false, errors.New("quota cannot be negative")
 	}
-	if relayInfo.BillingSource == BillingSourceSubscription {
+	if relayInfo.Billing != nil {
+		// 仅接受已经按完整价格预扣的会话，任务插入后不再二次扣款。
+		// Token 实际预留由同一会话决定，不能仅依据请求 Token ID 猜测。
+		session, ok := relayInfo.Billing.(*BillingSession)
+		if !ok || session.GetPreConsumedQuota() != quota {
+			return false, errors.New("Midjourney reservation mismatch")
+		}
+		task.BillingSource = relayInfo.BillingSource
+		task.SubscriptionId = relayInfo.SubscriptionId
+		// 周期从真实预扣的锁内结果取得，不能在这里查询可能已重置的订阅。
+		if funding, ok := session.funding.(*SubscriptionFunding); ok {
+			task.SubscriptionResetTime = funding.SubscriptionResetTime
+		}
+		if session.tokenConsumed > 0 && !relayInfo.IsPlayground {
+			task.TokenId = relayInfo.TokenId
+		}
+	} else if relayInfo.BillingSource == BillingSourceSubscription && quota > 0 {
 		return false, errors.New("legacy Midjourney billing does not support subscriptions")
 	}
 
-	task.Quota = quota
+	task.Quota = quota // 持久退款金额只来自本次已校验的计费价格。
 	task.BillingChannelId = task.ChannelId
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
@@ -59,20 +131,39 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	return true, nil
 }
 
-// SettleMidjourneyTaskBilling charges a persisted legacy task and records the applied stages.
+// SettleMidjourneyTaskBilling 在任务可靠落库后完成计费生命周期。
+// 新来源固定价格已经预扣，等额结算只让会话退出可退款状态。
+// 此后失败退款以数据库任务为准，不依赖进程内会话继续存在。
+// 未持久化任务拒绝结算，避免资金消费缺失可查询的业务依据。
+// 历史任务继续使用原后扣合同，不能因升级再次预扣旧请求。
+// 历史钱包扣费失败时清除标记，防止后台退回从未扣过的金额。
+// Token 扣费失败与钱包扣费失败分别保存，退款不得凭空增加预算。
+// 返回 billed 表达资金是否已应用，错误不能被调用方伪装为成功。
+// 调用方只在成功结算后记录消费统计与正常提交响应。
 func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, prepared bool) (bool, error) {
-	if !prepared {
+	if !prepared { // 非计费响应不得进入任何后扣路径。
 		return false, nil
 	}
 	if relayInfo == nil {
 		return false, errors.New("relay info is nil")
 	}
-	if task == nil || task.Id == 0 {
+	if task == nil || task.Id == 0 { // 主键证明调用方已经完成持久化步骤。
 		return false, errors.New("Midjourney task must be persisted before billing")
+	}
+	if task.BillingSource != "" { // 新资金合同不能再进入历史钱包路径。
+		// 任务行已经带着真实预扣来源落库；固定价格等额结算只关闭会话。
+		// 不重跑旧钱包后扣，否则同一请求会重复扣费。
+		if relayInfo.Billing == nil {
+			return false, errors.New("Midjourney billing session missing")
+		}
+		if err := relayInfo.Billing.Settle(task.Quota); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
-	if !result.FundingApplied {
+	if !result.FundingApplied { // 没有真实资金消费时后台也没有退款权限。
 		task.Quota = 0
 		task.TokenId = 0
 		task.BillingChannelId = 0
@@ -92,19 +183,45 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	return true, billingErr
 }
 
-// RefundMidjourneyQuota reverses every accounting element recorded for a billed legacy task.
+// RefundMidjourneyQuota 按任务保存的资金来源释放失败任务额度。
+// 新任务资金和 Token 与退款标记原子提交，旧任务保留历史解释。
+// 只对本次真正退款的金额更新统计，陈旧轮询副本不能重复计数。
+// 订阅编号与周期均来自原任务，不能使用用户现在的计费偏好。
+// 数据库失败会保留可恢复标记，由轮询任务继续处理。
+// 缓存失败会告警，但已经提交的数据库资金不能重新再退一次。
+// 统计与业务日志不是资金授权，任何日志失败都不能重新执行加额。
+// 退款不会减少请求次数，失败请求仍是实际发生过的请求。
+// 日志只保存任务标识与错误分类，不附带渠道凭据。
+// 旧任务没有冻结来源时不能猜测它以前来自哪个订阅。
+// 返回 false 表示退款尚未完成，调用方必须保留后续恢复机会。
+// 新路径的重放成功返回 true，但不会新增第二条退款流水。
 func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
 	quota := task.Quota
-	if quota == 0 {
+	if quota == 0 { // 已清标记无需调用资金接口。
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+	if task.BillingSource != "" {
+		// 数据库行而非轮询快照决定金额，重放和进程重启都只退一次。
+		// 任一资金步骤失败会保留任务金额，供后续轮询恢复。
+		refunded, err := model.RefundMidjourneyFunding(task)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("Midjourney funding refund failed, task %s: %s", task.MjId, err))
+			if refunded == 0 {
+				return false
+			}
+		}
+		if refunded == 0 { // 另一轮已退清，不能再次调整统计。
+			return true
+		}
+		quota = refunded // 以数据库锁定行的真实金额为准。
+	} else if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to refund Midjourney user quota, task %s: %s", task.MjId, err.Error()))
 		return false
 	}
 
-	if task.TokenId > 0 {
+	// 新来源的 Token 已在同一事务退款，只有历史任务沿用旧拆分路径。
+	if task.BillingSource == "" && task.TokenId > 0 {
 		tokenKey := resolveTokenKey(ctx, task.TokenId, task.MjId)
 		if tokenKey != "" {
 			if err := model.IncreaseTokenQuota(task.TokenId, tokenKey, quota); err != nil {
@@ -113,12 +230,15 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		}
 	}
 
-	billingChannelId := task.GetBillingChannelId()
+	billingChannelId := task.GetBillingChannelId() // 退款统计归原收费渠道，而不是后续查图渠道。
 	model.UpdateUserUsedQuota(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(billingChannelId, -quota)
 	other := model.NewLogOther()
 	other.SetPublic("task_id", task.MjId)
-	other.SetPublic("reason", reason)
+	other.SetPublic("reason", reason) // 保留业务失败原因以便定位本次返还。
+	if task.BillingSource != "" {
+		other.SetPublic("resource_source", task.BillingSource)
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
@@ -129,7 +249,7 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		Other:     other,
 	})
 
-	task.Quota = 0
+	task.Quota = 0 // 历史路径也清除标记；新路径已经在资金事务中完成。
 	if err := task.UpdateBillingState(); err != nil {
 		logger.LogError(ctx, common.LogText("Midjourney refund succeeded but clearing the quota failed, task %s: %s", task.MjId, err.Error()))
 	}

@@ -216,7 +216,7 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 }
 
 func ListModels(c *gin.Context, modelType int) {
-	if listResourceModels(c) {
+	if listResourceModels(c, modelType) {
 		return
 	}
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
@@ -274,6 +274,13 @@ func ListModels(c *gin.Context, modelType int) {
 		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
 	}
 
+	writeModelList(c, modelType, userOpenAiModels)
+}
+
+// writeModelList 统一保留各客户端原有列表信封，来源策略只裁剪授权集合。
+// Anthropic 的翻页标记和 Gemini 的 models 字段不能被 OpenAI 格式覆盖。
+// 两条目录路径调用同一渲染器，避免新增来源后维护两套协议序列化。
+func writeModelList(c *gin.Context, modelType int, userOpenAiModels []dto.OpenAIModels) {
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
 		useranthropicModels := make([]dto.AnthropicModel, len(userOpenAiModels))
@@ -349,7 +356,7 @@ func EnabledListModels(c *gin.Context) {
 }
 
 func RetrieveModel(c *gin.Context, modelType int) {
-	if listResourceModels(c) {
+	if listResourceModels(c, modelType) {
 		return
 	}
 	modelId := c.Param("model")

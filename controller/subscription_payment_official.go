@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"math"
 	"net/url"
 	"strings"
@@ -87,9 +86,13 @@ func SubscriptionRequestOfficialPay(c *gin.Context) {
 		provider = model.PaymentProviderWechat
 	}
 	createdAt := common.GetTimestamp()
+	// 微信商户订单号最多32字符，不能拼接随用户ID增长的身份和纳秒时间。
+	// 保留SUBUSR供官方回调分流，26位随机字母数字使订单号固定为32字符。
+	// 不仅将纳秒改为秒，避免日后用户ID变长再次突破厂商上限。
+	// 用户归属独立保存在UserId，回调只按完整交易号查询持久订单。
 	order := &model.SubscriptionOrder{
 		UserId: userID, PlanId: plan.Id, Money: amount.InexactFloat64(), Invoice: invoice,
-		TradeNo:       fmt.Sprintf("SUBUSR%dNO%s%d", userID, common.GetRandomString(6), time.Now().UnixNano()),
+		TradeNo:       "SUBUSR" + common.GetRandomString(26),
 		PaymentMethod: channel.ID, PaymentProvider: provider,
 		Status: common.TopUpStatusPending, CreateTime: createdAt,
 	}

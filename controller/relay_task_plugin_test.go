@@ -545,11 +545,13 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 		actual       any
 		count        float64
 	}{
-		{"partial", "SUCCESS", 2, 2}, {"zero", "SUCCESS", 0, 0}, {"larger", "SUCCESS", 6, 6},
+		{"disabled-source", "SUCCESS", 2, 2}, {"partial", "SUCCESS", 2, 2}, {"zero", "SUCCESS", 0, 0}, {"larger", "SUCCESS", 6, 6},
 		{"invalid usage", "SUCCESS", -1, 4}, {"expression failure", "SUCCESS", 7, 4}, {"negative result", "SUCCESS", 8, 4}, {"missing usage", "SUCCESS", nil, 4}, {"failed", "FAILURE", 9, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
 				w.Header().Set("Content-Type", "application/json")
 				body := map[string]any{"status": tc.status}
 				if tc.actual != nil {
@@ -582,10 +584,23 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			info.UserGroup = "default"
 			info.UsingGroup = "default"
 			info.IsPlayground = true
-			info.UserSetting.BillingPreference = "wallet_only"
+			// 任务使用显式 Key 来源，不能被旧用户偏好改回订阅。
+			info.UserSetting.BillingPreference = "subscription_only"
+			sources := []model.ResourceSource{{Kind: "wallet", Enabled: true}}
+			if tc.name == "disabled-source" {
+				sources = []model.ResourceSource{}
+			}
+			c.Set("oak.resource_policy", &model.ResourcePolicySnapshot{Revision: "task-policy", Sources: sources})
 			info.PublicTaskID = model.GenerateTaskID()
 			info.LockedChannel = &ch
 			outcome, taskErr := executeTaskSubmission(c, info)
+			if tc.name == "disabled-source" {
+				// 空策略必须在计费和外部提交前拒绝，不能由任务链隐藏回落钱包。
+				require.NotNil(t, taskErr)
+				require.Nil(t, outcome)
+				require.Zero(t, calls)
+				return
+			}
 			require.Nil(t, taskErr)
 			require.NotNil(t, outcome)
 			want := common.QuotaRound(tc.count * 0.01 * common.QuotaPerUnit)
@@ -594,6 +609,7 @@ export function buildQueryRequest(){throw new Error("completed submissions must 
 			var stored model.Task
 			require.NoError(t, db.Where("task_id = ?", info.PublicTaskID).First(&stored).Error)
 			assert.Equal(t, want, stored.Quota)
+			assert.Equal(t, "wallet", stored.PrivateData.BillingSource)
 			assert.Equal(t, model.TaskStatus(tc.status), stored.Status)
 			assert.Positive(t, stored.FinishTime)
 			assert.Equal(t, float64(4), info.TieredBillingSnapshot.EstimatedQuotaBeforeGroup/(0.01*common.QuotaPerUnit))

@@ -415,7 +415,7 @@ func (s *BillingSession) syncRelayInfo() {
 // ---------------------------------------------------------------------------
 
 // NewBillingSession 根据用户计费偏好创建 BillingSession，处理 subscription_first / wallet_first 的回退。
-func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
+func newBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
 	if relayInfo == nil {
 		return nil, types.NewError(fmt.Errorf("relayInfo is nil"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
@@ -433,6 +433,20 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 			return nil, types.NewError(errors.New("invalid resource funding source"), types.ErrorCodeInvalidRequest)
 		}
 		relayInfo.ForcePreConsume = true
+		// 表达式可能估算为零，但收费请求仍不能使用已耗尽的有限 Key。
+		// 鉴权为免费挂靠保留身份，因此在确定平台收费后恢复这项预算约束。
+		// 非零预扣由原子扣减检查；这里只补零估算无法触发扣减的入口。
+		// 直接读取当前 Key，WebSocket 下一次生成不能沿用前一次握手预算。
+		// 免费免预扣请求在进入工厂之前分流，不受这项收费预算门槛影响。
+		if preConsumedQuota == 0 && !relayInfo.IsPlayground && !relayInfo.TokenUnlimited {
+			token, err := model.GetTokenById(relayInfo.TokenId)
+			if err != nil {
+				return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+			}
+			if !token.UnlimitedQuota && token.RemainQuota <= 0 {
+				return nil, types.NewErrorWithStatusCode(ErrInsufficientTokenBudget, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+			}
+		}
 	}
 
 	// 钱包路径需要先检查用户额度

@@ -560,6 +560,12 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 			}
 		}
 	})
+	// 新策略也必须保留 WebSocket 多次生成、连接复用与逐请求计费。
+	// 在握手完成后保存策略，证明每个 response.create 都重新读取当前 Key 授权。
+	_, policyErr := model.SaveResourcePolicy(fixture.user.Id, fixture.token.Id, 0, []model.ResourceSource{{Kind: "wallet", Enabled: true}})
+	require.NoError(t, policyErr)
+	t.Cleanup(func() { model.DB.Where("token_id = ?", fixture.token.Id).Delete(&model.ResourcePolicy{}) })
+
 	client, user, token := fixture.client, fixture.user, fixture.token
 
 	for index, payload := range []string{
@@ -602,7 +608,8 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(data, &rejection))
 	assert.Equal(t, "error", rejection.Type)
-	assert.Equal(t, http.StatusUnauthorized, rejection.Status)
+	// 身份仍有效，收费预算耗尽由本次平台授权入口返回 403。
+	assert.Equal(t, http.StatusForbidden, rejection.Status)
 	assert.Equal(t, int32(1), fixture.connections.Load())
 	assert.Empty(t, received, "exhausted token must be rejected before contacting upstream")
 	var logs []model.Log

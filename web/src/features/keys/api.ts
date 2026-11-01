@@ -1,3 +1,4 @@
+import { policySchema } from '@/features/hosting/types'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -18,14 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type {
-  ApiKey,
-  ApiResponse,
-  GetApiKeysParams,
-  GetApiKeysResponse,
-  SearchApiKeysParams,
-  ApiKeyFormData,
-  TokenAutoGroupsConfig,
+import {
+  apiKeySchema,
+  type ApiKey,
+  type ApiResponse,
+  type GetApiKeysParams,
+  type GetApiKeysResponse,
+  type SearchApiKeysParams,
+  type ApiKeyFormData,
+  type TokenAutoGroupsConfig,
 } from './types'
 
 // ============================================================================
@@ -58,7 +60,16 @@ export async function searchApiKeys(
 // Get single API key by ID
 export async function getApiKey(id: number): Promise<ApiResponse<ApiKey>> {
   const res = await api.get(`/api/token/${id}`)
-  return res.data
+  // 详情的来源授权必须真实存在，不能把旧服务的缺字段猜成新默认顺序。
+  // 业务失败仍保留原始消息；只有成功数据进入严格契约校验。
+  // 列表继续使用可选策略，避免为了编辑预读所有 Key。
+  if (!res.data.success) return res.data
+  return {
+    ...res.data,
+    data: apiKeySchema
+      .extend({ resource_policy: policySchema })
+      .parse(res.data.data),
+  }
 }
 
 // Get the current user's global Auto order and the per-token selection limit.

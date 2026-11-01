@@ -7415,7 +7415,7 @@
     "Model access": "Доступ к моделям",
     "Model access. Project accounting. Research continuity.": "Доступ к моделям. Учет проектов. Непрерывность исследований.",
     "PNG, JPEG or WebP, up to 1 MB.": "PNG, JPEG или WebP, до 1 МБ.",
-    "Pay as you go": "Оплата по мере использования",
+    "Pay as you go": "По использованию",
     "Pay-as-you-go is available now. For subscriptions and other procurement arrangements, contact us to discuss a tailored plan based on your team size, expected usage and institutional requirements.": "Оплата по мере использования уже доступна. Для подписок и других вариантов закупки свяжитесь с нами: мы подберем план с учетом размера команды, ожидаемого объема и требований организации.",
     "Plan a lab purchase": "Спланировать закупку для лаборатории",
     "Plan for the lab. Account for the funding.": "Планируйте для лаборатории. Учитывайте финансирование.",
@@ -7838,6 +7838,18 @@
     "Complete authorization": "Завершить авторизацию",
     "Generating authorization link...": "Создание ссылки авторизации…",
     "Unable to retrieve the authorization link. Start again to generate a new one.": "Не удалось получить ссылку. Начните заново, чтобы создать новую.",
-    "Enter the authorization link or code.": "Введите ссылку или код авторизации."
+    "Enter the authorization link or code.": "Введите ссылку или код авторизации.",
+    "Personal accounts": "Личные аккаунты",
+    "Personal account #{{id}}": "Личный аккаунт № {{id}}",
+    "Enable {{source}}": "Включить {{source}}",
+    "Enable at least one resource source.": "Включите хотя бы один источник ресурсов.",
+    "Drag to reorder, or focus a handle and use the left and right arrow keys.": "Перетащите для сортировки или выберите маркер и используйте стрелки влево и вправо.",
+    "Personal accounts use your connected accounts for free. Disabled resources are never used.": "Личные аккаунты используют квоту подключённых аккаунтов бесплатно. Отключённые ресурсы не используются.",
+    "Enable all three resources in the default order": "Включить все три источника в стандартном порядке",
+    "Configure resource priority in each API key.": "Настройте приоритет ресурсов для каждого API-ключа.",
+    "Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.": "Используйте включённые ресурсы слева направо. Пропускайте источники с недостаточной квотой или неподдерживаемым интерфейсом.",
+    "No authorized model supports this application for this API key.": "Ни одна разрешённая модель для этого API-ключа не поддерживает приложение.",
+    "Codex model": "Модель Codex",
+    "All resource sources are disabled. Requests with this key will be rejected.": "Все источники отключены. Запросы с этим ключом будут отклонены."
   }
 }

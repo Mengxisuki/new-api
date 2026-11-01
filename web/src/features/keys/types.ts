@@ -18,11 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { policySchema, type ResourceSource } from '@/features/hosting/types'
+
 // ============================================================================
 // API Key Schema & Types
 // ============================================================================
 
 export const apiKeySchema = z.object({
+  // 列表不携带策略；详情返回本人 Key 的完整授权顺序。
+  resource_policy: policySchema.optional(),
   id: z.number(),
   name: z.string(),
   key: z.string(),
@@ -85,6 +89,8 @@ export interface SearchApiKeysParams {
 }
 
 export interface ApiKeyFormData {
+  // 与 Key 同事务保存；更新省略时保持旧合同。
+  resource_policy?: { revision: number; sources: ResourceSource[] }
   name: string
   remain_quota: number
   expired_time: number
@@ -112,7 +118,5 @@ export type ApiKeysDialogType =
   | 'update'
   | 'delete'
   | 'batch-delete'
-  // 同一 Key 的资源策略不改变该 Key 的模型、IP 和有效期约束。
-  | 'resource-policy'
   | 'client-config'
   | 'cc-switch'

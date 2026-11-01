@@ -48,26 +48,122 @@ var ErrResourcePolicyInvalid = errors.New("invalid resource policy")
 // 返回快照与数据库行分离，临时跳过候选不会修改持久顺序。
 // 保留历史版本格式，使现有请求日志仍能关联具体用户与 Key。
 // Key 必须是正数，禁止内部调用意外重新启用全局策略语义。
+// 编辑接口读取原始池标识，执行接口才读取动态账号集合，两种视图不能混用。
+// 池不按远端组名或邮箱查找，所有权只认本地账号表的 user_id。
+// connected、待验证、删除和暂停账号都不是当前可执行候选。
+// 展开不写策略版本，因此版本描述授权顺序，账号状态仍是实时资源状态。
+// 账号池为空时保留非空策略对象，不能被误读为恢复旧钱包合同。
 func GetEffectiveResourcePolicy(userID, tokenID int) (*ResourcePolicySnapshot, error) {
+	row, sources, err := readResourcePolicy(DB, userID, tokenID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	// 账号池只在请求读取时展开，新增或暂停账号无需修改所有 Key。
+	// 固定 ID 顺序保证可解释性；执行层还会再次检查账号与模型能力。
+	expanded := make([]ResourceSource, 0, len(sources))
+	for _, source := range sources {
+		if source.Kind != "hosting_pool" || !source.Enabled {
+			expanded = append(expanded, source)
+			continue
+		}
+		var accounts []HostingAccount
+		if err := DB.Select("id").Where("user_id = ? AND status = ? AND paused = ?", userID, "active", false).Order("id ASC").Find(&accounts).Error; err != nil {
+			return nil, err
+		}
+		for _, account := range accounts {
+			expanded = append(expanded, ResourceSource{Kind: "hosting", AccountID: account.ID, Enabled: true})
+		}
+	}
+	return &ResourcePolicySnapshot{Revision: fmt.Sprintf("%d:%d:%d", userID, tokenID, row.Revision), Sources: expanded}, nil
+}
+
+// ResourcePolicyInput 是 Key 抽屉与独立策略编辑共用的完整替换契约。
+// 版本零只允许首次建立策略；空 sources 明确禁用所有来源。
+type ResourcePolicyInput struct {
+	Revision int64            `json:"revision"`
+	Sources  []ResourceSource `json:"sources"`
+}
+
+// ResourcePolicyView 保留用户保存的池标识，不把运行时账号展开结果用于编辑。
+// legacy 仅表示没有独立策略；来源投影来自原平台合同，不增加账号池授权。
+type ResourcePolicyView struct {
+	Revision int64            `json:"revision"`
+	Legacy   bool             `json:"legacy"`
+	Sources  []ResourceSource `json:"sources"`
+}
+
+// readResourcePolicy 共用持久 JSON 解析，损坏数据不能伪装成无策略。
+// 调用方可以传事务，保证令牌字段和策略读取位于同一提交边界。
+// 查询始终限定用户与 Key，不能按 Key ID 单独取得他人的授权。
+// 只有明确缺行返回 nil，其余数据库错误必须交给调用者处理。
+// JSON 字段未通过解析时不提供任何临时默认来源。
+// 历史 null 数组按拒绝全部处理，不把无来源升级为默认收费权限。
+// 返回来源切片由本次解码独立分配，执行层展开不会修改数据库内容。
+// 此层只解析可信持久数据；新增输入的类型和归属在保存边界约束。
+// 原始行同时提供版本，避免来源与 revision 分别查询而发生错配。
+func readResourcePolicy(tx *gorm.DB, userID, tokenID int) (*ResourcePolicy, []ResourceSource, error) {
 	if tokenID <= 0 {
-		return nil, ErrResourcePolicyInvalid
+		return nil, nil, ErrResourcePolicyInvalid
 	}
 	var row ResourcePolicy
-	err := DB.Where("user_id = ? AND token_id = ?", userID, tokenID).First(&row).Error
+	err := tx.Where("user_id = ? AND token_id = ?", userID, tokenID).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var sources []ResourceSource
 	if err := common.UnmarshalJsonStr(row.SourcesJSON, &sources); err != nil {
-		return nil, fmt.Errorf("invalid stored resource policy: %w", err)
+		return nil, nil, fmt.Errorf("invalid stored resource policy: %w", err)
 	}
 	if sources == nil {
 		sources = []ResourceSource{}
 	}
-	return &ResourcePolicySnapshot{Revision: fmt.Sprintf("%d:%d:%d", userID, row.TokenID, row.Revision), Sources: sources}, nil
+	return &row, sources, nil
+}
+
+// GetResourcePolicyView 只读取编辑内容，不访问执行层或展开池中的账号。
+// 旧 Key 的平台顺序仅展示，不在普通编辑、读取时自动转换为新策略。
+// 有独立策略时完整返回 disabled 项，重新开启必须沿用用户保存的顺序。
+// 无独立策略才读取旧设置；设置读取失败不能猜测用户曾允许钱包。
+// 投影版本零代表首次显式授权，保存时仍需执行版本冲突检查。
+// 目录查询和免费账号状态不参与编辑投影，避免远端故障阻止管理 Key。
+// Token 归属由调用入口先确认；这里不对不存在的 Key 创建配置。
+func GetResourcePolicyView(userID, tokenID int) (*ResourcePolicyView, error) {
+	row, sources, err := readResourcePolicy(DB, userID, tokenID)
+	if err != nil {
+		return nil, err
+	}
+	if row != nil {
+		return &ResourcePolicyView{Revision: row.Revision, Sources: sources}, nil
+	}
+	settings, err := GetUserSetting(userID, false)
+	if err != nil {
+		return nil, err
+	}
+	return &ResourcePolicyView{Legacy: true, Sources: legacyResourceSources(settings.BillingPreference)}, nil
+}
+
+// legacyResourceSources 仅投影旧平台资金合同，不替历史用户添加新的付费来源。
+// subscription_first 的原溢出限制仍由旧执行链执行，展示本身不改变授权。
+// 不加入 hosting_pool，旧用户必须主动编辑后才授予动态账号池权限。
+// *_only 只显示一种启用来源，不能为了凑三行而隐含增加收费许可。
+// 归一化复用旧计费入口，未知历史值与原默认分支保持一致。
+// 返回新切片，界面调整顺序时不能改变其他 Key 的内存数据。
+func legacyResourceSources(preference string) []ResourceSource {
+	wallet := ResourceSource{Kind: "wallet", Enabled: true}
+	subscription := ResourceSource{Kind: "subscription", Enabled: true}
+	switch common.NormalizeBillingPreference(preference) {
+	case "wallet_only":
+		return []ResourceSource{wallet}
+	case "subscription_only":
+		return []ResourceSource{subscription}
+	case "wallet_first":
+		return []ResourceSource{wallet, subscription}
+	default:
+		return []ResourceSource{subscription, wallet}
+	}
 }
 
 // SaveResourcePolicy 使用用户行锁与版本号保护同时打开的设置页。
@@ -89,74 +185,96 @@ func GetEffectiveResourcePolicy(userID, tokenID int) (*ResourcePolicySnapshot, e
 // 账号额度、订阅资格和钱包余额不是保存条件，执行时再查真实状态。
 // 该事务不会调用执行层网络，避免长时间持有用户锁。
 func SaveResourcePolicy(userID, tokenID int, revision int64, sources []ResourceSource) (*ResourcePolicy, error) {
-	if tokenID <= 0 || revision < 0 {
-		return nil, ErrResourcePolicyInvalid
-	}
-	if len(sources) > 7 {
-		return nil, fmt.Errorf("%w: too many resource sources", ErrResourcePolicyInvalid)
-	}
-	var saved ResourcePolicy
+	var saved *ResourcePolicy
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var user User
 		if err := lockForUpdate(tx).Select("id").First(&user, userID).Error; err != nil {
 			return err
 		}
-		var token Token
-		if err := tx.Where("id = ? AND user_id = ?", tokenID, userID).First(&token).Error; err != nil {
-			return err
-		}
-		seen := map[string]bool{}
-		for _, source := range sources {
-			key := source.Kind
-			switch source.Kind {
-			case "hosting":
-				var account HostingAccount
-				if source.AccountID <= 0 {
-					return fmt.Errorf("%w: hosting account is required", ErrResourcePolicyInvalid)
-				}
-				if err := tx.Where("id = ? AND user_id = ? AND status <> ?", source.AccountID, userID, "deleted").First(&account).Error; err != nil {
-					return err
-				}
-				key = fmt.Sprintf("hosting:%d", source.AccountID)
-			case "subscription", "wallet":
-				if source.AccountID != 0 {
-					return fmt.Errorf("%w: platform source cannot bind an account", ErrResourcePolicyInvalid)
-				}
-			default:
-				return fmt.Errorf("%w: unsupported resource source", ErrResourcePolicyInvalid)
-			}
-			if seen[key] {
-				return fmt.Errorf("%w: duplicate resource source", ErrResourcePolicyInvalid)
-			}
-			seen[key] = true
-		}
-		// 空切片必须存成 []，保持“禁用全部”与“未设置”的区别。
-		if sources == nil {
-			sources = []ResourceSource{}
-		}
-		encoded, err := common.Marshal(sources)
-		if err != nil {
-			return err
-		}
-		err = tx.Where("user_id = ? AND token_id = ?", userID, tokenID).First(&saved).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if revision != 0 {
-				return ErrResourcePolicyConflict
-			}
-			saved = ResourcePolicy{UserID: userID, TokenID: tokenID, Revision: 1, SourcesJSON: string(encoded), UpdatedAt: time.Now().Unix()}
-			return tx.Create(&saved).Error
-		}
-		if err != nil {
-			return err
-		}
-		if saved.Revision != revision {
-			return ErrResourcePolicyConflict
-		}
-		saved.Revision++
-		saved.SourcesJSON, saved.UpdatedAt = string(encoded), time.Now().Unix()
-		return tx.Save(&saved).Error
+		var err error
+		saved, err = saveResourcePolicy(tx, userID, tokenID, revision, sources)
+		return err
 	})
-	return &saved, err
+	return saved, err
+}
+
+// saveResourcePolicy 由已持有用户锁的事务调用，共用唯一的来源校验与版本规则。
+// 单独编辑和 Key 抽屉保存都经过这里，任一失败必须回滚整个调用者事务。
+// 池与旧显式账号不能混合，避免同一账号被展开两次或暗中扩大历史账号范围。
+// 平台来源及账号池都不能携带 account_id，该字段只属于旧显式账号模式。
+// enabled=false 也不放宽来源格式和归属校验，以免稍后开启成为越权入口。
+// 新 Key 和旧 Key 使用相同版本检查，不存在跳过冲突的覆盖写分支。
+// 已删除账号不可新增到显式策略，已暂停账号可保留用于用户后续恢复。
+// 不在保存时按余额排序，临时额度不足不能修改用户授权的候选顺序。
+// 来源重复按账号身份判断，多个不同显式账号仍可保留原有顺序。
+// 首次写入必须为零版本，成功后从一开始；更新只递增当前版本。
+// 更新使用事务内读到的主键，不允许客户端指定资源策略行 ID。
+// 更新时间仅记录保存发生时间，不参与候选选择或账号可用性判断。
+func saveResourcePolicy(tx *gorm.DB, userID, tokenID int, revision int64, sources []ResourceSource) (*ResourcePolicy, error) {
+	if tokenID <= 0 || revision < 0 || len(sources) > 7 {
+		return nil, ErrResourcePolicyInvalid
+	}
+	var saved ResourcePolicy
+	var token Token
+	if err := tx.Where("id = ? AND user_id = ?", tokenID, userID).First(&token).Error; err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, source := range sources {
+		key := source.Kind
+		switch source.Kind {
+		case "hosting":
+			var account HostingAccount
+			if source.AccountID <= 0 {
+				return nil, fmt.Errorf("%w: hosting account is required", ErrResourcePolicyInvalid)
+			}
+			if err := tx.Where("id = ? AND user_id = ? AND status <> ?", source.AccountID, userID, "deleted").First(&account).Error; err != nil {
+				return nil, err
+			}
+			key = fmt.Sprintf("hosting:%d", source.AccountID)
+		case "subscription", "wallet", "hosting_pool":
+			if source.AccountID != 0 {
+				return nil, fmt.Errorf("%w: platform source cannot bind an account", ErrResourcePolicyInvalid)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported resource source", ErrResourcePolicyInvalid)
+		}
+		if seen[key] {
+			return nil, fmt.Errorf("%w: duplicate resource source", ErrResourcePolicyInvalid)
+		}
+		seen[key] = true
+		if (source.Kind == "hosting_pool" && seen["has_hosting"]) || (source.Kind == "hosting" && seen["hosting_pool"]) {
+			return nil, fmt.Errorf("%w: hosting pool cannot mix with explicit accounts", ErrResourcePolicyInvalid)
+		}
+		if source.Kind == "hosting" {
+			seen["has_hosting"] = true
+		}
+	}
+	// 空切片必须存成 []，保持“禁用全部”与“未设置”的区别。
+	if sources == nil {
+		sources = []ResourceSource{}
+	}
+	encoded, err := common.Marshal(sources)
+	if err != nil {
+		return nil, err
+	}
+	err = tx.Where("user_id = ? AND token_id = ?", userID, tokenID).First(&saved).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if revision != 0 {
+			return nil, ErrResourcePolicyConflict
+		}
+		saved = ResourcePolicy{UserID: userID, TokenID: tokenID, Revision: 1, SourcesJSON: string(encoded), UpdatedAt: time.Now().Unix()}
+		return &saved, tx.Create(&saved).Error
+	}
+	if err != nil {
+		return nil, err
+	}
+	if saved.Revision != revision {
+		return nil, ErrResourcePolicyConflict
+	}
+	saved.Revision++
+	saved.SourcesJSON, saved.UpdatedAt = string(encoded), time.Now().Unix()
+	return &saved, tx.Save(&saved).Error
 }
 
 // MigrateResourcePoliciesToTokens 将旧默认顺序固化到升级前已存在的 Key。

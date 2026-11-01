@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,14 +35,18 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
-	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	// 原始 JSON 保留“省略”与显式 null 的区别，后者不能悄悄恢复旧合同。
+	ResourcePolicy common.RawMessage    `json:"resource_policy"`
+	AutoGroups     tokenAutoGroupsInput `json:"auto_groups"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
 }
 
 type tokenResponse struct {
 	*model.Token
-	AutoGroups []string `json:"auto_groups"`
+	// 列表保持轻量；详情与保存响应附带当前策略，避免逐行读取造成 N+1。
+	ResourcePolicy *model.ResourcePolicyView `json:"resource_policy,omitempty"`
+	AutoGroups     []string                  `json:"auto_groups"`
 }
 
 func maxTokenQuota() int {
@@ -172,7 +177,18 @@ func GetToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+	// 只有已确认本人归属的 Key 才能读取策略，版本与来源一并返回。
+	// 旧 Key 返回只读投影，不因为打开编辑抽屉而插入新授权行。
+	// 策略读取失败必须报告，不能展示可能改变费用的猜测默认值。
+	view, err := model.GetResourcePolicyView(userId, id)
+	if err != nil {
+		hostingError(c, err)
+		return
+	}
+	response := buildMaskedTokenResponse(token)
+	// 附加策略不会改变原 Token 脱敏及自动分组字段的序列化。
+	response.ResourcePolicy = view
+	common.ApiSuccess(c, response)
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
@@ -303,6 +319,10 @@ func AddToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	policy, ok := parseTokenResourcePolicy(c, request.ResourcePolicy)
+	if !ok {
+		return
+	}
 	token := request.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
@@ -364,17 +384,20 @@ func AddToken(c *gin.Context) {
 		AutoGroups:         token.AutoGroups,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
-	err = cleanToken.Insert()
+	// 默认来源仅由原子创建入口添加，不在控制器分别插入两个可能部分成功的记录。
+	// 用户显式提交空数组时不补默认值，空数组代表禁用全部来源。
+	// 失败时令牌与策略一起回滚，成功才设置审计成功标记。
+	view, err := cleanToken.InsertWithResourcePolicy(policy)
 	if err != nil {
-		common.ApiError(c, err)
+		tokenResourcePolicyError(c, err)
 		return
 	}
+	// 成功响应继续脱敏 Key；来源编辑不附带额外的明文凭据权限。
+	response := buildMaskedTokenResponse(&cleanToken)
+	response.ResourcePolicy = view
 	params["id"] = cleanToken.Id
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	common.ApiSuccess(c, response)
 }
 
 func DeleteToken(c *gin.Context) {
@@ -406,6 +429,15 @@ func UpdateToken(c *gin.Context) {
 	err := c.ShouldBindJSON(&request)
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	policy, ok := parseTokenResourcePolicy(c, request.ResourcePolicy)
+	if !ok {
+		return
+	}
+	if statusOnly != "" && policy != nil {
+		// 状态开关不能成为未展示来源配置时偷偷授予收费回退的入口。
+		hostingError(c, model.ErrResourcePolicyInvalid)
 		return
 	}
 	token := request.Token
@@ -440,7 +472,7 @@ func UpdateToken(c *gin.Context) {
 			common.ApiErrorT(c, "Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
 			return
 		}
-		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota {
+		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota && policy == nil {
 			// 已配置统一策略的 Key 可以恢复免费来源，付费预算仍由调度时的预扣约束。
 			// 策略读取失败必须可见，不能错误恢复为旧计费合同。
 			policy, policyErr := model.GetEffectiveResourcePolicy(userId, cleanToken.Id)
@@ -479,11 +511,16 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	// 普通改名省略策略时保留原合同；有策略时版本冲突也回滚名称等普通字段。
+	// 模型返回同一事务中的保存投影，不用提交后第二次读取拼接另一个版本。
+	// 用户无需有当前可用额度才能编辑来源，执行可用性留到真实请求检查。
+	view, err := cleanToken.UpdateWithResourcePolicy(policy)
 	if err != nil {
-		common.ApiError(c, err)
+		tokenResourcePolicyError(c, err)
 		return
 	}
+	response := buildMaskedTokenResponse(cleanToken)
+	response.ResourcePolicy = view
 	params["name"] = cleanToken.Name
 	if statusOnly != "" {
 		params["from"], params["to"] = previous.Status, cleanToken.Status
@@ -510,13 +547,17 @@ func UpdateToken(c *gin.Context) {
 				changedFields = append(changedFields, field.name)
 			}
 		}
+		if policy != nil {
+			// 审计只记录字段变化，不把账号池展开结果、内部 Key 或凭据写入参数。
+			changedFields = append(changedFields, "resource_policy")
+		}
 		params["changed_fields"] = changedFields
 	}
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    buildMaskedTokenResponse(cleanToken),
+		"data":    response,
 	})
 }
 
@@ -581,4 +622,38 @@ func GetTokenKeysBatch(c *gin.Context) {
 	params["returned_ids"] = returnedIDs
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
 	common.ApiSuccess(c, gin.H{"keys": keysMap})
+}
+
+// parseTokenResourcePolicy 在公开输入边界区分省略、空策略和非法 null。
+// 两个字段必须一起出现，不能把缺失版本解释成允许覆盖用户的旧配置。
+// 普通 Key 编辑省略此字段时保持原策略，创建时由模型应用统一默认。
+// 显式 null 与缺少 sources 都拒绝，不能借 JSON 零值形成额外授权。
+// 非负 revision 必须由调用者提供，旧页面的零版本不能覆盖已保存策略。
+// 这里仅解析外部结构；来源种类、重复和本人账号归属由模型事务统一验证。
+// sources=[] 是合法拒绝全部，与不提交 resource_policy 有不同业务含义。
+// 返回的切片不经排序，输入顺序就是本次用户允许的来源顺序。
+func parseTokenResourcePolicy(c *gin.Context, raw common.RawMessage) (*model.ResourcePolicyInput, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	var input struct {
+		Revision *int64                  `json:"revision"`
+		Sources  *[]model.ResourceSource `json:"sources"`
+	}
+	if common.Unmarshal(raw, &input) != nil || input.Revision == nil || *input.Revision < 0 || input.Sources == nil {
+		hostingError(c, model.ErrResourcePolicyInvalid)
+		return nil, false
+	}
+	return &model.ResourcePolicyInput{Revision: *input.Revision, Sources: *input.Sources}, true
+}
+
+// tokenResourcePolicyError 为新增策略冲突保留 400/409，其他错误沿用 Token API 信封。
+// 普通数据库写失败仍返回 success=false，不改变既有客户端和审计的状态码合同。
+// 策略保存与令牌修改已整体回滚，错误分类不能伪装成部分成功。
+func tokenResourcePolicyError(c *gin.Context, err error) {
+	if errors.Is(err, model.ErrResourcePolicyInvalid) || errors.Is(err, model.ErrResourcePolicyConflict) {
+		hostingError(c, err)
+		return
+	}
+	common.ApiError(c, err)
 }

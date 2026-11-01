@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"errors"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -43,23 +42,12 @@ func GetHostingResourcePolicy(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := c.GetInt("id")
-	var row model.ResourcePolicy
-	err := model.DB.Where("user_id = ? AND token_id = ?", userID, tokenID).First(&row).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		hostingError(c, err)
-		return
-	}
-	snapshot, err := model.GetEffectiveResourcePolicy(userID, tokenID)
+	view, err := model.GetResourcePolicyView(c.GetInt("id"), tokenID)
 	if err != nil {
 		hostingError(c, err)
 		return
 	}
-	sources := []model.ResourceSource{}
-	if snapshot != nil {
-		sources = snapshot.Sources
-	}
-	common.ApiSuccess(c, gin.H{"revision": row.Revision, "legacy": snapshot == nil, "sources": sources})
+	common.ApiSuccess(c, view)
 }
 
 // UpdateHostingResourcePolicy 完整替换顺序，不与旧 BillingPreference 叠加。

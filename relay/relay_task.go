@@ -335,6 +335,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 7. 预扣费：首次尝试创建计费会话；重试时会话已存在，换到更贵的渠道要在
 	//    发起上游请求前补足预扣，余额不足就不发请求。
+	// 免费任务同样受 Key 平台授权限制，不因零价绕过空策略或仅挂靠策略。
+	// 校验成功仍不创建扣费会话，任务实际零价语义保持不变。
+	// 已有会话沿用原资金合同，任务重试不能重新挑选来源。
+	if info.Billing == nil && info.PriceData.FreeModel {
+		if apiErr := service.AuthorizeFreePlatformResource(c, info); apiErr != nil {
+			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	}
 	if info.Billing != nil || !info.PriceData.FreeModel {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {

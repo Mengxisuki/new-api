@@ -2,11 +2,13 @@ package relay
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -16,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	kittypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -767,5 +770,184 @@ export function extractUsage() { return {seconds:2}; }
 			require.NotNil(t, info.TieredBillingSnapshot)
 			assert.Equal(t, tc.expressions["retry-b::declared-model"], info.TieredBillingSnapshot.ExprString)
 		})
+	}
+}
+
+// 两个真实 MJ 提交入口必须遵守同一 Key 资金顺序，不能只测试计费工厂。
+// 外部边界仅用 HTTP 上游替代，价格、预扣、任务保存、退款都使用真实实现。
+// 钱包为零仍可走订阅，禁止来源时则必须在发出 HTTP 前拒绝。
+// 同时覆盖明确拒绝后的释放，防止发送前预扣成为永久扣款。
+func TestMidjourneyResourceBillingEntries(t *testing.T) {
+	for _, entry := range []string{"imagine", "swap_face"} { // 两个入口以前各有独立钱包检查。
+		for _, scenario := range []string{"wallet", "subscription", "wallet_empty", "rejected", "failed_properties", "no_sources", "hosting_only", "free_forbidden", "insert_failure", "refund_failure", "new_period"} {
+			t.Run(entry+"/"+scenario, func(t *testing.T) {
+				db := setupRelayChannelDB(t) // 每例隔离数据库，失败不能污染下一种来源。
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Midjourney{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Log{}))
+				// 测试数据库与日志库同源；关闭异步批量以核对已提交的实际金额。
+				oldLog, oldRedis, oldBatch := model.LOG_DB, common.RedisEnabled, common.BatchUpdateEnabled
+				oldPrices := ratio_setting.ModelPrice2JSONString() // 恢复全局价格，避免让其他协议测试免费。
+				model.LOG_DB, common.RedisEnabled, common.BatchUpdateEnabled = db, false, false
+				t.Cleanup(func() {
+					model.LOG_DB, common.RedisEnabled, common.BatchUpdateEnabled = oldLog, oldRedis, oldBatch
+					require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices))
+				})
+				require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"mj_imagine":0.0002,"swap_face":0.0002}`))
+				require.NoError(t, i18n.Init())
+				wallet := 1000                  // 充足钱包用于证明订阅优先并非钱包不足的偶然结果。
+				if scenario == "wallet_empty" { // 原钱包预检会错误拦截这个有效订阅请求。
+					wallet = 0
+				}
+				require.NoError(t, db.Create(&model.User{Id: 7101, Username: "mj-policy", Quota: wallet, Status: common.UserStatusEnabled}).Error)
+				require.NoError(t, db.Create(&model.Token{Id: 7101, UserId: 7101, Key: "mj-policy", Status: common.TokenStatusEnabled, RemainQuota: 1000}).Error)
+				// 套餐真实关联到订阅；原周期标识与上游任务时间彼此独立。
+				plan := &model.SubscriptionPlan{Title: "mj-policy", Enabled: true, TotalAmount: 1000, QuotaResetPeriod: "never"}
+				require.NoError(t, db.Create(plan).Error)
+				sub := &model.UserSubscription{Id: 7101, UserId: 7101, PlanId: plan.Id, AmountTotal: 1000, Status: "active", EndTime: time.Now().Add(time.Hour).Unix(), LastResetTime: 100}
+				require.NoError(t, db.Create(sub).Error)
+				calls := 0 // 禁用来源必须保证调用次数为零，而不只返回错误。
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					// 上游收到请求前，预扣必须已经实际持久化。
+					var token model.Token
+					if !assert.NoError(t, db.First(&token, 7101).Error) {
+						http.Error(w, "database unavailable", 500)
+						return
+					}
+					assert.Equal(t, 900, token.RemainQuota) // 上游执行前预算已经减少，不能事后才收费。
+					if scenario == "rejected" {             // HTTP成功不代表MJ业务接受，必须识别响应code。
+						_, _ = w.Write([]byte(`{"code":24,"description":"rejected"}`))
+						return
+					}
+					if scenario == "failed_properties" { // 已声明失败的任务不能因code1被误认为可计费。
+						_, _ = w.Write([]byte(`{"code":1,"result":"mj-policy-task","properties":{"status":"FAILURE"}}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"code":1,"result":"mj-policy-task"}`))
+				}))
+				t.Cleanup(upstream.Close)
+				service.InitHttpClient() // 走实际HTTP客户端，不替换提交函数或资金方法。
+				channel := &model.Channel{Id: 7101, Name: "mj-policy", Key: "test", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL}
+				require.NoError(t, db.Create(channel).Error)
+				// 同一策略还可关闭所有平台来源，挂靠不能冒充 MJ 执行器。
+				sources := []model.ResourceSource{{Kind: "wallet", Enabled: true}, {Kind: "subscription", Enabled: true}}
+				if scenario != "wallet" && scenario != "wallet_empty" { // 同样的两个来源仅调整顺序。
+					sources[0], sources[1] = sources[1], sources[0]
+				}
+				if scenario == "no_sources" { // 空策略是禁止全部，不是恢复旧钱包合同。
+					sources = nil
+				}
+				if scenario == "hosting_only" || scenario == "free_forbidden" {
+					sources = []model.ResourceSource{{Kind: "hosting", AccountID: 1, Enabled: true}, {Kind: "wallet", Enabled: false}}
+				}
+				if scenario == "free_forbidden" { // 零价只免资金，不能免平台访问授权。
+					require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"mj_imagine":0,"swap_face":0}`))
+				}
+				recorder := httptest.NewRecorder() // 观察真实handler响应写入而非手动构造返回值。
+				c, _ := gin.CreateTestContext(recorder)
+				body, path, modelName := `{"prompt":"test"}`, "/mj/submit/imagine", "mj_imagine"
+				if entry == "swap_face" {
+					body, path, modelName = `{"sourceBase64":"source","targetBase64":"target"}`, "/mj/insight-face/swap", "swap_face"
+				}
+				c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				c.Set("base_url", upstream.URL) // 目标固定为本地测试上游，绝不访问生产。
+				c.Set("channel_id", 7101)       // 统计和退款须关联真实执行渠道。
+				c.Set("oak.resource_policy", &model.ResourcePolicySnapshot{Revision: "mj-test", Sources: sources})
+				info := &relaycommon.RelayInfo{UserId: 7101, TokenId: 7101, TokenKey: "mj-policy", RequestId: "mj-policy-request", OriginModelName: modelName, UsingGroup: "default", UserGroup: "default", StartTime: time.Now(), RelayMode: relayconstant.RelayModeMidjourneyImagine}
+				// 任务持久化失败必须释放预扣，不向客户端返回伪造的提交成功。
+				if scenario == "insert_failure" { // 资金已预扣，但没有可交付任务时必须释放。
+					require.NoError(t, db.Callback().Create().Before("gorm:create").Register("mj-insert-failure", func(tx *gorm.DB) {
+						if tx.Statement.Table == "midjourneys" { // 只阻断任务保存，保留真实资金事务。
+							tx.AddError(errors.New("task insert failed"))
+						}
+					}))
+					t.Cleanup(func() { db.Callback().Create().Remove("mj-insert-failure") })
+				}
+				var apiErr *dto.MidjourneyResponse // 外部错误保持MJ现有响应格式。
+				if entry == "swap_face" {
+					apiErr = RelaySwapFace(c, info)
+				} else {
+					apiErr = RelayMidjourneySubmit(c, info)
+				}
+				forbidden := scenario == "no_sources" || scenario == "hosting_only" || scenario == "free_forbidden"
+				if forbidden || scenario == "insert_failure" { // 权限和持久化错误必须让调用方看见。
+					require.NotNil(t, apiErr)
+				} else {
+					require.Nil(t, apiErr)
+				}
+				if forbidden {
+					require.Zero(t, calls) // 不得先访问上游再发现账号池不支持MJ。
+				} else {
+					require.Equal(t, 1, calls) // 任何业务结果都不能跨来源重复提交同一任务。
+				}
+				charged := !forbidden && scenario != "rejected" && scenario != "failed_properties" && scenario != "insert_failure"
+				var user model.User // 钱包金额与订阅用量独立核对，不能相互替代。
+				var token model.Token
+				require.NoError(t, db.First(&user, 7101).Error)
+				require.NoError(t, db.First(&token, 7101).Error)
+				require.NoError(t, db.First(sub, 7101).Error)
+				// 成功只扣一次，拒绝和保存失败恢复原来源及 Key 预算。
+				if !charged { // 拒绝类场景不会进入异步退款阶段。
+					assert.Equal(t, wallet, user.Quota)
+					assert.EqualValues(t, 0, sub.AmountUsed)
+					assert.Equal(t, 1000, token.RemainQuota) // 请求预算应恢复初值，不能因重放多退。
+					return
+				}
+				expectedSource := "subscription" // 成功来源需同时反映在余额和持久任务中。
+				if scenario == "wallet" {
+					expectedSource = "wallet"
+					assert.Equal(t, 900, user.Quota)
+					assert.Zero(t, sub.AmountUsed)
+				} else {
+					assert.Equal(t, wallet, user.Quota)
+					assert.EqualValues(t, 100, sub.AmountUsed) // 真正订阅账目必须保留预扣，供恢复再退。
+				}
+				assert.Equal(t, 900, token.RemainQuota) // 上游执行前预算已经减少，不能事后才收费。
+				var task model.Midjourney
+				require.NoError(t, db.Where("mj_id = ?", "mj-policy-task").First(&task).Error)
+				require.Equal(t, expectedSource, task.BillingSource) // 后台不得依据用户以后修改的Key重新选择来源。
+				require.Equal(t, 100, task.Quota)                    // 固定价格只记录一次实际扣费。
+				stale := task                                        // 模拟另一轮已读到旧退款标记的轮询进程。
+				if expectedSource == "subscription" {
+					require.Equal(t, 7101, task.SubscriptionId)
+					require.EqualValues(t, 100, task.SubscriptionResetTime) // 周期快照必须来自预扣时，不能用上游提交时间。
+				}
+				// 错误注入发生在真正的资金更新之后，整个事务仍必须回滚。
+				if scenario == "refund_failure" { // 后半段失败也必须撤销已执行的资金返还。
+					require.NoError(t, db.Callback().Update().Before("gorm:update").Register("mj-refund-failure", func(tx *gorm.DB) {
+						if tx.Statement.Table == "tokens" { // 定位事务第二种资金约束，验证不是部分退款。
+							tx.AddError(errors.New("token update failed"))
+						}
+					}))
+					assert.False(t, service.RefundMidjourneyQuota(c, &task, "failed")) // 失败不得吞掉或伪报成功。
+					db.Callback().Update().Remove("mj-refund-failure")
+					require.NoError(t, db.First(sub, 7101).Error)
+					assert.EqualValues(t, 100, sub.AmountUsed) // 真正订阅账目必须保留预扣，供恢复再退。
+					require.NoError(t, db.First(&task, task.Id).Error)
+					assert.Equal(t, 100, task.Quota) // 未完成退款必须保留持久恢复标记。
+				}
+				// 新周期已有其他消费时，旧任务退款只恢复 Key，不能释放新额度。
+				if scenario == "new_period" {
+					require.NoError(t, db.Model(sub).Updates(map[string]any{"last_reset_time": 200, "amount_used": 70}).Error)
+				}
+				require.True(t, service.RefundMidjourneyQuota(c, &task, "failed"))
+				require.True(t, service.RefundMidjourneyQuota(c, &stale, "duplicate stale poll"))
+				// 旧轮询快照保存也不能重新创建退款标记。
+				stale.Quota = 100                  // 主动模拟过期金额重新进入普通保存路径。
+				require.NoError(t, stale.Update()) // 进度保存不能重建已经退清的资金状态。
+				require.NoError(t, db.First(&task, task.Id).Error)
+				assert.Zero(t, task.Quota) // 数据库中的幂等标记最终只有一个终态。
+				require.NoError(t, db.First(&user, 7101).Error)
+				require.NoError(t, db.First(&token, 7101).Error)
+				require.NoError(t, db.First(sub, 7101).Error)
+				assert.Equal(t, wallet, user.Quota)
+				assert.Equal(t, 1000, token.RemainQuota) // 请求预算应恢复初值，不能因重放多退。
+				if scenario == "new_period" {
+					assert.EqualValues(t, 70, sub.AmountUsed) // 另一周期的真实消费应完整保留。
+				} else {
+					assert.Zero(t, sub.AmountUsed)
+				}
+			})
+		}
 	}
 }

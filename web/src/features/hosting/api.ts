@@ -30,7 +30,6 @@ import {
   observationSchema,
   resetOperationSchema,
   hostingTestSchema,
-  type ResourceSource,
   type HostingAuthorization,
 } from './types'
 
@@ -83,21 +82,6 @@ export async function getHostingStatus() {
 export async function getResourcePolicy(tokenId: number) {
   const response = await api.get(`${root}/tokens/${tokenId}/policy`, {
     disableDuplicate: true,
-  })
-  return policySchema.parse(requireServerSuccess(response.data).data)
-}
-// 提交完整顺序和读取时版本，冲突保留为失败，不能自动扩大付费授权。
-// 空数组明确禁止所有来源，与未配置策略不同。
-// 新账号和钱包都必须由用户选中，不在接口层偷偷加入。
-// 保存 A Key 不更改 B Key，也不写回旧的用户计费偏好。
-export async function saveResourcePolicy(
-  revision: number,
-  sources: ResourceSource[],
-  tokenId: number
-) {
-  const response = await api.put(`${root}/tokens/${tokenId}/policy`, {
-    revision,
-    sources,
   })
   return policySchema.parse(requireServerSuccess(response.data).data)
 }
@@ -310,10 +294,10 @@ export async function resumeResetOperation(operationId: string, proof: string) {
 }
 
 // 统一 Key 模型目录由服务端按来源、模型权限与验证记录交集生成。
-// 缺少 verified 不代表通过；配置导出只能使用已验证 Responses 模型。
+// 平台协议按渠道能力导出，挂靠 Responses 则继续要求真实验证。
 // 模型列表还要满足当前 Key 的模型限制。
 // 协议数组按验证事实生成，不从模型名称猜测协议。
-// 没有 verified 的记录只供发现，不能用于已验证导出。
+// 平台协议单独返回，不能借同名模型的其他来源绕过挂靠验证。
 export async function getTokenResourceModels(tokenId: number) {
   const response = await api.get(`${root}/tokens/${tokenId}/models`, {
     disableDuplicate: true,
@@ -325,6 +309,7 @@ export async function getTokenResourceModels(tokenId: number) {
           id: z.string(),
           protocols: z.array(z.string()).optional(),
           verified: z.boolean().optional(),
+          platform_protocols: z.array(z.string()).optional(),
         })
       ),
     })

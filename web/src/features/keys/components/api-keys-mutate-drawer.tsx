@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, KeyRound, Settings2, WalletCards } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
@@ -94,6 +94,7 @@ import {
 } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
+import { ResourcePriorityEditor } from './resource-priority-editor'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -110,9 +111,12 @@ export function ApiKeysMutateDrawer({
   const isUpdate = !!currentRow
   const currentRowId = currentRow?.id
   const { triggerRefresh } = useApiKeys()
+  const queryClient = useQueryClient()
   const { status, loading: statusLoading } = useStatus()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // 版本和草稿同时冻结；后台刷新不得替旧草稿取得新版本覆盖权限。
+  const [policyRevision, setPolicyRevision] = useState(0)
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
     null
   )
@@ -212,6 +216,7 @@ export function ApiKeysMutateDrawer({
         getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
       )
       setInitializedTarget(null)
+      setPolicyRevision(0)
       return
     }
     if (
@@ -236,6 +241,7 @@ export function ApiKeysMutateDrawer({
             maxAutoGroups
           )
         )
+        setPolicyRevision(apiKeyData.data.resource_policy?.revision ?? 0)
         setInitializedTarget(target)
       }
     } else {
@@ -268,6 +274,8 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
+  // 渲染期间订阅脏字段，确保编辑模式会提交用户真实改变的来源。
+  const resourceSourcesDirty = !!form.formState.dirtyFields.resource_sources
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -291,6 +299,19 @@ export function ApiKeysMutateDrawer({
     setIsSubmitting(true)
     try {
       const basePayload = transformFormDataToPayload(data)
+      // 创建时同时提交策略，批量中的每个 Key 都拥有独立副本。
+      // 不先创建再保存策略，后者失败会让已交付 Key 按错误来源计费。
+      // 编辑模式允许 sources 为空，代表用户明确拒绝所有资源。
+      // 脏标记回到 false 时省略字段，撤销排序不应产生一次隐式授权。
+      // 此处不根据套餐、余额或账号列表推导用户想要的配置。
+      // 普通编辑不重写策略，避免改名把旧授权升级为全账号池。
+      // revision 来自详情，用于拒绝另一个窗口覆盖本次草稿。
+      if (!isUpdate || resourceSourcesDirty) {
+        basePayload.resource_policy = {
+          revision: policyRevision,
+          sources: data.resource_sources,
+        }
+      }
 
       if (isUpdate && currentRow) {
         const result = await updateApiKey({
@@ -298,6 +319,14 @@ export function ApiKeysMutateDrawer({
           id: currentRow.id,
         })
         if (result.success) {
+          // 来源变更后客户端导出必须刷新当前 Key 的目录与策略。
+          // 失效仅触发后续读取，不重放模型请求或显示明文 Key。
+          void queryClient.invalidateQueries({
+            queryKey: ['hosting', 'policy', currentRow.id],
+          })
+          void queryClient.invalidateQueries({
+            queryKey: ['hosting', 'models', 'token', currentRow.id],
+          })
           toast.success(t(SUCCESS_MESSAGES.API_KEY_UPDATED))
           onOpenChange(false)
           triggerRefresh()
@@ -409,6 +438,36 @@ export function ApiKeysMutateDrawer({
                     <FormControl>
                       <Input {...field} placeholder={t('Enter a name')} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/*
+               * 资源顺序独立于渠道分组，放在分组前避免混淆两层选择。
+               * 来源控件共用表单保存，不另建有独立提交按钮的弹窗。
+               * 新 Key 展示三类默认来源，旧 Key 展示详情中的原授权。
+               * 未完成初始化不能拖动，以免默认显示抢先覆盖旧合同。
+               * 键盘和指针操作都通过 field.onChange 标记真实草稿变化。
+               * 不把资源余额放进表单，保存期间余额变化不会重排来源。
+               * 组件使用具名 group，读屏不依赖没有单个输入框的 label。
+               */}
+              <FormField
+                control={form.control}
+                name='resource_sources'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Resource priority')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Try enabled resources from left to right. Skip resources with insufficient quota or unsupported interfaces.'
+                      )}
+                    </FormDescription>
+                    <ResourcePriorityEditor
+                      value={field.value}
+                      disabled={isSubmitting || !isFormInitialized}
+                      onChange={field.onChange}
+                    />
                     <FormMessage />
                   </FormItem>
                 )}

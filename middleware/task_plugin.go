@@ -393,6 +393,14 @@ func RouteTaskPluginEndpoint() gin.HandlerFunc {
 	}
 }
 
+// HasTaskPluginEndpoint 复用宿主端点解析，供来源调度在发送前归还任务执行权。
+// 同时保留模型别名与插件声明约束，不用渠道类型猜测共享端点归属。
+// 此查询不运行插件、不选择渠道，也不发出上游请求。
+func HasTaskPluginEndpoint(method, path, modelName string) bool {
+	_, found := lookupTaskPluginEndpoint(pluginruntime.DefaultRegistry.Generation(), method, path, modelName)
+	return found
+}
+
 func lookupTaskPluginEndpoint(generation *pluginruntime.RoutingGeneration, method, path, modelName string) (pluginruntime.PinnedEndpoint, bool) {
 	lookupModel, pinModel, mappedModel := modelName, modelName, ""
 	if declared, ok := generation.CanonicalModel(modelName); ok {

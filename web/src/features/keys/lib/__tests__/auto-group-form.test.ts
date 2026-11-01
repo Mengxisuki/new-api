@@ -37,6 +37,11 @@ const t = ((key: string, options?: Record<string, unknown>) => {
 const baseApiKey: ApiKey = {
   id: 1,
   name: 'test',
+  resource_policy: {
+    revision: 0,
+    legacy: true,
+    sources: [{ kind: 'wallet', enabled: true }],
+  },
   key: 'sk-test',
   status: 1,
   remain_quota: 0,

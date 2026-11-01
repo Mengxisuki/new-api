@@ -211,11 +211,17 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	}
 
 	if usage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, usage, sumUsage)
+		// 尾部仍可能有未预留用量，失败不能静默丢失；最终实际总量仍交结算。
+		if err := preConsumeUsage(c, info, usage, sumUsage); err != nil {
+			logger.LogError(c, common.LogText("realtime final reserve failed: %s", err.Error()))
+		}
 	}
 
 	if localUsage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, localUsage, sumUsage)
+		// 本地统计补偿同样走冻结会话，错误日志用于定位余额不足或提交异常。
+		if err := preConsumeUsage(c, info, localUsage, sumUsage); err != nil {
+			logger.LogError(c, common.LogText("realtime final reserve failed: %s", err.Error()))
+		}
 	}
 
 	// check usage total tokens, if 0, use local usage
@@ -223,6 +229,9 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	return nil, sumUsage
 }
 
+// preConsumeUsage 保留上游及本地用量累计，再补足当前连接的预留。
+// 已输出的用量即使补预留失败也不能删掉，最终结算必须看到真实消耗。
+// 本函数不重新鉴权或选择钱包/订阅，资金来源由首次 BillingSession 冻结。
 func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
@@ -236,7 +245,12 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 	totalUsage.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
 	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
 	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
-	// clear usage
-	err := service.PreWssConsumeQuota(ctx, info, usage)
+	// 有计费会话时使用累计量补预留，资金来源由握手前首次预扣冻结。
+	// 旧无会话入口仍使用事件增量，不能把累计量重复扣入旧钱包链。
+	billingUsage := usage
+	if info.Billing != nil {
+		billingUsage = totalUsage
+	}
+	err := service.PreWssConsumeQuota(ctx, info, billingUsage)
 	return err
 }

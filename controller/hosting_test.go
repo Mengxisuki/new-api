@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -162,7 +163,7 @@ func TestHostingPolicyContracts(t *testing.T) {
 	path := fmt.Sprintf("/api/hosting/tokens/%d/policy", tokens[1].Id)
 	response := hostingTestRequest(t, identity, "DELETE", "/api/hosting/tokens/:token_id/policy", path, "", "", DeleteHostingResourcePolicy)
 	assert.Equal(t, 200, response.Code)
-	assert.JSONEq(t, `{"success":true,"message":"","data":{"revision":0,"legacy":true,"sources":[]}}`, response.Body.String())
+	assert.JSONEq(t, `{"success":true,"message":"","data":{"revision":0,"legacy":true,"sources":[{"kind":"subscription","enabled":true},{"kind":"wallet","enabled":true}]}}`, response.Body.String())
 	// A 保留原来的策略，即使 B 删除，也不会重新查询任何全局来源。
 	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, tokens[0].Id)
 	require.NoError(t, err)
@@ -171,6 +172,162 @@ func TestHostingPolicyContracts(t *testing.T) {
 	require.NoError(t, model.DB.Model(&model.ResourcePolicy{}).Where("user_id = ? AND token_id = ?", user.Id, tokens[0].Id).Update("sources_json", "broken").Error)
 	_, err = model.GetEffectiveResourcePolicy(user.Id, tokens[0].Id)
 	require.Error(t, err) // 损坏不能降级为钱包可用，从而改变费用授权。
+}
+
+// TestTokenResourcePolicyAtomicEditing 通过真实会话验证 Key 字段与策略同事务保存。
+// 新建默认授权顺序固定，但旧 Key 普通编辑不得悄悄获得新收费来源。
+// 明确空策略可以保存，省略和 null 不能混淆。
+// 版本冲突同时回滚名称，避免界面提示失败但普通字段已经变更。
+// 创建失败也不能留下没有策略的半成品 Key。
+// GET 详情和独立策略接口必须返回相同编辑投影。
+// 所有断言重新读取真实数据库，测试本身不拼接执行时策略。
+// 版本错误采用冲突状态，输入错误采用校验状态，两者都不能残留新 Key。
+// 控制台请求采用真实会话身份，不直接伪造用户上下文来替代鉴权。
+func TestTokenResourcePolicyAtomicEditing(t *testing.T) {
+	user, identity := hostingTestDB(t)
+	create := func(extra string) *httptest.ResponseRecorder {
+		return hostingTestRequest(t, identity, "POST", "/api/token/", "/api/token/", `{"name":"atomic-key","expired_time":-1,"unlimited_quota":true`+extra+`}`, "", AddToken)
+	}
+	response := create("")
+	require.Equal(t, 200, response.Code, response.Body.String())
+	var created struct {
+		Data struct {
+			ID             int                      `json:"id"`
+			ResourcePolicy model.ResourcePolicyView `json:"resource_policy"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &created))
+	require.Positive(t, created.Data.ID)
+	require.Equal(t, int64(1), created.Data.ResourcePolicy.Revision)
+	require.False(t, created.Data.ResourcePolicy.Legacy)
+	require.Equal(t, []model.ResourceSource{{Kind: "wallet", Enabled: true}, {Kind: "subscription", Enabled: true}, {Kind: "hosting_pool", Enabled: true}}, created.Data.ResourcePolicy.Sources)
+	// 不暴露完整 Key；创建响应只用于刷新界面，明文仍走已有单独接口。
+	saved, err := model.GetTokenByIds(created.Data.ID, user.Id)
+	require.NoError(t, err)
+	require.NotContains(t, response.Body.String(), saved.Key)
+	// 无效新策略必须回滚已创建的令牌行，而非仅拒绝来源子表。
+	for _, extra := range []string{`,"resource_policy":null`, `,"resource_policy":{"revision":0}`, `,"resource_policy":{"revision":0,"sources":[{"kind":"invalid","enabled":true}]}`} {
+		invalid := create(extra)
+		require.Equal(t, 400, invalid.Code, invalid.Body.String())
+	}
+	count, err := model.CountUserTokens(user.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+	// 旧版本保存名称与策略必须整体失败，不能造成部分更新。
+	body := fmt.Sprintf(`{"id":%d,"name":"must-rollback","expired_time":-1,"unlimited_quota":true,"resource_policy":{"revision":0,"sources":[]}}`, saved.Id)
+	conflict := hostingTestRequest(t, identity, "PUT", "/api/token/", "/api/token/", body, "", UpdateToken)
+	require.Equal(t, 409, conflict.Code, conflict.Body.String())
+	saved, err = model.GetTokenByIds(saved.Id, user.Id)
+	require.NoError(t, err)
+	require.Equal(t, "atomic-key", saved.Name)
+	// 明确关闭全部来源是合法策略；普通改名随后省略策略应保留该拒绝授权。
+	body = strings.ReplaceAll(body, `"revision":0`, `"revision":1`)
+	updated := hostingTestRequest(t, identity, "PUT", "/api/token/", "/api/token/", body, "", UpdateToken)
+	require.Equal(t, 200, updated.Code, updated.Body.String())
+	view, err := model.GetResourcePolicyView(user.Id, saved.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), view.Revision)
+	require.Empty(t, view.Sources)
+	// 详情采用未展开的可编辑投影，不能把动态池快照写回用户设置。
+	path := fmt.Sprintf("/api/token/%d", saved.Id)
+	detail := hostingTestRequest(t, identity, "GET", "/api/token/:id", path, "", "", GetToken)
+	require.Equal(t, 200, detail.Code, detail.Body.String())
+	require.NoError(t, common.Unmarshal(detail.Body.Bytes(), &created))
+	require.Equal(t, *view, created.Data.ResourcePolicy)
+	// 仅状态开关不能暗中携带费用授权变更。
+	status := hostingTestRequest(t, identity, "PUT", "/api/token/", "/api/token/?status_only=true", body, "", UpdateToken)
+	require.Equal(t, 400, status.Code, status.Body.String())
+}
+
+// TestTokenResourcePolicyLegacyAndPool 验证旧合同只读投影与动态本人账号池。
+// 默认钱包顺序仅适用于新建，四类旧偏好都不自动迁移。
+// 池展开只取本人 active 且未暂停账号，排序使用稳定账号 ID。
+// 新接入可用账号影响下一请求，但不会改变持久策略版本。
+// 显式账号策略不自动变池，池和显式账号也不能混合扩大授权。
+// 三库复用同一隔离夹具，不能按方言跳过归属和回滚断言。
+func TestTokenResourcePolicyLegacyAndPool(t *testing.T) {
+	user, identity := hostingTestDB(t)
+	token := &model.Token{UserId: user.Id, Key: "legacy-pool", Name: "legacy", ExpiredTime: -1}
+	require.NoError(t, model.DB.Create(token).Error)
+	for preference, kinds := range map[string][]string{"wallet_only": {"wallet"}, "subscription_only": {"subscription"}, "wallet_first": {"wallet", "subscription"}, "subscription_first": {"subscription", "wallet"}} {
+		setting := user.GetSetting()
+		setting.BillingPreference = preference
+		require.NoError(t, model.UpdateUserSetting(user.Id, setting))
+		view, err := model.GetResourcePolicyView(user.Id, token.Id)
+		require.NoError(t, err)
+		require.True(t, view.Legacy)
+		var actual []string
+		for _, source := range view.Sources {
+			actual = append(actual, source.Kind)
+		}
+		require.Equal(t, kinds, actual)
+		// 读取不落库；普通改名仍保留旧偏好的执行分支及溢出限制。
+		body := fmt.Sprintf(`{"id":%d,"name":"legacy-renamed","expired_time":-1}`, token.Id)
+		response := hostingTestRequest(t, identity, "PUT", "/api/token/", "/api/token/", body, "", UpdateToken)
+		require.Equal(t, 200, response.Code, response.Body.String())
+		snapshot, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
+		require.NoError(t, err)
+		require.Nil(t, snapshot)
+	}
+	accounts := []model.HostingAccount{
+		{UserID: user.Id, RemoteRef: "pool-active", Status: "active"},
+		{UserID: user.Id, RemoteRef: "pool-paused", Status: "active", Paused: true},
+		{UserID: user.Id, RemoteRef: "pool-pending", Status: "connected"},
+		{UserID: user.Id + 1, RemoteRef: "pool-foreign", Status: "active"},
+	}
+	require.NoError(t, model.DB.Create(&accounts).Error)
+	_, err := model.SaveResourcePolicy(user.Id, token.Id, 0, []model.ResourceSource{{Kind: "hosting_pool", Enabled: true}})
+	require.NoError(t, err)
+	snapshot, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
+	require.NoError(t, err)
+	require.Equal(t, []model.ResourceSource{{Kind: "hosting", AccountID: accounts[0].ID, Enabled: true}}, snapshot.Sources)
+	// 解除暂停只改变动态可用集合，不要求修改每一把 Key。
+	require.NoError(t, model.DB.Model(&accounts[1]).Update("paused", false).Error)
+	next, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
+	require.NoError(t, err)
+	require.Len(t, next.Sources, 2)
+	require.Equal(t, snapshot.Revision, next.Revision)
+	require.Equal(t, accounts[1].ID, next.Sources[1].AccountID)
+	// 编辑仍返回池标识，不能将请求快照误作为新的显式账号授权。
+	view, err := model.GetResourcePolicyView(user.Id, token.Id)
+	require.NoError(t, err)
+	require.Equal(t, []model.ResourceSource{{Kind: "hosting_pool", Enabled: true}}, view.Sources)
+	_, err = model.SaveResourcePolicy(user.Id, token.Id, 1, []model.ResourceSource{{Kind: "hosting_pool", Enabled: true}, {Kind: "hosting", AccountID: accounts[0].ID, Enabled: true}})
+	require.ErrorIs(t, err, model.ErrResourcePolicyInvalid)
+}
+
+// TestTokenResourcePolicyRegistrationDefault 验证注册赠送 Key 不绕过统一新建合同。
+// 走真实匿名注册处理器，用户与 Key 都由生产逻辑创建。
+// 创建来源不依赖旧默认 BillingPreference，也无需用户先打开来源编辑器。
+// 测试暂时开启本地注册和默认 Key，不修改部署配置。
+// 空邮箱不触发邮件验证或外部通知，验证只依赖隔离数据库。
+// 余额赠送设为零，避免测试引入与来源保存无关的消费日志。
+// 所有全局开关在结束时恢复，不能影响后续鉴权与注册用例。
+// 最终读取新用户的实际 Token 策略，不能只依据注册成功信封推断。
+func TestTokenResourcePolicyRegistrationDefault(t *testing.T) {
+	hostingTestDB(t)
+	register, password, email, generate, quota := common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled, constant.GenerateDefaultToken, common.QuotaForNewUser
+	common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled, constant.GenerateDefaultToken, common.QuotaForNewUser = true, true, false, true, 0
+	t.Cleanup(func() {
+		common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled, constant.GenerateDefaultToken, common.QuotaForNewUser = register, password, email, generate, quota
+	})
+	engine := gin.New()
+	engine.POST("/api/user/register", Register)
+	request := httptest.NewRequest("POST", "/api/user/register", strings.NewReader(`{"username":"registration-policy","password":"RegistrationPassword123!"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	// 注册成功必须同时拥有已保存的默认 Key，不接受只创建用户后假报完成。
+	require.True(t, decodeAPIResponse(t, response).Success, response.Body.String())
+	var owner model.User
+	require.NoError(t, model.DB.Where("username = ?", "registration-policy").First(&owner).Error)
+	var token model.Token
+	require.NoError(t, model.DB.Where("user_id = ?", owner.Id).First(&token).Error)
+	// 无存量迁移：这里只检查本次新增用户的 Key，并保留默认来源的精确顺序。
+	view, err := model.GetResourcePolicyView(owner.Id, token.Id)
+	require.NoError(t, err)
+	require.False(t, view.Legacy)
+	require.Equal(t, []model.ResourceSource{{Kind: "wallet", Enabled: true}, {Kind: "subscription", Enabled: true}, {Kind: "hosting_pool", Enabled: true}}, view.Sources)
 }
 
 // TestHostingFreshUpgradeRepeatMigration 先保留真实业务行，再模拟尚无验证字段的旧表。

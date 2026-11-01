@@ -107,7 +107,7 @@ func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 func migrateTokenControllerTestDB(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
-	if err := db.AutoMigrate(&model.Token{}); err != nil {
+	if err := db.AutoMigrate(&model.Token{}, &model.User{}, &model.ResourcePolicy{}, &model.HostingAccount{}); err != nil {
 		t.Fatalf("failed to migrate token table: %v", err)
 	}
 }
@@ -191,6 +191,10 @@ func seedToken(t *testing.T, db *gorm.DB, userID int, name string, rawKey string
 
 func newAuthenticatedContext(t *testing.T, method string, target string, body any, userID int) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
+
+	// 控制器现在原子保存 Key 与来源，需要真实所有者而非只有上下文 ID。
+	// 保留已有用户设置；夹具只补缺失身份，不替测试更改权限与偏好。
+	require.NoError(t, model.DB.Where("id = ?", userID).FirstOrCreate(&model.User{Id: userID, Username: fmt.Sprintf("token-user-%d", userID), AffCode: fmt.Sprintf("tok-%d", userID)}).Error)
 
 	var requestBody *bytes.Reader
 	if body != nil {
@@ -736,7 +740,10 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}))
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.ResourcePolicy{}, &model.HostingAccount{}, &model.Option{}))
+				// PAT 审计不能依赖另一个测试先初始化迁移宽限期。
+				// 使用真实启动入口加载当前隔离库配置，单独执行本矩阵也保持确定性。
+				require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {

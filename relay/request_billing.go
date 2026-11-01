@@ -61,6 +61,11 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 	}
 	if priceData.FreeModel {
+		// 免费模型也需要启用平台来源，但不能为检查授权制造订阅预扣。
+		// 未授权时停止发送，避免免费适配器绕过用户关闭的平台来源。
+		if apiErr := service.AuthorizeFreePlatformResource(c, info); apiErr != nil {
+			return apiErr
+		}
 		logger.LogInfo(c, common.LogText("model %s is free, skipping pre-consume", info.OriginModelName))
 		return nil
 	}

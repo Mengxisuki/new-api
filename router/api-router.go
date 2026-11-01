@@ -209,7 +209,6 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)
 			subscriptionRoute.POST("/invoice-quote", controller.SubscriptionInvoiceQuote)
 			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)
-			subscriptionRoute.PUT("/self/preference", controller.UpdateSubscriptionPreference)
 			// 订阅直接向官方商户付款，绝不复用钱包余额兑换。
 			subscriptionRoute.POST("/official/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestOfficialPay)
 			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)

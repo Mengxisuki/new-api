@@ -33,7 +33,7 @@ import { getTokenResourceModels } from '../api'
 // 入口位于具体 Key 的管理菜单，不再在挂靠页重复选择 Key。
 // 父弹窗按 Key 编号重挂载，切换或关闭会清理模型选择和已读秘密。
 // 配置只使用当前 Key 的授权目录，不改变资源顺序。
-// 仅输出通过真实验证记录的 Responses 配置，不把模型发现当作客户端兼容验收。
+// 平台已支持的 Responses 可导出，挂靠发现记录仍须先完成实际验证。
 // TOML 字符串用 JSON 转义表达，防止模型名或站点地址破坏配置结构。
 // 配置子组件只接收非敏感 Key 编号。
 // 明文密钥保存在当前 mutation 结果内，不放进 query 持久缓存。
@@ -43,7 +43,7 @@ import { getTokenResourceModels } from '../api'
 // 读取失败由应用统一错误链反馈，不返回空字符串冒充成功。
 // 模型查询不使用全站定价目录，定价可见性不等于调用权限。
 // 服务端可能返回不同协议，导出必须核对 Responses 支持事实。
-// verified 缺省为未验证，不能用真假默认值放宽条件。
+// verified 缺省不为挂靠授权，平台能力则由独立协议字段表达。
 // 模型确实通过验证仍可能受到额度与状态限制，配置不是可用性承诺。
 // 生成配置不发出模型请求，不在浏览或复制时消耗原厂额度。
 // 环境变量命名固定为产品提供的客户端约定，不改变站点会话。
@@ -74,7 +74,9 @@ export function HostingClientConfig(props: { tokenId: number }) {
   })
   const verified =
     models.data?.models.filter(
-      (item) => item.verified === true && item.protocols?.includes('responses')
+      (item) =>
+        item.platform_protocols?.includes('responses') ||
+        (item.verified === true && item.protocols?.includes('responses'))
     ) ?? []
   // 每次目录变化重新确认选中模型仍已验证，策略改变不会沿用旧可导出状态。
   const supported = verified.some((item) => item.id === selected)
@@ -138,7 +140,7 @@ export function HostingClientConfig(props: { tokenId: number }) {
       )}
       <Field>
         <FieldLabel htmlFor='hosting-config-model'>
-          {t('Verified Codex model')}
+          {t('Codex model')}
         </FieldLabel>
         <Combobox
           id='hosting-config-model'
@@ -157,9 +159,7 @@ export function HostingClientConfig(props: { tokenId: number }) {
       </Field>
       {models.isSuccess && !verified.length && (
         <p role='status'>
-          {t(
-            'No model has a verified Responses connection for this key. Test the account before exporting configuration.'
-          )}
+          {t('No authorized model supports this application for this API key.')}
         </p>
       )}
       {/*

@@ -206,6 +206,13 @@ describe('具体 API Key 的客户端配置', () => {
                 },
                 // 其他协议的成功记录不能替代 Codex Responses 的实测记录。
                 { id: 'chat-only', verified: true, protocols: ['chat'] },
+                // 同名模型的其他平台协议不能为未实测挂靠 Responses 背书。
+                {
+                  id: 'split-protocol',
+                  verified: false,
+                  protocols: ['responses', 'claude'],
+                  platform_protocols: ['claude'],
+                },
               ],
             },
           },
@@ -227,7 +234,7 @@ describe('具体 API Key 的客户端配置', () => {
     // 地址复制属于公开信息，不应因为尚未验证模型而一并隐藏。
     expect(
       await screen.findByText(
-        'No model has a verified Responses connection for this key. Test the account before exporting configuration.'
+        'No authorized model supports this application for this API key.'
       )
     ).toBeVisible()
     expect(
@@ -241,9 +248,7 @@ describe('具体 API Key 的客户端配置', () => {
     ).not.toBeInTheDocument()
     // 打开真实下拉验证过滤结果，而非只检查没有默认选中模型。
     // 即使服务端返回了型号，也只有满足两项协议合同的选项才能出现。
-    await user.click(
-      screen.getByRole('combobox', { name: 'Verified Codex model' })
-    )
+    await user.click(screen.getByRole('combobox', { name: 'Codex model' }))
     // 可访问选项为空说明不可导出的型号没有在交互层残留。
     // 目录中有数据却不可用时仍保留可读解释，不冒充加载中。
     // 此处不限制下拉空状态的具体文案，让共享控件保持独立演进。
@@ -260,160 +265,173 @@ describe('具体 API Key 的客户端配置', () => {
   // 第一次明文不带前缀，第二次已带前缀，覆盖规范化的两条公共行为。
   // 两个 HTTP 地址都用数值 id，不按显示名或数组位置寻找 Key。
   // 返回同名模型的同时保留专属型号，既验证重置也验证目录隔离。
-  it('按当前 Key 导出配置，切换 Key 后清除相同型号的旧选择与已读取秘密', async () => {
-    const user = userEvent.setup()
-    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
-      if (url === '/api/status') return { data: { success: true, data: {} } }
-      if (url === '/api/hosting/tokens/11/models') {
-        return {
-          data: {
-            success: true,
-            data: { models: [sharedModel, workOnlyModel] },
-          },
+  // 平台能力独立于挂靠实测，两个来源都必须保留相同的 Key 隔离。
+  it.each([false, true])(
+    '按当前 Key 导出配置并清理切换后的旧秘密（平台来源：%s）',
+    async (platform) => {
+      const shared = {
+        ...sharedModel,
+        verified: !platform,
+        platform_protocols: platform ? ['responses'] : [],
+      }
+      const user = userEvent.setup()
+      const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+        if (url === '/api/status') return { data: { success: true, data: {} } }
+        if (url === '/api/hosting/tokens/11/models') {
+          return {
+            data: {
+              success: true,
+              data: { models: [shared, workOnlyModel] },
+            },
+          }
         }
-      }
-      if (url === '/api/hosting/tokens/22/models') {
-        return {
-          data: {
-            success: true,
-            data: { models: [sharedModel, travelOnlyModel] },
-          },
+        if (url === '/api/hosting/tokens/22/models') {
+          return {
+            data: {
+              success: true,
+              data: { models: [shared, travelOnlyModel] },
+            },
+          }
         }
-      }
-      throw new Error(`Unexpected GET ${url}`)
-    })
-    // 密钥读取接口使用原有 POST 合同，不伪造一个新的配置导出接口。
-    // 每份响应只含当前 Key 的明文，没有批量列表可供前端误选。
-    // 除两个预期编号外全部拒绝，不能把编号缺失默认为第一条记录。
-    // 成功信封由 fetchTokenKey 与 requireServerSuccess 正常解包。
-    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-      if (url === '/api/token/11/key') {
-        return { data: { success: true, data: { key: 'work-secret' } } }
-      }
-      if (url === '/api/token/22/key') {
-        return { data: { success: true, data: { key: 'sk-travel-secret' } } }
-      }
-      throw new Error(`Unexpected POST ${url}`)
-    })
-    renderConfigurationDialogs()
-    await user.click(
-      await screen.findByRole('button', { name: 'Configure work key' })
-    )
-    const model = await screen.findByRole('combobox', {
-      name: 'Verified Codex model',
-    })
-    await waitFor(() => expect(model).toBeEnabled())
-    // 首次打开不会读取秘密，选择器也不能展示另一个 Key 的专属型号。
-    // 只按传入编号查询目录，不需要请求分页 Key 列表再次选择。
-    expect(post).not.toHaveBeenCalled()
-    await user.click(model)
-    expect(
-      await screen.findByRole('option', { name: 'work-only' })
-    ).toBeVisible()
-    expect(
-      screen.queryByRole('option', { name: 'travel-only' })
-    ).not.toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: 'shared-verified' }))
-    await user.click(screen.getByText('Copy Codex configuration'))
-    // 读取真正复制结果，不直接调用组件内部的字符串生成逻辑。
-    // 复制按钮具有共享的默认 aria-label，因此按可见内容触发其真实行为。
-    // 导出的换行保留实际文本，断言关键协议项而非整份脆弱快照。
-    // 环境变量方式允许用户审查配置时不必暴露 Key。
-    // 测试不运行生成的配置，也不修改用户本机 Codex 设置。
-    // 生成片段是否兼容真实客户端需由独立端到端验收确认。
-    // 当前断言只保护模板使用正确公开地址、型号和密钥引用方式。
-    const config = await navigator.clipboard.readText()
-    // 导出只引用环境变量，既不包含脱敏列表值，也不包含真实密钥。
-    // 公开入口取当前站点，不能泄露执行层地址或要求用户直连后台。
-    expect(config).toContain('model = "shared-verified"')
-    expect(config).toContain(`base_url = "${window.location.origin}/v1"`)
-    expect(config).toContain('env_key = "OAK_API_KEY"')
-    expect(config).not.toContain('masked-work')
-    expect(config).not.toContain('work-secret')
-    expect(post).not.toHaveBeenCalled()
-    // 明文必须由用户明确触发；复制控件展示的值经过真实前缀规范化。
-    // 查询缓存可以保存目录，却不能把秘密塞到配置或目录中。
-    await user.click(
-      screen.getByRole('button', { name: 'Reveal selected API key' })
-    )
-    await user.click(await screen.findByText('Copy selected API key'))
-    // 这次复制发生在模型选中之后，证明读取结果接入实际共享控件。
-    // 只检查按钮出现不足以发现控件复制了空值或脱敏摘要。
-    // 第一份秘密的值随后成为切换隔离的观察基线。
-    expect(await navigator.clipboard.readText()).toBe('sk-work-secret')
-    expect(post.mock.calls.map(([url]) => url)).toEqual(['/api/token/11/key'])
-    // 保持同一个真实父弹窗打开，只换当前 Key，不能靠关闭重开掩盖缺少 key。
-    // 第二个目录含同型号，此时仍必须要求用户重新选择，不能继承旧秘密。
-    // 如果真实父 Dialog 丢失 key 属性，旧 shared-verified 仍匹配新目录。
-    // 因此下面的空选择断言会立即失败，不会被目录过滤偶然保护。
-    // 不对 queryClient.clear 做手动调用，否则也可能掩盖缓存作用域错误。
-    // 切换只影响当前行，open 保持 client-config，父组件没有卸载。
-    await act(async () => {
-      selectCurrentKey(travelKey)
-    })
-    await waitFor(() =>
-      expect(get).toHaveBeenCalledWith('/api/hosting/tokens/22/models', {
-        disableDuplicate: true,
+        throw new Error(`Unexpected GET ${url}`)
       })
-    )
-    // 此时仍使用同一个 QueryClient，目录缓存必须按 tokenId 区分。
-    // 第一份目录允许留在缓存中，关键是不能成为第二份配置的选项来源。
-    const travelModel = screen.getByRole('combobox', {
-      name: 'Verified Codex model',
-    })
-    await waitFor(() => expect(travelModel).toBeEnabled())
-    // 等待第二个目录加载结束再观察状态，避免只检查到临时加载画面。
-    // 模型控件本身仍存在，空值来自真实组件重新初始化。
-    // 此时不能自动读取第二个 Key，仍需用户重新选择并明确取密。
-    // 旧剪贴板属于用户设备，此测试检查界面可用秘密而非强制清空剪贴板。
-    expect(travelModel).toHaveValue('')
-    expect(
-      screen.queryByText('Copy Codex configuration')
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText('Copy selected API key')).not.toBeInTheDocument()
-    // 再次选择同名型号后仍无秘密，证明不是暂时隐藏在未选模型后面。
-    // 新目录只保留当前 Key 允许的型号，旧 Key 的专属型号必须消失。
-    await user.click(travelModel)
-    expect(
-      await screen.findByRole('option', { name: 'travel-only' })
-    ).toBeVisible()
-    expect(
-      screen.queryByRole('option', { name: 'work-only' })
-    ).not.toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: 'shared-verified' }))
-    expect(screen.queryByText('Copy selected API key')).not.toBeInTheDocument()
-    expect(post.mock.calls.map(([url]) => url)).toEqual(['/api/token/11/key'])
-    await user.click(
-      screen.getByRole('button', { name: 'Reveal selected API key' })
-    )
-    await user.click(await screen.findByText('Copy selected API key'))
-    // 已带前缀的第二份秘密不能重复补前缀，更不能复制第一份秘密。
-    // 两次显式读取应分别绑定自己的编号，不通过所有 Key 列表寻找目标。
-    // 新的复制动作应覆盖测试剪贴板中的旧值，不能沿用先前 mutation 数据。
-    // 明文读取次数恰好等于两次点击，不由目录刷新额外触发。
-    // 请求集合保留每次调用，不用去重后的结果掩盖重复读取。
-    // 不断言两个查询先后顺序，React 可以合法地并行加载公共状态。
-    expect(await navigator.clipboard.readText()).toBe('sk-travel-secret')
-    expect(post.mock.calls.map(([url]) => url)).toEqual([
-      '/api/token/11/key',
-      '/api/token/22/key',
-    ])
-    expect(get.mock.calls.map(([url]) => url).sort()).toEqual([
-      '/api/hosting/tokens/11/models',
-      '/api/hosting/tokens/22/models',
-      '/api/status',
-    ])
-    // 最后检查查询缓存中不存在秘密，避免未来把 reveal 改成可持久查询。
-    // 这个检查只涉及公开缓存数据，不读取组件的私有状态或实现细节。
-    // mutation 可在当前弹窗生命周期保留取密结果，关闭清理由实际组件负责。
-    // 验证范围限于前端隔离，后端越权与密钥加密需另外的服务端测试。
-    expect(
-      JSON.stringify(
-        client
-          .getQueryCache()
-          .getAll()
-          .map((query) => query.state.data)
+      // 密钥读取接口使用原有 POST 合同，不伪造一个新的配置导出接口。
+      // 每份响应只含当前 Key 的明文，没有批量列表可供前端误选。
+      // 除两个预期编号外全部拒绝，不能把编号缺失默认为第一条记录。
+      // 成功信封由 fetchTokenKey 与 requireServerSuccess 正常解包。
+      const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+        if (url === '/api/token/11/key') {
+          return { data: { success: true, data: { key: 'work-secret' } } }
+        }
+        if (url === '/api/token/22/key') {
+          return { data: { success: true, data: { key: 'sk-travel-secret' } } }
+        }
+        throw new Error(`Unexpected POST ${url}`)
+      })
+      renderConfigurationDialogs()
+      await user.click(
+        await screen.findByRole('button', { name: 'Configure work key' })
       )
-    ).not.toContain('secret')
-  })
+      const model = await screen.findByRole('combobox', {
+        name: 'Codex model',
+      })
+      await waitFor(() => expect(model).toBeEnabled())
+      // 首次打开不会读取秘密，选择器也不能展示另一个 Key 的专属型号。
+      // 只按传入编号查询目录，不需要请求分页 Key 列表再次选择。
+      expect(post).not.toHaveBeenCalled()
+      await user.click(model)
+      expect(
+        await screen.findByRole('option', { name: 'work-only' })
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('option', { name: 'travel-only' })
+      ).not.toBeInTheDocument()
+      await user.click(screen.getByRole('option', { name: 'shared-verified' }))
+      await user.click(screen.getByText('Copy Codex configuration'))
+      // 读取真正复制结果，不直接调用组件内部的字符串生成逻辑。
+      // 复制按钮具有共享的默认 aria-label，因此按可见内容触发其真实行为。
+      // 导出的换行保留实际文本，断言关键协议项而非整份脆弱快照。
+      // 环境变量方式允许用户审查配置时不必暴露 Key。
+      // 测试不运行生成的配置，也不修改用户本机 Codex 设置。
+      // 生成片段是否兼容真实客户端需由独立端到端验收确认。
+      // 当前断言只保护模板使用正确公开地址、型号和密钥引用方式。
+      const config = await navigator.clipboard.readText()
+      // 导出只引用环境变量，既不包含脱敏列表值，也不包含真实密钥。
+      // 公开入口取当前站点，不能泄露执行层地址或要求用户直连后台。
+      expect(config).toContain('model = "shared-verified"')
+      expect(config).toContain(`base_url = "${window.location.origin}/v1"`)
+      expect(config).toContain('env_key = "OAK_API_KEY"')
+      expect(config).not.toContain('masked-work')
+      expect(config).not.toContain('work-secret')
+      expect(post).not.toHaveBeenCalled()
+      // 明文必须由用户明确触发；复制控件展示的值经过真实前缀规范化。
+      // 查询缓存可以保存目录，却不能把秘密塞到配置或目录中。
+      await user.click(
+        screen.getByRole('button', { name: 'Reveal selected API key' })
+      )
+      await user.click(await screen.findByText('Copy selected API key'))
+      // 这次复制发生在模型选中之后，证明读取结果接入实际共享控件。
+      // 只检查按钮出现不足以发现控件复制了空值或脱敏摘要。
+      // 第一份秘密的值随后成为切换隔离的观察基线。
+      expect(await navigator.clipboard.readText()).toBe('sk-work-secret')
+      expect(post.mock.calls.map(([url]) => url)).toEqual(['/api/token/11/key'])
+      // 保持同一个真实父弹窗打开，只换当前 Key，不能靠关闭重开掩盖缺少 key。
+      // 第二个目录含同型号，此时仍必须要求用户重新选择，不能继承旧秘密。
+      // 如果真实父 Dialog 丢失 key 属性，旧 shared-verified 仍匹配新目录。
+      // 因此下面的空选择断言会立即失败，不会被目录过滤偶然保护。
+      // 不对 queryClient.clear 做手动调用，否则也可能掩盖缓存作用域错误。
+      // 切换只影响当前行，open 保持 client-config，父组件没有卸载。
+      await act(async () => {
+        selectCurrentKey(travelKey)
+      })
+      await waitFor(() =>
+        expect(get).toHaveBeenCalledWith('/api/hosting/tokens/22/models', {
+          disableDuplicate: true,
+        })
+      )
+      // 此时仍使用同一个 QueryClient，目录缓存必须按 tokenId 区分。
+      // 第一份目录允许留在缓存中，关键是不能成为第二份配置的选项来源。
+      const travelModel = screen.getByRole('combobox', {
+        name: 'Codex model',
+      })
+      await waitFor(() => expect(travelModel).toBeEnabled())
+      // 等待第二个目录加载结束再观察状态，避免只检查到临时加载画面。
+      // 模型控件本身仍存在，空值来自真实组件重新初始化。
+      // 此时不能自动读取第二个 Key，仍需用户重新选择并明确取密。
+      // 旧剪贴板属于用户设备，此测试检查界面可用秘密而非强制清空剪贴板。
+      expect(travelModel).toHaveValue('')
+      expect(
+        screen.queryByText('Copy Codex configuration')
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByText('Copy selected API key')
+      ).not.toBeInTheDocument()
+      // 再次选择同名型号后仍无秘密，证明不是暂时隐藏在未选模型后面。
+      // 新目录只保留当前 Key 允许的型号，旧 Key 的专属型号必须消失。
+      await user.click(travelModel)
+      expect(
+        await screen.findByRole('option', { name: 'travel-only' })
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('option', { name: 'work-only' })
+      ).not.toBeInTheDocument()
+      await user.click(screen.getByRole('option', { name: 'shared-verified' }))
+      expect(
+        screen.queryByText('Copy selected API key')
+      ).not.toBeInTheDocument()
+      expect(post.mock.calls.map(([url]) => url)).toEqual(['/api/token/11/key'])
+      await user.click(
+        screen.getByRole('button', { name: 'Reveal selected API key' })
+      )
+      await user.click(await screen.findByText('Copy selected API key'))
+      // 已带前缀的第二份秘密不能重复补前缀，更不能复制第一份秘密。
+      // 两次显式读取应分别绑定自己的编号，不通过所有 Key 列表寻找目标。
+      // 新的复制动作应覆盖测试剪贴板中的旧值，不能沿用先前 mutation 数据。
+      // 明文读取次数恰好等于两次点击，不由目录刷新额外触发。
+      // 请求集合保留每次调用，不用去重后的结果掩盖重复读取。
+      // 不断言两个查询先后顺序，React 可以合法地并行加载公共状态。
+      expect(await navigator.clipboard.readText()).toBe('sk-travel-secret')
+      expect(post.mock.calls.map(([url]) => url)).toEqual([
+        '/api/token/11/key',
+        '/api/token/22/key',
+      ])
+      expect(get.mock.calls.map(([url]) => url).sort()).toEqual([
+        '/api/hosting/tokens/11/models',
+        '/api/hosting/tokens/22/models',
+        '/api/status',
+      ])
+      // 最后检查查询缓存中不存在秘密，避免未来把 reveal 改成可持久查询。
+      // 这个检查只涉及公开缓存数据，不读取组件的私有状态或实现细节。
+      // mutation 可在当前弹窗生命周期保留取密结果，关闭清理由实际组件负责。
+      // 验证范围限于前端隔离，后端越权与密钥加密需另外的服务端测试。
+      expect(
+        JSON.stringify(
+          client
+            .getQueryCache()
+            .getAll()
+            .map((query) => query.state.data)
+        )
+      ).not.toContain('secret')
+    }
+  )
 })

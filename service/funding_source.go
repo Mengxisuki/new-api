@@ -101,8 +101,10 @@ type SubscriptionFunding struct {
 	// 以下字段在 PreConsume 成功后填充，供 RelayInfo 同步使用
 	AmountTotal     int64
 	AmountUsedAfter int64
-	PlanId          int
-	PlanTitle       string
+	// 预扣时冻结的周期供异步任务保存，不能在任务完成时重新读取。
+	SubscriptionResetTime int64
+	PlanId                int
+	PlanTitle             string
 }
 
 func (s *SubscriptionFunding) Source() string { return BillingSourceSubscription }
@@ -117,6 +119,7 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 	s.preConsumed = res.PreConsumed
 	s.AmountTotal = res.AmountTotal
 	s.AmountUsedAfter = res.AmountUsedAfter
+	s.SubscriptionResetTime = res.SubscriptionResetTime
 	// 获取订阅计划信息
 	if planInfo, err := model.GetSubscriptionPlanInfoByUserSubscriptionId(res.UserSubscriptionId); err == nil && planInfo != nil {
 		s.PlanId = planInfo.PlanId

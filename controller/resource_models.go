@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/hosting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -24,9 +26,10 @@ import (
 // resourceModel 是配置导出的最小目录，不包含渠道和内部账号身份。
 // Verified 只表示该模型曾在本人挂靠账号完成 Responses 测试，不承诺永久可用。
 type resourceModel struct {
-	ID        string   `json:"id"`        // 使用真实目录ID，不生成可被误当模型的账号别名。
-	Protocols []string `json:"protocols"` // 客户端按此选择接入协议，不从模型名称猜测。
-	Verified  bool     `json:"verified"`  // 只记录已完成测试，不从授权成功推导。
+	ID                string   `json:"id"`                 // 使用真实目录ID，不生成可被误当模型的账号别名。
+	Protocols         []string `json:"protocols"`          // 客户端按此选择接入协议，不从模型名称猜测。
+	PlatformProtocols []string `json:"platform_protocols"` // 只描述当前平台渠道能力，避免混用同名挂靠协议。
+	Verified          bool     `json:"verified"`           // 只记录已完成测试，不从授权成功推导。
 }
 
 // resourceModels 为浏览器导出与 API 模型列表提供同一个权限交集。
@@ -52,6 +55,10 @@ type resourceModel struct {
 // 不缓存完整内部 Route；其中的受限 Key 只在当前服务端调用栈中存在。
 // 返回 DTO 不携带 owner_ref、group_id、credential_id 或加密密钥。
 // 此函数不发真实模型请求，不消耗用户原厂额度或平台余额。
+// platform_protocols 单独保存平台能力，同名挂靠模型不能替平台扩充协议。
+// 前端可据此导出未实测的平台配置，而 verified 仍只描述挂靠测试结果。
+// 钱包和订阅共享同一渠道目录，只有启用其中之一才合并平台能力。
+// 完全没有已知协议的任务模型仍可列出，但不会冒充可导出的文本客户端。
 func resourceModels(c *gin.Context, policy *model.ResourcePolicySnapshot) ([]resourceModel, error) {
 	items := map[string]resourceModel{}
 	platform := policy == nil // 只有未配置策略的历史Key自动保留平台目录。
@@ -84,11 +91,11 @@ func resourceModels(c *gin.Context, policy *model.ResourcePolicySnapshot) ([]res
 			// 各账号同名模型合并，但验证状态仅来自该模型的实际测试记录。
 			for _, name := range route.Models {
 				previous := items[name] // 合并同名模型时保留已有真实测试记录。
-				items[name] = resourceModel{ID: name, Protocols: []string{"responses", "chat_completions", "responses_compact"}, Verified: previous.Verified || (account.VerifiedAt > 0 && account.VerifiedModel == name && account.VerifiedProtocol == "openai-responses")}
+				items[name] = resourceModel{ID: name, Protocols: []string{"responses", "chat_completions", "responses_compact"}, PlatformProtocols: []string{}, Verified: previous.Verified || (account.VerifiedAt > 0 && account.VerifiedModel == name && account.VerifiedProtocol == "openai-responses")}
 			}
 		}
 	}
-	if platform && resourcePlatformAllowed(c) { // 排序不能绕过平台分组授权。
+	if platform && service.ResourcePlatformAllowed(c) { // 排序不能绕过平台分组授权。
 		groups, err := getModelListGroups(c)
 		if err != nil {
 			return nil, err
@@ -105,10 +112,20 @@ func resourceModels(c *gin.Context, policy *model.ResourcePolicySnapshot) ([]res
 			if !operation_setting.SelfUseModeEnabled && !settings.AcceptUnsetRatioModel && !helper.HasModelBillingConfig(name) {
 				continue
 			}
-			// 平台已配置不等于本人已测试，不能伪造 verified 来开启 Codex 导出。
-			if _, exists := items[name]; !exists {
-				items[name] = resourceModel{ID: name, Protocols: protocols}
+			// 同名模型分别保留平台能力与挂靠验证，导出不能借用另一来源的协议。
+			item := items[name]
+			// 平台协议集合独立复制，合并总协议时不能把挂靠能力写回平台字段。
+			item.ID, item.PlatformProtocols = name, slices.Clone(protocols)
+			for _, protocol := range protocols {
+				if !slices.Contains(item.Protocols, protocol) {
+					item.Protocols = append(item.Protocols, protocol)
+				}
 			}
+			if item.Protocols == nil {
+				// JSON 空数组与未知对象保持区分，让客户端稳定处理原生任务模型。
+				item.Protocols = []string{}
+			}
+			items[name] = item
 		}
 	}
 	limits, _ := c.Get("token_model_limit") // 仅使用鉴权层解析后的限制集合。
@@ -186,7 +203,7 @@ func GetHostingTokenModels(c *gin.Context) {
 // 原历史目录仅在未配置策略时使用，避免从静态模型表泄露不可用模型。
 // 布尔返回值表示已接管响应，调用方不能再运行历史 ListModels 分支。
 // 三种模型接口格式都来自同一个授权集合，不允许单模型查询绕过列表限制。
-// 首期统一策略只开放 OpenAI 模型接口，其他协议在鉴权路径门禁拒绝。
+// 来源目录共用权限集合，Anthropic 与 Gemini 列表继续保留各自协议信封。
 // 静态模型元数据只补展示信息，不能决定某个模型是否对当前 Key 可见。
 // 不可用模型单查返回 404，与上游静态字典是否包含该 ID 无关。
 // 空列表返回正常 list 对象，表示用户没有启用可列出的来源。
@@ -194,7 +211,9 @@ func GetHostingTokenModels(c *gin.Context) {
 // 目录不泄露账号别名和脱敏邮箱，这些仅在本人账号管理页展示。
 // 统一策略上下文由 TokenAuth 写入，任何 HTTP 请求头都不能覆盖它。
 // 断言失败代表内部接线故障，必须停止，不能静默启用历史收费行为。
-func listResourceModels(c *gin.Context) bool {
+// 模型列表的接口格式和能力目录是两层合同：来源变化不改变原客户端格式。
+// 单查同样先过滤权限，不能通过模型路径绕过列表中的本人分组限制。
+func listResourceModels(c *gin.Context, modelType int) bool {
 	value, exists := c.Get("oak.resource_policy")
 	if !exists { // 缺少策略时才允许调用方继续历史目录。
 		return false
@@ -214,14 +233,19 @@ func listResourceModels(c *gin.Context) bool {
 		entry := buildOpenAIModel(item.ID, nil)
 		// 静态元数据会读取全站端点缓存，必须用当前用户目录的真实协议覆盖。
 		entry.SupportedEndpointTypes = make([]constant.EndpointType, 0, len(item.Protocols))
-		for _, protocol := range resourceSyncProtocols {
+		for _, protocol := range resourceProtocols {
 			if slices.Contains(item.Protocols, protocol.name) {
 				entry.SupportedEndpointTypes = append(entry.SupportedEndpointTypes, protocol.endpoint)
 			}
 		}
 		if requested := c.Param("model"); requested != "" {
 			if requested == item.ID {
-				c.JSON(http.StatusOK, entry)
+				// 单模型查询保持 Anthropic 格式，权限仍来自同一目录。
+				if modelType == constant.ChannelTypeAnthropic {
+					c.JSON(http.StatusOK, dto.AnthropicModel{ID: entry.Id, DisplayName: entry.Id, Type: "model", CreatedAt: time.Unix(int64(entry.Created), 0).UTC().Format(time.RFC3339)})
+				} else {
+					c.JSON(http.StatusOK, entry)
+				}
 				return true
 			}
 			continue
@@ -232,19 +256,30 @@ func listResourceModels(c *gin.Context) bool {
 		resourceRelayError(c, "model_not_found", http.StatusNotFound)
 		return true
 	}
-	c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
+	writeModelList(c, modelType, models)
 	return true
 }
 
-// resourceSyncProtocols 是首期目录和 OpenAI 列表共用的协议映射。
+// resourceProtocols 是配置导出与模型列表共用的平台协议映射。
 // 请求路径由既有端点定义取得，避免目录与渠道路径过滤各维护一份规则。
-var resourceSyncProtocols = []struct {
+// 名称供配置导出使用，实际转发仍由原路由和适配器选择。
+// 一个模型可以有多个协议，不根据模型名称把所有协议归成 OpenAI。
+var resourceProtocols = []struct {
 	name     string
 	endpoint constant.EndpointType
 }{
 	{"responses", constant.EndpointTypeOpenAIResponse},
 	{"chat_completions", constant.EndpointTypeOpenAI},
 	{"responses_compact", constant.EndpointTypeOpenAIResponseCompact},
+	{"claude", constant.EndpointTypeAnthropic},
+	{"gemini", constant.EndpointTypeGemini},
+	{"images", constant.EndpointTypeImageGeneration},
+	{"embeddings", constant.EndpointTypeEmbeddings},
+	{"rerank", constant.EndpointTypeJinaRerank},
+	{"video", constant.EndpointTypeOpenAIVideo},
+	{"alpha_search", constant.EndpointTypeOpenAIAlphaSearch},
+	{"tools_search", constant.EndpointTypeDeepSeekToolsSearch},
+	{"tools_fetch", constant.EndpointTypeDeepSeekToolsFetch},
 }
 
 // resourcePlatformModels 只从当前用户可用分组收集真实启用渠道能力。
@@ -256,14 +291,18 @@ var resourceSyncProtocols = []struct {
 // 能力行启用和渠道状态启用必须同时成立，防止旧能力记录复活停用渠道。
 // 同一渠道跨多个允许组出现时，协议合并去重而不增加模型执行权。
 // 任务插件注册表只用于识别任务模型，不作为用户获得某个模型的授权依据。
-// 模型是否已定价继续由上层现有规则检查，这里只裁剪同步能力。
-// 图片与 embedding 在通用渠道类型下可能得到默认 Chat 标签，需要先排除专用模型。
+// 模型是否已定价继续由上层检查；此处保留全部本人平台模型及已知能力。
+// 专用图片与向量模型需要纠正通用 Chat 标签，避免导出错误的文本客户端配置。
 // 高级自定义配置缺失时不能按通用 OpenAI 能力补齐，缺路由意味着没有可列协议。
 // 命名兼容渠道的预设由 GetOtherSettings 统一取得，避免复制预设实现。
 // 解析配置错误必须停止目录生成，不能一边写库修复一边声称能力正常。
 // 请求路径过滤使用当前模型名，因此同渠道其他模型的路由不会被借用。
-// 零个同步协议的模型不进入结果，前端无需猜测空协议是否仍可调用。
+// 未映射的原生任务模型保留空协议数组；可见性不等于文本配置导出能力。
 // 平台与免费挂靠能力在调用方合并，本函数不能修改挂靠验证记录。
+// 未加载的插件仍可保留模型可见性，但没有声明就不声称具备某个宿主协议。
+// 插件声明的 models 子集限制仍需生效，不能把一个模型的 Responses 能力给同插件全部模型。
+// 绑定插件时优先使用该插件声明，避免从默认模型注册表借用其他供应商能力。
+// 同名渠道的协议按并集合并，而渠道健康和实际预算仍由请求时的调度决定。
 func resourcePlatformModels(groups []string) (map[string][]string, error) {
 	result := map[string][]string{}
 	if len(groups) == 0 {
@@ -281,7 +320,7 @@ func resourcePlatformModels(groups []string) (map[string][]string, error) {
 	generation := jsplugin.DefaultRegistry.Generation()
 	for _, ability := range abilities {
 		channel, name := &ability.Channel, ability.ModelName
-		// 与同步执行入口一致，任务专用渠道及单插件绑定不属于首期同步目录。
+		// 先读取显式插件绑定，平台协议与原生任务能力不能混淆。
 		var setting dto.ChannelSettings
 		// 原有 GetSetting 会在坏 JSON 时写库自修复；目录读取先严格解析，禁止此副作用。
 		if channel.Setting != nil && *channel.Setting != "" {
@@ -289,19 +328,43 @@ func resourcePlatformModels(groups []string) (map[string][]string, error) {
 				return nil, errors.New("invalid_platform_channel_settings")
 			}
 		}
-		if channel.Type == constant.ChannelTypeTaskPlugin || setting.TaskPluginKey != "" {
-			continue
+		// 所有本人平台模型保留在目录；未知协议用空数组，不能假冒 Chat 能力。
+		if _, exists := result[name]; !exists {
+			result[name] = []string{}
 		}
-		if _, task := generation.GetByModel(name); task {
-			continue
+		plugin, task := generation.GetByModel(name)
+		if setting.TaskPluginKey != "" {
+			// 显式单插件绑定覆盖模型注册表的默认拥有者，不偷偷换成另一插件。
+			plugin, task = generation.Get(setting.TaskPluginKey)
 		}
-		// 普通渠道的默认 OpenAI 能力不能把专用图片、向量和重排模型变成文本模型。
-		// 分类沿用现有渠道测试的模型规则，图片则复用统一图片模型识别。
-		lower := strings.ToLower(name)
-		if common.IsImageGenerationModel(name) || strings.Contains(lower, "embed") || strings.HasPrefix(name, "m3e") || strings.Contains(name, "bge-") || strings.Contains(lower, "rerank") || channel.Type == constant.ChannelTypeMokaAI || (channel.Type == constant.ChannelTypeVolcEngine && strings.Contains(lower, "seedream")) {
+		if channel.Type == constant.ChannelTypeTaskPlugin || setting.TaskPluginKey != "" || task {
+			// 宿主协议来自已加载插件声明，不将插件原生任务接口猜成同步文本。
+			if task {
+				for _, claim := range plugin.Meta.Protocols {
+					// 声明未覆盖当前模型时不能在其配置导出中暴露该协议。
+					if len(claim.Models) > 0 && !slices.Contains(claim.Models, name) {
+						continue
+					}
+					protocol := map[string]string{"openai_responses": "responses", "openai_image": "images", "openai_video": "video"}[claim.Name]
+					if protocol != "" && !slices.Contains(result[name], protocol) {
+						result[name] = append(result[name], protocol)
+					}
+				}
+			}
 			continue
 		}
 		endpoints := common.GetEndpointTypesByChannelType(channel.Type, name)
+		// 通用渠道的默认 Chat 标签不能让专用模型在配置导出中冒充文本模型。
+		lower := strings.ToLower(name)
+		switch {
+		case common.IsImageGenerationModel(name), channel.Type == constant.ChannelTypeVolcEngine && strings.Contains(lower, "seedream"):
+			endpoints = []constant.EndpointType{constant.EndpointTypeImageGeneration}
+		case strings.Contains(lower, "embed"), strings.HasPrefix(name, "m3e"), strings.Contains(name, "bge-"):
+			endpoints = []constant.EndpointType{constant.EndpointTypeEmbeddings}
+		case strings.Contains(lower, "rerank"), channel.Type == constant.ChannelTypeMokaAI:
+			endpoints = []constant.EndpointType{constant.EndpointTypeJinaRerank}
+		}
+
 		if constant.IsAdvancedCustomChannel(channel.Type) {
 			// 自定义与内置兼容渠道以实际配置路由为准，不使用全站能力缓存补齐。
 			var settings dto.ChannelOtherSettings
@@ -313,18 +376,25 @@ func resourcePlatformModels(groups []string) (map[string][]string, error) {
 			}
 			config := channel.GetOtherSettings().AdvancedCustom
 			if config == nil {
+				// 缺路由配置保留模型但不伪造默认同步协议，真正请求会报告配置问题。
 				continue
 			}
 			endpoints = config.SupportedEndpointTypesForModel(name)
 		}
-		for _, protocol := range resourceSyncProtocols {
+		for _, protocol := range resourceProtocols {
 			if !slices.Contains(endpoints, protocol.endpoint) {
 				continue
 			}
 			endpoint, ok := common.GetDefaultEndpointInfo(protocol.endpoint)
 			if !ok {
-				continue
+				// Video 使用宿主固定路径；其他未知端点不能凭名字猜测上游 URL。
+				if protocol.endpoint != constant.EndpointTypeOpenAIVideo {
+					continue
+				}
+				endpoint.Path = "/v1/videos"
 			}
+			endpoint.Path = strings.ReplaceAll(endpoint.Path, "{model}", name)
+			// Gemini 的模型路径必须先展开，路径过滤才能与实际执行一致。
 			// 复用执行时的请求路径过滤，同一自定义渠道可以为不同模型配置不同协议。
 			supported, _ := model.ChannelSatisfiesFilters(channel, name, []hostdto.ChannelFilter{{Kind: hostdto.FilterRequestPath, RequestPath: endpoint.Path}})
 			if supported && !slices.Contains(result[name], protocol.name) {

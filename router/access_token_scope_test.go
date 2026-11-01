@@ -23,6 +23,8 @@ import (
 // accessTokenExemptRoutes are /api routes that never reach dashboard
 // authentication, so a personal access token has no rule to satisfy there.
 var accessTokenExemptRoutes = []string{
+	// 内部核验使用独立请求断言，不接受控制台 PAT 范围替代。
+	"POST /api/internal/hosting/verify-request",
 	// Anonymous pages and setup.
 	"GET /api/setup",
 	"POST /api/setup",
@@ -270,4 +272,26 @@ func TestSubscriptionBalancePurchaseRouteIsRemoved(t *testing.T) {
 	response := httptest.NewRecorder()
 	engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/subscription/balance/pay", strings.NewReader(`{"plan_id":1}`)))
 	assert.Equal(t, http.StatusNotFound, response.Code)
+}
+
+// 挂靠配置状态属于已登录用户控制台，不能作为匿名部署探测端点。
+// 全局来源路由和对应 PAT 声明都必须移除，避免旧客户端继续写用户默认。
+// 这里使用正式路由注册，防止只测试手工拼装的中间件而遗漏实际配置。
+// 具体 Key 的读写范围保持原权限，状态只要求 profile:read。
+func TestHostingKeyPolicyRouteContract(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	rule, declared := middleware.AccessTokenRouteRule("GET /api/hosting/status")
+	require.True(t, declared)
+	assert.Equal(t, "profile:read", rule.Scope()) // 配置查询不需要修改账户的权限。
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/hosting/status", nil))
+	assert.Equal(t, http.StatusUnauthorized, response.Code) // 状态端点不能泄露给匿名访问者。
+	// 已移除接口应直接不存在，不能继续进入认证后的旧处理路径。
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		_, declared := middleware.AccessTokenRouteRule(method + " /api/hosting/policy")
+		assert.False(t, declared) // 删除路由后不能残留可误用的旧 PAT 声明。
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(method, "/api/hosting/policy", nil))
+		assert.Equal(t, http.StatusNotFound, response.Code) // 后端真实移除，不只在页面上隐藏入口。
+	}
 }

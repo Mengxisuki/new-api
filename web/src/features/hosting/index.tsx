@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -26,20 +26,18 @@ import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
 
-import { getHostingAccounts } from './api'
+import { getHostingAccounts, getHostingStatus } from './api'
 import { HostingAccountDetails } from './components/account-details'
 import { AccountQuota } from './components/account-quota'
-import { HostingClientConfig } from './components/client-config'
 import { ConnectHostingDialog } from './components/connect-dialog'
-import { ResourcePolicyEditor } from './components/resource-policy'
 import type { HostingAccount } from './types'
 
-// 唯一用户工作区承接多账号、额度与来源优先级，不向用户暴露技术管理页。
 // 列表只请求 Oak 摘要，选择详情后才加载该账号的上游观测与模型目录。
 // 工作区是用户管理本人挂靠资源的统一入口。
 // 导航进入后先取得账号摘要，不在加载页面时产生原厂耗额。
@@ -58,13 +56,9 @@ import type { HostingAccount } from './types'
 // 所有账号中的空状态与筛选结果为空需要区别理解。
 // 查询失败展示可重试错误，而不是首次接入营销空状态。
 // 用户点击列表刷新只同步摘要，不逐个强制刷新原厂额度。
-// 默认资源策略单独读取，因此账号查询不会隐式修改调用顺序。
-// 新账号接入后必须显式加入来源优先级才能参与调用。
 // 钱包回退的费用提示始终可见，避免把挂靠免费推广到所有来源。
 // 用户仍使用同一个 Key 和入口地址，来源选择在平台端管理。
 // Key 管理链接沿用已有令牌页面，不创建第二套令牌系统。
-// 配置导出放在工作区内，让接入后的下一步操作容易找到。
-// 桌面采用项目的静态数据表，不另建排序或分页基础设施。
 // 移动端使用卡片展示，保留与桌面相同的管理入口。
 // 两种视图共用状态函数和额度组件，避免事实展示分叉。
 // 长备注与脱敏身份允许换行，不能把页面撑出横向滚动。
@@ -73,6 +67,7 @@ import type { HostingAccount } from './types'
 // 后续供应商扩展需要同步 DTO、授权和协议验证，而非只加菜单。
 export function HostingWorkspace() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   // 界面状态与持久业务状态的边界：
   // 筛选值仅决定当前列表内容，不写入服务端。
   // 账号编号选择用于定位详情，不保存凭据。
@@ -85,16 +80,13 @@ export function HostingWorkspace() {
   // 原厂窗口的具体展示由 AccountQuota 维护，页面不重复计算。
   // 状态标签由一个函数提供给桌面和移动端。
   // 页面不在客户端对账号可用性进行轮询推理。
-  // 顶部刷新不会重置用户尚未保存的资源策略草稿。
-  // 默认策略编辑器有自己的版本控制，不复用列表更新时间。
-  // Key 配置导出有自己的分页，账号筛选不会改变选择权限。
   // 用户在其他会话改了账号，重新读取列表后显示服务端事实。
   // 已经删除的账号不继续提供可操作详情。
   // 需要处理错误的账号仍可进入详情，以便重授权或解绑。
   // 首期供应商固定，因此入口写明 Codex，避免让用户误接其他账号。
   // 列表不展示 gpt-load 管理组、凭据类型或内部路由。
   // 普通用户不需要理解后台管理服务才能完成接入。
-  // 用户任务顺序保持连接、验证、选来源、配置客户端。
+  // 挂靠页只提供账号操作；来源顺序和客户端配置从具体 Key 菜单进入。
   // 页面不自动把已验证账号设为第一优先级。
   // 同一 Key 使用多账号时优先级仍由用户完整保存。
   // 挂靠免费说明只指平台费用，不承诺原厂无限使用。
@@ -114,10 +106,9 @@ export function HostingWorkspace() {
   // 页面刷新不会自动继续敏感操作，持久恢复由详情显式发起。
   // 用户取消授权后可以重新连接，不保留已取消回调输入。
   // 账号重新授权后仍沿用已有策略中的编号。
-  // 默认策略与 Key 覆盖不能在此页面被混淆为一个开关。
   // 当前页面是用户视角的资源工作区，不复制管理员渠道配置。
-  const [filter, setFilter] = useState('all')
-  const [selected, setSelected] = useState<number | null>(null)
+  const [filter, setFilter] = useState('all') // 筛选只影响当前列表，不改变 Key 的来源配置。
+  const [selected, setSelected] = useState<number | null>(null) // 以稳定编号查详情，备注可以重复。
   const [connecting, setConnecting] = useState<HostingAccount | 'new' | null>(
     null
   )
@@ -126,13 +117,47 @@ export function HostingWorkspace() {
   // 组件只保留界面选择状态，不把账号摘要复制进持久浏览器存储。
   // 选中账号与授权流程是不同状态，关闭任一不会改变另一资源。
   // 账号创建成功后刷新列表，用户可以看到新的稳定编号对应项。
-  // 默认数据为空仅用于等待期渲染，空状态仍以查询成功为前提。
   const accounts = useQuery({
-    queryKey: ['hosting', 'accounts'],
+    queryKey: ['hosting', 'accounts'], // 账号变更失效同一摘要缓存，避免列表状态落后。
     queryFn: getHostingAccounts,
   })
-  const data = accounts.data ?? []
-  const active = data.find((account) => account.id === selected)
+  // 页面进入时先读本地服务就绪状态，避免用户完成敏感验证后才遇到配置错误。
+  // 配置查询不创建 OAuth 会话，也不请求原厂额度。
+  // 普通用户只看安全错误说明，部署细节与签名材料留在服务器。
+  const availability = useQuery({
+    queryKey: ['hosting', 'status'], // 就绪状态独立于是否已经存在挂靠账号。
+    queryFn: getHostingStatus, // 只读配置摘要，不向模型商发起连接。
+  })
+  // 读取失败不能沿用上一次成功状态开放授权入口。
+  // 这里只检查本地必需配置；实际执行层连通失败仍由授权请求明确报告。
+  const canConnect =
+    availability.data?.configured === true && !availability.isError
+  // 即使账号列表为空，也必须区别“尚未添加”和“服务尚未配置”。
+  // 重新授权复用相同门禁，不通过已有账号绕过就绪检查。
+  const unavailableMessages: Record<string, string> = {
+    hosting_invalid_control_url: t(
+      'Account hosting control service URL is invalid. Please contact an administrator.'
+    ),
+    hosting_encryption_not_configured: t(
+      'Account hosting encryption is not configured. Please contact an administrator.'
+    ),
+  }
+  // 错误只说明配置类别，不把部署地址、签名材料或原厂响应传给用户。
+  let disabledReason: string | undefined
+  if (!canConnect) {
+    disabledReason =
+      unavailableMessages[availability.data?.code ?? ''] ??
+      t('Account hosting is not configured. Please contact an administrator.')
+    if (availability.isPending) {
+      disabledReason = t('Checking account hosting availability...')
+    } else if (availability.isError) {
+      disabledReason = t(
+        'Unable to check account hosting availability. Please retry.'
+      )
+    }
+  }
+  const data = accounts.data ?? [] // 等待期的空值不能触发首次接入提示。
+  const active = data.find((account) => account.id === selected) // 已解绑账号自动退出详情。
   const filtered = data.filter(
     (account) =>
       filter === 'all' ||
@@ -145,9 +170,9 @@ export function HostingWorkspace() {
   // 暂停开关独立于生命周期，恢复后仍要尊重原来的验证状态。
   // 页面标签描述当前摘要，不保证后续调用一定成功。
   const status = (account: HostingAccount) => {
-    if (account.paused) return t('Paused')
+    if (account.paused) return t('Paused') // 暂停优先显示，不让旧测试成功掩盖停用状态。
     if (account.status === 'connected') {
-      return t('Connected, awaiting verification')
+      return t('Connected, awaiting verification') // OAuth 成功尚不等于模型调用成功。
     }
     if (account.status === 'active') return t('Model call verified')
     if (account.status === 'error') return t('Account needs attention')
@@ -161,7 +186,10 @@ export function HostingWorkspace() {
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Account hosting')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>
-        <Button onClick={() => setConnecting('new')}>
+        <Button
+          disabled={!canConnect}
+          onClick={() => setConnecting('new')} // 所有新建入口进入同一个授权状态机。
+        >
           {t('Connect Codex account')}
         </Button>
       </SectionPageLayout.Actions>
@@ -169,9 +197,27 @@ export function HostingWorkspace() {
         <div className='space-y-6'>
           <p className='text-muted-foreground text-sm'>
             {t(
-              'Hosted calls are free on Oak. Subscription or wallet fallback follows your resource priority and can incur charges.'
+              'Manage your connected accounts and provider quotas here. Choose which account, subscription or wallet each API key uses from the API Keys menu.'
             )}
           </p>
+          {/* 服务不可用时仍能管理已有账号；只有新授权入口受就绪状态限制。 */}
+          {disabledReason && (
+            <Alert role='status'>
+              <AlertDescription>{disabledReason}</AlertDescription>
+              {!availability.isPending && (
+                <Button
+                  variant='outline'
+                  size='sm'
+                  disabled={availability.isFetching}
+                  onClick={() => {
+                    void availability.refetch() // 服务恢复后原入口可直接继续，不要求重复登录。
+                  }}
+                >
+                  {t('Retry availability check')}
+                </Button>
+              )}
+            </Alert>
+          )}
           <div className='flex flex-wrap items-center gap-2'>
             <Combobox
               options={[
@@ -186,7 +232,7 @@ export function HostingWorkspace() {
               variant='outline'
               disabled={accounts.isFetching}
               onClick={() => {
-                void accounts.refetch()
+                void accounts.refetch() // 只更新摘要，不替用户触发原厂刷新或重置。
               }}
             >
               {t('Refresh account list')}
@@ -209,7 +255,7 @@ export function HostingWorkspace() {
           {accounts.isError && (
             <ErrorState
               onRetry={() => {
-                void accounts.refetch()
+                void accounts.refetch() // 只更新摘要，不替用户触发原厂刷新或重置。
               }}
             />
           )}
@@ -217,10 +263,13 @@ export function HostingWorkspace() {
             <EmptyState
               title={t('Connect your first Codex account')}
               description={t(
-                'Connect an existing account, verify a model call, then add it to your resource priority.'
+                'Add your ChatGPT account, test a model connection, then select this account in an API key’s usage order.'
               )}
               action={
-                <Button onClick={() => setConnecting('new')}>
+                <Button
+                  disabled={!canConnect}
+                  onClick={() => setConnecting('new')} // 所有新建入口进入同一个授权状态机。
+                >
                   {t('Connect Codex account')}
                 </Button>
               }
@@ -232,7 +281,7 @@ export function HostingWorkspace() {
               <div className='hidden md:block'>
                 <StaticDataTable
                   data={filtered}
-                  getRowKey={(account) => account.id}
+                  getRowKey={(account) => account.id} // 稳定身份使备注修改不会重建错误行。
                   columns={[
                     {
                       id: 'account',
@@ -261,7 +310,7 @@ export function HostingWorkspace() {
                         <Button
                           size='sm'
                           variant='outline'
-                          onClick={() => setSelected(account.id)}
+                          onClick={() => setSelected(account.id)} // 以账号编号打开同一份详情。
                         >
                           {t('Manage account')}
                         </Button>
@@ -286,7 +335,7 @@ export function HostingWorkspace() {
                       {quota(account)}
                       <Button
                         variant='outline'
-                        onClick={() => setSelected(account.id)}
+                        onClick={() => setSelected(account.id)} // 以账号编号打开同一份详情。
                       >
                         {t('Manage account')}
                       </Button>
@@ -296,14 +345,6 @@ export function HostingWorkspace() {
               </div>
             </>
           )}
-          {/*
-           * 默认策略对以后继承它的 Key 生效。
-           * 用户需在策略编辑器保存完整顺序，浏览列表不会自动保存。
-           * 配置导出再按选中 Key 获取实际目录，不能使用账号列表推断权限。
-           * 工作区的布局先解释资源，再配置调用，最后提供客户端接入。
-           */}
-          <ResourcePolicyEditor />
-          <HostingClientConfig />
         </div>
         {/* 以账号 ID 重新挂载详情，防止分页或选择变化复用前一账号的操作状态。 */}
         {active && (
@@ -312,7 +353,7 @@ export function HostingWorkspace() {
             account={active}
             onClose={() => setSelected(null)}
             onReauthorize={() => {
-              setSelected(null)
+              setSelected(null) // 重授权只保留一个弹窗，避免焦点被账号详情遮挡。
               setConnecting(active)
             }}
           />
@@ -320,6 +361,11 @@ export function HostingWorkspace() {
         {connecting && (
           <ConnectHostingDialog
             account={connecting === 'new' ? undefined : connecting}
+            disabledReason={disabledReason} // 弹窗保持打开时也同步服务配置门禁。
+            onManageKeys={() => {
+              setConnecting(null)
+              void navigate({ to: '/keys' }) // 成功后进入唯一的 Key 配置入口。
+            }}
             onClose={() => setConnecting(null)}
           />
         )}

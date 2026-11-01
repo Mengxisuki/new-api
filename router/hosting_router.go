@@ -18,7 +18,10 @@ import (
 // 审计中间件只读取模板路径和最终状态，不读取授权请求正文。
 // 统一 Key 模型目录由根调度实现，账号目录不能替代它。
 func registerHostingRoutes(api *gin.RouterGroup) {
+	// 执行层只能核验专用短期断言；此路径不接受普通会话、PAT 或管理员 Key。
+	api.POST("/internal/hosting/verify-request", middleware.DisableCache(), controller.VerifyHostingControlRequest)
 	route := api.Group("/hosting", middleware.UserAuth(), middleware.DisableCache(), controller.AuditHostingRequests)
+	route.GET("/status", controller.GetHostingStatus)
 	route.GET("/accounts", controller.GetHostingAccounts)
 	route.GET("/accounts/:id", controller.GetHostingAccount)
 	// 创建只消费已绑定本人且经过敏感验证的授权，不直接接收任何凭据。
@@ -40,9 +43,7 @@ func registerHostingRoutes(api *gin.RouterGroup) {
 	route.POST("/authorizations/:id/resume", middleware.UserCriticalRateLimit("hosting-auth"), controller.ResumeHostingAuthorization)
 	route.POST("/authorizations/:id/callback", middleware.UserCriticalRateLimit("hosting-auth"), controller.CompleteHostingAuthorization)
 	route.DELETE("/authorizations/:id", middleware.UserCriticalRateLimit("hosting-auth"), controller.CancelHostingAuthorization)
-	// 两层策略复用同一格式和校验，不给每种资源建第二套 API Key。
-	route.GET("/policy", controller.GetHostingResourcePolicy)
-	route.PUT("/policy", middleware.UserCriticalRateLimit("hosting-policy"), controller.UpdateHostingResourcePolicy)
+	// 来源顺序只在具体 Key 维护，不再注册用户全局优先级接口。
 	route.GET("/tokens/:token_id/policy", controller.GetHostingResourcePolicy)
 	route.PUT("/tokens/:token_id/policy", middleware.UserCriticalRateLimit("hosting-policy"), controller.UpdateHostingResourcePolicy)
 	route.DELETE("/tokens/:token_id/policy", middleware.UserCriticalRateLimit("hosting-policy"), controller.DeleteHostingResourcePolicy)

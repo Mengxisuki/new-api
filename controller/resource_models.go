@@ -143,7 +143,7 @@ func resourceModels(c *gin.Context, policy *model.ResourcePolicySnapshot) ([]res
 // 真正的推理调用依旧由 TokenAuth 拒绝禁用、过期和 IP 不匹配的 Key。
 // 读取策略失败必须返回错误，不能在故障时导出付费平台默认目录。
 // 未配置策略时沿用原平台目录，避免破坏存量客户端配置导出。
-// 已配置策略时默认层和 Key 覆盖只选其一，不把两层来源做并集。
+// 已配置策略时只读取该 Key 的来源，不合并其他 Key 或历史全局来源。
 // 返回采用控制台通用 success/data 信封，供前端统一处理错误。
 // 前端可依据 verified 与协议信息限制 Codex 配置导出，但权限仍在后端。
 func GetHostingTokenModels(c *gin.Context) {

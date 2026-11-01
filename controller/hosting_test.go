@@ -1,9 +1,15 @@
 package controller
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -17,7 +23,9 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/hosting"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -83,48 +91,86 @@ func hostingTestProof(t *testing.T, identity service.AuthIdentity, action string
 	return issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeHostingManage, Context: data}, "password")
 }
 
-// TestHostingPolicyContracts 验证两层策略及空覆盖的语义，防止意外恢复收费。
-// 首先证明没有配置的旧 Key 仍返回 legacy 所需的 nil 快照。
-// 随后保存用户默认并验证具体来源顺序，避免后台自动重排。
-// Key 空覆盖必须优先于默认，即使默认仍允许钱包使用。
-// 旧 revision 再次提交应冲突，不能覆盖新的付费授权。
-// 重复钱包来源是输入错误，不能被静默去重后保存。
-// 他人账号或不存在的用户不能借 account_id 建立策略。
-// 删除覆盖后再破坏默认 JSON，验证损坏不能退回旧收费行为。
-// 该用例只验证公共模型行为，不复制一份资源选择算法。
+// hostingTestControlAuthorization 使用实际请求字节核验真实控制面断言。
+// 模拟执行层只隔离网络，不能用固定管理密钥跳过新授权机制。
+// 读取后恢复正文，后续业务响应仍然解析同一份请求字节。
+// 摘要包括空正文；查询串和幂等键均直接取自收到的 HTTP 请求。
+// 返回的归属已经过签名和当前用户状态检查，可供具体测试断言。
+func hostingTestControlAuthorization(t *testing.T, request *http.Request) string {
+	t.Helper()
+	body, err := io.ReadAll(request.Body)
+	require.NoError(t, err)
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	digest := sha256.Sum256(body)
+	binding := hosting.RequestBinding{Method: request.Method, RequestURI: request.URL.RequestURI(), BodySHA256: hex.EncodeToString(digest[:]), IdempotencyKey: request.Header.Get("Idempotency-Key")}
+	owner, err := hosting.VerifyRequestAuthorization(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "), binding)
+	require.NoError(t, err)
+	return owner
+}
+
+// TestHostingPolicyContracts 验证每个 Key 独立维护来源，不存在用户全局继承。
+// 无记录沿用平台合同，显式空数组则禁用全部来源，二者不能互换。
+// 本人多个 Key 互不影响，旧全局保留编号不再接受读写。
+// 版本冲突必须显式拒绝，不能覆盖用户刚保存的付费授权。
+// 他人 Key、他人账号与重复来源不能进入策略。
+// 删除只恢复当前 Key 的既有平台合同，不修改其他 Key。
+// 损坏 JSON 必须失败，不能静默恢复平台收费。
 func TestHostingPolicyContracts(t *testing.T) {
-	user, _ := hostingTestDB(t)
-	token := model.Token{UserId: user.Id, Key: "hosting-policy-key", Name: "owned"}
-	require.NoError(t, model.DB.Create(&token).Error)
+	user, identity := hostingTestDB(t)
+	tokens := []model.Token{{UserId: user.Id, Key: "hosting-policy-a"}, {UserId: user.Id, Key: "hosting-policy-b"}, {UserId: user.Id + 1, Key: "hosting-policy-foreign"}}
+	require.NoError(t, model.DB.Create(&tokens).Error)
 	account := model.HostingAccount{UserID: user.Id, Provider: "codex", Alias: "本人", RemoteRef: uuid.NewString(), Status: "connected"}
 	require.NoError(t, model.DB.Create(&account).Error)
-	snapshot, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
+	snapshot, err := model.GetEffectiveResourcePolicy(user.Id, tokens[0].Id)
 	require.NoError(t, err)
-	require.Nil(t, snapshot) // 旧用户不能因为迁移存在空表就改变原合同。
-	// 未设置保持旧合同；保存空数组后则明确不允许使用任何来源。
-	_, err = model.SaveResourcePolicy(user.Id, 0, 0, []model.ResourceSource{{Kind: "hosting", AccountID: account.ID, Enabled: true}, {Kind: "wallet", Enabled: true}})
-	require.NoError(t, err)
-	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, token.Id)
-	require.NoError(t, err)
-	require.Equal(t, "hosting", snapshot.Sources[0].Kind)
-	require.Equal(t, fmt.Sprintf("%d:0:1", user.Id), snapshot.Revision)
-	_, err = model.SaveResourcePolicy(user.Id, token.Id, 0, nil)
-	require.NoError(t, err)
-	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, token.Id)
-	require.NoError(t, err)
-	require.Empty(t, snapshot.Sources) // 显式关闭所有来源绝不能回退默认钱包。
-	// 并发设置页用版本冲突显式拒绝，不能覆盖用户刚保存的付费授权。
+	assert.Nil(t, snapshot) // 缺行保留既有合同，不能被解释为禁用全部。
+	// 全局编号不能通过内部 API 重新引入，迁移只允许直接处理历史行。
 	_, err = model.SaveResourcePolicy(user.Id, 0, 0, nil)
-	require.ErrorIs(t, err, model.ErrResourcePolicyConflict) // 旧页面保存必须显式提醒刷新，不能静默覆盖。
-	_, err = model.SaveResourcePolicy(user.Id, 0, 1, []model.ResourceSource{{Kind: "wallet"}, {Kind: "wallet"}})
-	require.ErrorIs(t, err, model.ErrResourcePolicyInvalid) // 输入问题要与数据库损坏保持不同错误分类。
-	_, err = model.SaveResourcePolicy(user.Id+1, 0, 0, []model.ResourceSource{{Kind: "hosting", AccountID: account.ID}})
+	require.ErrorIs(t, err, model.ErrResourcePolicyInvalid)
+	_, err = model.GetEffectiveResourcePolicy(user.Id, 0)
+	require.ErrorIs(t, err, model.ErrResourcePolicyInvalid)
+	sources := []model.ResourceSource{{Kind: "hosting", AccountID: account.ID, Enabled: true}, {Kind: "wallet", Enabled: true}}
+	_, err = model.SaveResourcePolicy(user.Id, tokens[0].Id, 0, sources)
+	require.NoError(t, err)
+	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, tokens[0].Id)
+	require.NoError(t, err)
+	assert.Equal(t, sources, snapshot.Sources)                                        // 挂靠在钱包前的显式顺序必须原样返回。
+	assert.Equal(t, fmt.Sprintf("%d:%d:1", user.Id, tokens[0].Id), snapshot.Revision) // 日志版本应绑定具体 Key。
+	// 编辑 A 后，B 依然没有策略，避免一个设置页改变其他客户端的费用。
+	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, tokens[1].Id)
+	require.NoError(t, err)
+	assert.Nil(t, snapshot)
+	_, err = model.SaveResourcePolicy(user.Id, tokens[1].Id, 0, nil)
+	require.NoError(t, err)
+	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, tokens[1].Id)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	assert.Empty(t, snapshot.Sources) // 非 nil 快照与空列表共同表达用户主动禁用。
+	// 保存空数组也产生版本，旧页面不能再以首次创建版本覆盖它。
+	_, err = model.SaveResourcePolicy(user.Id, tokens[1].Id, 0, nil)
+	require.ErrorIs(t, err, model.ErrResourcePolicyConflict) // 这是并发编辑冲突，不能归为输入损坏。
+	_, err = model.SaveResourcePolicy(user.Id, tokens[0].Id, 1, []model.ResourceSource{{Kind: "wallet"}, {Kind: "wallet"}})
+	require.ErrorIs(t, err, model.ErrResourcePolicyInvalid)
+	// 用户本人存在也不能替他人的 Key 建立策略；不能只检查用户记录。
+	_, err = model.SaveResourcePolicy(user.Id, tokens[2].Id, 0, sources)
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
-	// 删除覆盖立即继承最新默认，数据库故障绝不能返回 nil 伪装旧合同。
-	require.NoError(t, model.DB.Where("user_id = ? AND token_id = ?", user.Id, token.Id).Delete(&model.ResourcePolicy{}).Error)
-	require.NoError(t, model.DB.Model(&model.ResourcePolicy{}).Where("user_id = ?", user.Id).Update("sources_json", "broken").Error)
-	_, err = model.GetEffectiveResourcePolicy(user.Id, token.Id)
-	require.Error(t, err)
+	// 来源归属在保存时验证，不能把他人的账号写入本人合法 Key。
+	require.NoError(t, model.DB.Model(&account).Update("user_id", user.Id+1).Error)
+	_, err = model.SaveResourcePolicy(user.Id, tokens[0].Id, 1, sources)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	// 走实际 DELETE 响应验证新版 DTO，不接受旧 inherited/effective_revision 字段残留。
+	path := fmt.Sprintf("/api/hosting/tokens/%d/policy", tokens[1].Id)
+	response := hostingTestRequest(t, identity, "DELETE", "/api/hosting/tokens/:token_id/policy", path, "", "", DeleteHostingResourcePolicy)
+	assert.Equal(t, 200, response.Code)
+	assert.JSONEq(t, `{"success":true,"message":"","data":{"revision":0,"legacy":true,"sources":[]}}`, response.Body.String())
+	// A 保留原来的策略，即使 B 删除，也不会重新查询任何全局来源。
+	snapshot, err = model.GetEffectiveResourcePolicy(user.Id, tokens[0].Id)
+	require.NoError(t, err)
+	assert.Equal(t, sources, snapshot.Sources)
+	// 人为破坏持久 JSON，区分数据库内容损坏和合法的无策略状态。
+	require.NoError(t, model.DB.Model(&model.ResourcePolicy{}).Where("user_id = ? AND token_id = ?", user.Id, tokens[0].Id).Update("sources_json", "broken").Error)
+	_, err = model.GetEffectiveResourcePolicy(user.Id, tokens[0].Id)
+	require.Error(t, err) // 损坏不能降级为钱包可用，从而改变费用授权。
 }
 
 // TestHostingFreshUpgradeRepeatMigration 先保留真实业务行，再模拟尚无验证字段的旧表。
@@ -173,8 +219,8 @@ func TestHostingAuthorizationAndRecovery(t *testing.T) {
 	var createCalls, activateCalls, deleteCalls int
 	failActivate := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 控制面归属和管理凭据必须由 Oak 生成，不能来自浏览器正文。
-		require.Equal(t, "Bearer test-control-key", r.Header.Get("Authorization"))
+		// 控制面归属和请求断言必须由 Oak 生成，不能来自浏览器正文。
+		require.Equal(t, hosting.OwnerRef(user.Id), hostingTestControlAuthorization(t, r))
 		require.Equal(t, hosting.OwnerRef(user.Id), r.URL.Query().Get("owner_ref"))
 		var data any
 		switch {
@@ -209,7 +255,6 @@ func TestHostingAuthorizationAndRecovery(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("OAK_GPT_LOAD_URL", server.URL)
-	t.Setenv("OAK_GPT_LOAD_MANAGEMENT_KEY", "test-control-key")
 	authorization, err := hosting.BeginAuthorization(context.Background(), identity, 0)
 	require.NoError(t, err)
 	// 同一用户另一会话也不能接手已经通过敏感验证的授权。
@@ -276,14 +321,17 @@ func TestHostingAuthorizationAndRecovery(t *testing.T) {
 // 新 UUID 也被未决记录阻止，说明保护并非只依赖请求幂等头。
 // 查询原 UUID 可以读取未知结果，但不能偷偷恢复消费。
 // 他人账号详情统一返回不存在，避免通过本地编号枚举信息。
-// 审计必须存在，但不包含证明或控制面管理密钥。
+// 审计必须存在，但不包含证明或控制面请求断言。
 // 这些断言覆盖真实业务失败条件，不把 mock 的返回值当作最终结论。
 func TestHostingProofOwnershipAndReset(t *testing.T) {
 	user, identity := hostingTestDB(t)
 	account := model.HostingAccount{UserID: user.Id, Provider: "codex", Alias: "本人", RemoteRef: uuid.NewString(), Status: "active"}
 	require.NoError(t, model.DB.Create(&account).Error)
 	calls := 0
+	var assertions []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, hosting.OwnerRef(user.Id), hostingTestControlAuthorization(t, r))
+		assertions = append(assertions, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if r.Method == http.MethodPost {
 			calls++
 			w.WriteHeader(502)
@@ -293,7 +341,6 @@ func TestHostingProofOwnershipAndReset(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("OAK_GPT_LOAD_URL", server.URL)
-	t.Setenv("OAK_GPT_LOAD_MANAGEMENT_KEY", "test-control-key")
 	path := fmt.Sprintf("/api/hosting/accounts/%d/reset-credits/consume", account.ID)
 	operationID := uuid.NewString()
 	body := fmt.Sprintf(`{"operation_id":%q}`, operationID)
@@ -334,8 +381,10 @@ func TestHostingProofOwnershipAndReset(t *testing.T) {
 	require.NotEmpty(t, logs) // 失败操作也需要可追溯证据。
 	data, err := json.Marshal(logs)
 	require.NoError(t, err)
-	require.NotContains(t, string(data), proof)              // 审计必须避免保存可重放的认证材料。
-	require.NotContains(t, string(data), "test-control-key") // 部署级管理凭据不能进入用户日志。
+	require.NotContains(t, string(data), proof) // 审计必须避免保存可重放的认证材料。
+	for _, assertion := range assertions {
+		require.NotContains(t, string(data), assertion) // 短期票据也属于有效认证材料，不因期限短而允许记日志。
+	}
 }
 
 // TestHostingCredentialAndProbeBoundaries 验证加密归属和真实测试结果的绑定。
@@ -357,6 +406,7 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 	require.NoError(t, model.DB.Create(&account).Error)
 	wrongModel := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, hosting.OwnerRef(user.Id), hostingTestControlAuthorization(t, r))
 		var data any
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/models"):
@@ -378,7 +428,6 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("OAK_GPT_LOAD_URL", server.URL)
-	t.Setenv("OAK_GPT_LOAD_MANAGEMENT_KEY", "test-control-key")
 	route, err := hosting.ResolveRoute(context.Background(), user.Id, account.ID)
 	require.NoError(t, err)
 	require.Equal(t, "private-test-key", route.AccessKey) // 真实解密必须得到内部受限 Key 才可准备调用。
@@ -418,4 +467,354 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 	require.NoError(t, hosting.PersistResetResult(&operation, &hosting.ResetResult{Status: "succeeded"}))
 	require.NoError(t, hosting.PersistResetResult(&operation, &hosting.ResetResult{Status: "outcome_unknown"}))
 	require.Equal(t, "succeeded", operation.Status) // 晚到回包不能让已扣次数重新进入可消费状态。
+}
+
+// TestHostingKeyPolicyMigration 固化历史默认，不修改任何已经明确的 Key 选择。
+// 原始 JSON 包括顺序、关闭项与空白格式都逐字复制，不重新解释旧账号状态。
+// 禁用与过期 Key 仍属于用户现存资产，软删除 Key 则不会重新取得来源。
+// 显式空策略与显式平台策略均优先保留，迁移不得添加钱包授权。
+// 新库、升级后重复运行和升级后新增 Key 分别覆盖三个启动边界。
+// 所有检查使用真实数据库；三种方言共用此用例而不跳过事务断言。
+func TestHostingKeyPolicyMigration(t *testing.T) {
+	user, _ := hostingTestDB(t)
+	// 空库可以重复启动，不为用户凭空生成默认来源。
+	for range 2 {
+		copied, removed, err := model.MigrateResourcePoliciesToTokens()
+		require.NoError(t, err)
+		assert.Zero(t, copied)  // 空库或重复启动不能生成额外策略行。
+		assert.Zero(t, removed) // 幂等运行不应再宣称删除旧默认。
+	}
+	tokens := []model.Token{
+		{UserId: user.Id, Key: "migration-normal"},                                       // 正常 Key 是默认复制基线。
+		{UserId: user.Id, Key: "migration-disabled", Status: common.TokenStatusDisabled}, // 停用只是暂停身份，不表示丢弃来源。
+		{UserId: user.Id, Key: "migration-expired", ExpiredTime: 1},                      // 过期后续期仍应保留用户原有配置。
+		{UserId: user.Id, Key: "migration-explicit"},                                     // 独立配置不能被旧全局顺序覆盖。
+		{UserId: user.Id, Key: "migration-empty"},                                        // 空数组是明确授权状态，不是缺失数据。
+		{UserId: user.Id, Key: "migration-deleted"},                                      // 软删除由 GORM 范围过滤。
+		{UserId: user.Id + 1, Key: "migration-foreign"},                                  // 用户边界不能由连续 Key 编号推断。
+	}
+	require.NoError(t, model.DB.Create(&tokens).Error)
+	require.NoError(t, model.DB.Delete(&tokens[5]).Error)
+	// 旧来源可能引用已删除账号，迁移负责保留意图而不冒充一次用户编辑。
+	legacy := model.ResourcePolicy{UserID: user.Id, TokenID: 0, Revision: 7, UpdatedAt: 1234567890, SourcesJSON: `[ {"kind":"hosting","account_id":999,"enabled":false}, {"kind":"hosting","account_id":998,"enabled":true} ]`}
+	explicit := model.ResourcePolicy{UserID: user.Id, TokenID: tokens[3].Id, Revision: 3, UpdatedAt: 1234567891, SourcesJSON: `[{"kind":"subscription","enabled":true}]`}
+	empty := model.ResourcePolicy{UserID: user.Id, TokenID: tokens[4].Id, Revision: 4, UpdatedAt: 1234567892, SourcesJSON: `[]`}
+	for _, row := range []*model.ResourcePolicy{&legacy, &explicit, &empty} {
+		require.NoError(t, model.DB.Create(row).Error)
+	}
+	copied, removed, err := model.MigrateResourcePoliciesToTokens()
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, copied)  // 仅复制普通、禁用、过期三个无策略 Key。
+	assert.EqualValues(t, 1, removed) // 每个用户只有一条历史默认待移除。
+	// 复制前后的原始字段一致，证明没有加收费来源或重排用户偏好。
+	for _, token := range tokens[:3] {
+		var row model.ResourcePolicy
+		require.NoError(t, model.DB.Where("user_id = ? AND token_id = ?", user.Id, token.Id).First(&row).Error)
+		assert.Equal(t, legacy.SourcesJSON, row.SourcesJSON) // 包括空白与关闭项，防止迁移重新序列化。
+		assert.Equal(t, legacy.Revision, row.Revision)       // 迁移不能伪装成用户的一次新编辑。
+		assert.Equal(t, legacy.UpdatedAt, row.UpdatedAt)     // 保留历史编辑时间便于排障追溯。
+	}
+	for _, original := range []model.ResourcePolicy{explicit, empty} {
+		var row model.ResourcePolicy
+		require.NoError(t, model.DB.First(&row, original.ID).Error)
+		assert.Equal(t, original, row) // 连内部主键也不变，证明显式策略未重建。
+	}
+	// 删除与他人 Key 没有新增记录；用户自己的全局行已经移除。
+	for _, token := range tokens[5:] {
+		snapshot, err := model.GetEffectiveResourcePolicy(token.UserId, token.Id)
+		require.NoError(t, err)
+		assert.Nil(t, snapshot) // 没有跨用户复制，也没有复活已删除 Key。
+	}
+	var defaults int64
+	require.NoError(t, model.DB.Model(&model.ResourcePolicy{}).Where("token_id = ?", 0).Count(&defaults).Error)
+	assert.Zero(t, defaults) // 新运行时不得保留仍可能被旧页面读取的全局行。
+	copied, removed, err = model.MigrateResourcePoliciesToTokens()
+	require.NoError(t, err)
+	assert.Zero(t, copied)  // 空库或重复启动不能生成额外策略行。
+	assert.Zero(t, removed) // 幂等运行不应再宣称删除旧默认。
+	// 迁移仅处理当时已有的 Key，后来创建的 Key 不继承已移除的用户设置。
+	newToken := model.Token{UserId: user.Id, Key: "migration-new"}
+	require.NoError(t, model.DB.Create(&newToken).Error)
+	snapshot, err := model.GetEffectiveResourcePolicy(user.Id, newToken.Id)
+	require.NoError(t, err)
+	assert.Nil(t, snapshot) // 后续 Key 独立开始，迁移不充当持久模板。
+}
+
+// TestHostingKeyPolicyMigrationRollback 在第二次复制时制造真实事务内写失败。
+// 第一条已经写入的副本必须回滚，旧默认必须保留以便下次启动恢复。
+// 返回计数也要归零，避免日志把未提交的工作宣称为迁移成功。
+// 故障只注入 GORM 写入回调，真实事务、查询与回滚仍由数据库执行。
+// 移除注入后立即重新迁移，验证失败不会留下无法恢复的中间状态。
+func TestHostingKeyPolicyMigrationRollback(t *testing.T) {
+	user, _ := hostingTestDB(t)
+	tokens := []model.Token{{UserId: user.Id, Key: "rollback-a"}, {UserId: user.Id, Key: "rollback-b"}}
+	require.NoError(t, model.DB.Create(&tokens).Error)
+	legacy := model.ResourcePolicy{UserID: user.Id, Revision: 2, SourcesJSON: `[]`, UpdatedAt: 1234567890}
+	require.NoError(t, model.DB.Create(&legacy).Error)
+	// 在第二条副本写入前报错，确保第一条已经进入事务而非全部尚未执行。
+	writes := 0
+	injected := errors.New("injected policy copy failure")
+	const callback = "test:hosting_policy_migration_failure"
+	require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+		// 只拦截策略表，避免把其他模型的初始化错误误当作迁移回滚。
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == "resource_policies" {
+			writes++
+			if writes == 2 {
+				tx.AddError(injected)
+			}
+		}
+	}))
+	// 清理在数据库句柄还有效时执行，即使中途断言失败也不污染后续测试。
+	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Create().Remove(callback)) })
+	copied, removed, err := model.MigrateResourcePoliciesToTokens()
+	require.ErrorIs(t, err, injected)
+	assert.Equal(t, 2, writes) // 故障确实发生在部分写入之后。
+	assert.Zero(t, copied)     // 未提交副本不计入成功日志。
+	assert.Zero(t, removed)    // 失败不能对外报告默认已移除。
+	var rows []model.ResourcePolicy
+	require.NoError(t, model.DB.Find(&rows).Error)
+	assert.Equal(t, []model.ResourcePolicy{legacy}, rows) // 默认完整保留，第一条副本已真实回滚。
+	require.NoError(t, model.DB.Callback().Create().Remove(callback))
+	copied, removed, err = model.MigrateResourcePoliciesToTokens()
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, copied)  // 重试重新复制两条，证明没有半完成残留。
+	assert.EqualValues(t, 1, removed) // 只有成功提交才允许移除历史默认。
+}
+
+// TestHostingConfigurationStatusAndProofPreservation 证明本地预检没有网络与授权副作用。
+// 配置状态只向已认证用户开放，不返回管理地址或持久加密材料。
+// 配置错误在消费单次证明之前失败，管理员补齐后同一证明仍可使用一次。
+// 真正创建授权仍经过原有安全验证，不因预检成功而绕过重放检查。
+// 执行层由本地 HTTP 服务替代，业务会话、证明与授权表均使用真实实现。
+func TestHostingConfigurationStatusAndProofPreservation(t *testing.T) {
+	_, identity := hostingTestDB(t)
+	// 计数跨状态查询与授权创建共用，任何意外探测请求都会暴露。
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, "/api/hosting/v1/authorizations", r.URL.Path) // 配置检查无权调用其他执行层端点。
+		body, err := common.Marshal(gin.H{"code": 0, "data": gin.H{"stage_id": "configured-stage", "status": "ready", "authorization_url": "https://auth.example/authorize", "redirect_uri": "http://localhost:1455/auth/callback", "expires_at_ms": time.Now().Add(time.Minute).UnixMilli()}})
+		require.NoError(t, err)
+		_, err = w.Write(body)
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+	// 特征字符串便于检查响应脱敏，与任何部署真实密钥无关。
+	secret := strings.Repeat("private-config-secret", 2)
+	// 每种失败只返回稳定错误代码，不能把原始配置值混入可展示信息。
+	cases := []struct{ name, address, secret, code string }{
+		{"invalid-url", "https://private-internal.example", secret, "hosting_invalid_control_url"},
+		{"missing-secret", server.URL, "", "hosting_encryption_not_configured"},
+		{"short-secret", server.URL, "short-private-secret", "hosting_encryption_not_configured"},
+		{"configured", server.URL, secret, ""},
+		{"offline", "http://127.0.0.1:1", secret, ""}, // 配置完整不能被等同于服务在线。
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 子用例退出自动恢复环境，缺失密钥不会污染后续正常配置断言。
+			t.Setenv("OAK_GPT_LOAD_URL", tc.address)
+			t.Setenv("CRYPTO_SECRET", tc.secret)
+			response := hostingTestRequest(t, identity, "GET", "/api/hosting/status", "/api/hosting/status", "", "", GetHostingStatus)
+			assert.Equal(t, 200, response.Code) // 未配置是可展示的状态，查询本身仍成功。
+			var envelope struct {
+				Success bool `json:"success"`
+				Data    struct {
+					Configured bool   `json:"configured"`
+					Code       string `json:"code"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &envelope))
+			assert.True(t, envelope.Success)
+			assert.Equal(t, tc.code == "", envelope.Data.Configured) // 只有全部本地条件满足才允许继续授权。
+			assert.Equal(t, tc.code, envelope.Data.Code)
+			assert.NotContains(t, response.Body.String(), tc.address) // 管理网络布局不能进入用户 DTO。
+			assert.NotContains(t, response.Body.String(), "private-") // 所有测试密钥都有此特征，防止部分泄漏。
+		})
+	}
+	assert.Zero(t, calls) // 预检与缺配置失败都不得访问执行层。
+	// 相同处理器必须经过认证中间件，匿名用户不能读取部署配置状态。
+	engine := gin.New()
+	engine.GET("/api/hosting/status", middleware.UserAuth(), GetHostingStatus)
+	anonymous := httptest.NewRecorder()
+	engine.ServeHTTP(anonymous, httptest.NewRequest("GET", "/api/hosting/status", nil))
+	assert.Equal(t, http.StatusUnauthorized, anonymous.Code)
+	t.Setenv("OAK_GPT_LOAD_URL", server.URL)
+	t.Setenv("OAK_GPT_LOAD_MANAGEMENT_KEY", "old-admin-secret-must-not-be-used")
+	t.Setenv("CRYPTO_SECRET", "")
+	proof := hostingTestProof(t, identity, "connect", 0, "")
+	// 缺持久密钥的请求不能创建本地流程，更不能消费已经完成的用户验证。
+	response := hostingTestRequest(t, identity, "POST", "/api/hosting/authorizations", "/api/hosting/authorizations", `{"provider":"codex"}`, proof, BeginHostingAuthorization)
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+	assert.Contains(t, response.Body.String(), "hosting_encryption_not_configured")
+	assert.Contains(t, response.Body.String(), "Account hosting encryption is not configured. Please contact an administrator.")
+	var authorizations int64
+	require.NoError(t, model.DB.Model(&model.HostingAuthorization{}).Count(&authorizations).Error)
+	assert.Zero(t, authorizations) // 没有创建不可恢复的本地接入流程。
+	assert.Zero(t, calls)          // 预检与缺配置失败都不得访问执行层。
+	// 管理员补配置后重用原证明成功，随后重放必须被安全层拒绝。
+	t.Setenv("CRYPTO_SECRET", secret)
+	response = hostingTestRequest(t, identity, "POST", "/api/hosting/authorizations", "/api/hosting/authorizations", `{"provider":"codex"}`, proof, BeginHostingAuthorization)
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String()) // 原证明仍有效，修复配置无需用户重新验证。
+	assert.Equal(t, 1, calls)
+	response = hostingTestRequest(t, identity, "POST", "/api/hosting/authorizations", "/api/hosting/authorizations", `{"provider":"codex"}`, proof, BeginHostingAuthorization)
+	assert.Equal(t, http.StatusForbidden, response.Code) // 成功创建后证明已经单次消费。
+	assert.Equal(t, 1, calls)                            // 重放拒绝发生在远端创建之前。
+}
+
+// TestHostingControlRequestAuthorization 用真实 Client 签发并走真实验证处理器。
+// 执行层只拿到单次请求的短期断言，不获得登录密钥或长期管理员凭据。
+// 验证入口必须区分服务用途、受众、算法、有效期以及精确请求绑定。
+// 同一有效票据可重复只读核验，但不能改变用户、动作、正文或幂等 UUID。
+// 停用用户即时拒绝，内部数据库故障保持可观察的失败而非授予默认身份。
+// 负面声明由测试专用签名材料构造，验证真实拒绝路径而不复制验证算法。
+func TestHostingControlRequestAuthorization(t *testing.T) {
+	user, identity := hostingTestDB(t)
+	secret := strings.Repeat("request-authorization-test", 2) // 专用测试主密钥，不复用会话签名配置。
+	t.Setenv("CRYPTO_SECRET", secret)
+	var raw string
+	var binding hosting.RequestBinding // 模拟执行层按真实收到的字节重建绑定。
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		raw = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") // 只截取 Client 真正发送的票据。
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		digest := sha256.Sum256(body)
+		binding = hosting.RequestBinding{Method: r.Method, RequestURI: r.URL.RequestURI(), BodySHA256: hex.EncodeToString(digest[:]), IdempotencyKey: r.Header.Get("Idempotency-Key")}
+		_, err = w.Write([]byte(`{"code":0,"data":{}}`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+	t.Setenv("OAK_GPT_LOAD_URL", server.URL)
+	t.Setenv("OAK_GPT_LOAD_MANAGEMENT_KEY", "obsolete-admin-key")
+	client, err := hosting.NewConfiguredClient()
+	require.NoError(t, err)
+	operationID := uuid.NewString()                                                       // 后续篡改此值应导致请求授权失败。
+	payload := gin.H{"owner_ref": hosting.OwnerRef(user.Id), "operation_id": operationID} // 正文和查询归属同时由服务端生成。
+	require.NoError(t, client.Call(context.Background(), "POST", "/authorizations", user.Id, payload, operationID, nil))
+	assert.NotEqual(t, "obsolete-admin-key", raw) // 旧配置即使还在环境里，也不能被发送给执行层。
+	assert.Equal(t, 1, calls)                     // 控制客户端不会为签名过程额外访问执行层。
+
+	engine := gin.New()
+	engine.POST("/api/internal/hosting/verify-request", VerifyHostingControlRequest)
+	// 每次调用真实只读处理器，不用直接检查私有 claims 作为授权成功依据。
+	verify := func(assertion string, actual hosting.RequestBinding) *httptest.ResponseRecorder {
+		body, err := common.Marshal(actual)
+		require.NoError(t, err)
+		request := httptest.NewRequest("POST", "/api/internal/hosting/verify-request", bytes.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+assertion) // 核验使用独立票据，而非浏览器会话。
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, request)
+		return response
+	}
+	// 核验可以重复执行；它不会创建授权业务行或消费用户安全证明。
+	for range 2 {
+		response := verify(raw, binding)
+		assert.Equal(t, 200, response.Code) // 只读核验不会因之前核验过而误报票据已消费。
+		assert.JSONEq(t, fmt.Sprintf(`{"success":true,"data":{"owner_ref":%q}}`, hosting.OwnerRef(user.Id)), response.Body.String())
+	}
+	var rows int64
+	require.NoError(t, model.DB.Model(&model.HostingAuthorization{}).Count(&rows).Error)
+	assert.Zero(t, rows) // 验证接口不能暗中变成一个新接入入口。
+
+	// 精确请求绑定阻止改变动作、路径、归属、字节内容或原业务幂等键。
+	for _, field := range []string{"method", "path", "owner", "body", "idempotency"} {
+		t.Run(field, func(t *testing.T) {
+			changed := binding
+			switch field {
+			case "method":
+				changed.Method = "DELETE" // 既有读写权限不能被客户端转换为删除权限。
+			case "path":
+				changed.RequestURI = strings.Replace(changed.RequestURI, "/authorizations", "/accounts", 1) // 同一命名空间内也不能换动作。
+			case "owner":
+				changed.RequestURI = "/api/hosting/v1/authorizations?owner_ref=oak%3A999" // 查询串也是签名对象。
+			case "body":
+				changed.BodySHA256 = strings.Repeat("0", 64) // 合法格式的不同摘要仍必须拒绝。
+			case "idempotency":
+				changed.IdempotencyKey = uuid.NewString() // 不允许拿旧授权另开一次消费操作。
+			}
+			response := verify(raw, changed)
+			assert.Equal(t, 401, response.Code) // 字段篡改与坏签名使用相同对外失败类别。
+			assert.JSONEq(t, `{"success":false,"message":"Hosting request authorization failed"}`, response.Body.String())
+		})
+	}
+	login, _, err := service.IssueAccessToken(identity)
+	require.NoError(t, err)
+	for _, rejected := range []string{login, "obsolete-admin-key", "", "not-a-jwt"} {
+		assert.Equal(t, 401, verify(rejected, binding).Code) // 用户登录或管理员身份不能替代请求范围授权。
+	}
+
+	// 仅在测试内解析已捕获的自有票据，重新签名产生有合法 MAC 的错误声明。
+	// 这样错误受众或超长期限不会被“签名本来就错”掩盖，仍走真实解析校验。
+	claims := jwt.MapClaims{}
+	_, _, err = jwt.NewParser().ParseUnverified(raw, claims)
+	require.NoError(t, err)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, err = mac.Write([]byte("oak-hosting-request-authorization-v1"))
+	require.NoError(t, err)
+	key := mac.Sum(nil)
+	for _, invalid := range []string{"algorithm", "signature", "issuer", "audience", "use", "type", "expired", "future", "long-lived", "missing-expiry", "owner"} {
+		t.Run(invalid, func(t *testing.T) {
+			changed := jwt.MapClaims{}
+			for k, v := range claims {
+				changed[k] = v
+			}
+			method := jwt.SigningMethodHS256
+			signingKey := key
+			tokenType := "oak-hosting-request+jwt"
+			switch invalid {
+			case "algorithm":
+				method = jwt.SigningMethodHS512 // 即便是安全算法，也不是本协议允许的算法。
+			case "signature":
+				signingKey = []byte("different-test-key") // 形状相同不能替代真实性校验。
+			case "issuer":
+				changed["iss"] = "another-service" // 受信任发行者必须精确匹配。
+			case "audience":
+				changed["aud"] = "oak-dashboard" // 面向控制台的授权不能横向用于执行层。
+			case "use":
+				changed["use"] = "access" // 共同使用 JWT 格式不代表共同用途。
+			case "type":
+				tokenType = "JWT" // 普通令牌类型也不能被作为专用请求断言接收。
+			case "expired":
+				changed["iat"], changed["nbf"], changed["exp"] = time.Now().Add(-time.Minute).Unix(), time.Now().Add(-time.Minute).Unix(), time.Now().Add(-30*time.Second).Unix()
+			case "future":
+				changed["iat"], changed["nbf"], changed["exp"] = time.Now().Add(time.Minute).Unix(), time.Now().Add(time.Minute).Unix(), time.Now().Add(90*time.Second).Unix()
+			case "long-lived":
+				changed["exp"] = time.Now().Add(time.Hour).Unix() // 当前有效但超出短期授权窗口也要拒绝。
+			case "missing-expiry":
+				delete(changed, "exp") // 缺少期限不能按永不过期处理。
+			case "owner":
+				changed["owner_ref"] = "oak:999" // subject 与业务归属引用必须共同一致。
+			}
+			token := jwt.NewWithClaims(method, changed)
+			token.Header["typ"] = tokenType
+			assertion, err := token.SignedString(signingKey)
+			require.NoError(t, err)
+			assert.Equal(t, 401, verify(assertion, binding).Code)
+		})
+	}
+	// 当前用户状态独立于短期签名，停用后无需等待票据自然过期。
+	require.NoError(t, model.DB.Model(user).Update("status", common.UserStatusDisabled).Error)
+	assert.Equal(t, 401, verify(raw, binding).Code) // 签名尚未过期仍不能访问已停用用户资源。
+	require.NoError(t, model.DB.Model(user).Update("status", common.UserStatusEnabled).Error)
+	assert.Equal(t, 200, verify(raw, binding).Code)
+	// 数据库故障不能被当成不存在，也不能因为票据有效而直接放行。
+	const callback = "test:hosting_authorization_query_failure"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == "users" {
+			tx.AddError(errors.New("injected user query failure"))
+		}
+	}))
+	response := verify(raw, binding)
+	require.NoError(t, model.DB.Callback().Query().Remove(callback))
+	assert.Equal(t, 503, response.Code) // 基础设施失败必须可定位，不能被伪装成普通认证失败。
+	assert.NotContains(t, response.Body.String(), "injected")
+
+	// 内部调用方也不能取得任意接口、点段逃逸或他人正文的签名能力。
+	for _, target := range []string{"/../accounts", "/authorizations?owner_ref=oak:999", "/authorizations#fragment"} {
+		require.Error(t, client.Call(context.Background(), "POST", target, user.Id, payload, operationID, nil))
+	}
+	require.Error(t, client.Call(context.Background(), "POST", "/authorizations", user.Id, gin.H{"owner_ref": "oak:999"}, operationID, nil))
+	assert.Equal(t, 1, calls) // 所有错误都发生在签发或发包之前，不能先执行再拒绝。
 }

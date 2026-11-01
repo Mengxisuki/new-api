@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // resourceFixture 运行真实鉴权、策略、控制面 client 与数据面转发。
@@ -81,7 +83,7 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 	f := &resourceFixture{user: user, token: token, status: 200}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/hosting/v1/") {
-			require.Equal(t, "Bearer management-only", r.Header.Get("Authorization"))
+			require.Equal(t, hosting.OwnerRef(user.Id), hostingTestControlAuthorization(t, r))
 			require.Equal(t, hosting.OwnerRef(user.Id), r.URL.Query().Get("owner_ref"))
 			w.Header().Set("Content-Type", "application/json")
 			if strings.HasSuffix(r.URL.Path, "/models") {
@@ -123,7 +125,6 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("OAK_GPT_LOAD_URL", server.URL)
-	t.Setenv("OAK_GPT_LOAD_MANAGEMENT_KEY", "management-only")
 	for index := range 2 {
 		account := &model.HostingAccount{UserID: user.Id, Provider: "codex", Alias: fmt.Sprint(index), RemoteRef: fmt.Sprintf("account-%d", index), Status: "active"}
 		key, err := hosting.EncryptKey(account.RemoteRef, fmt.Sprintf("internal-%d", index))
@@ -146,19 +147,23 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 }
 
 // setPolicy 通过真实模型校验保存顺序，避免测试绕过归属检查。
-// 每次读取实际版本后再更新，覆盖用户默认与 Key 继承链。
+// 每次读取该 Key 实际版本后再更新，版本冲突不会被测试夹具掩盖。
 // 每次保存读取实际 revision，测试不能直接改 JSON 跳过契约校验。
-// 只配置用户默认层，测试中的 Key 默认继承它。
+// 只配置当前模型 Key，不能影响同一用户的其他客户端。
 // 来源列表的顺序就是明确回退授权，helper 不自动补钱包。
-// 需要 Key 覆盖的场景另行调用正式模型接口，保持两层边界可见。
+// 空参数保存显式空数组，保持禁用全部与没有策略的区别。
 // 保存失败会立刻终止用例，避免错误策略让后续断言失去意义。
 // 本 helper 不伪造额度或账号可用性，候选仍由执行时的真实状态检查。
-// 同一个测试可以多次替换默认策略，验证用户撤销来源立即生效。
+// 同一个测试可以多次替换当前 Key 策略，验证用户撤销来源立即生效。
 func (f *resourceFixture) setPolicy(t *testing.T, sources ...model.ResourceSource) {
 	t.Helper()
 	var row model.ResourcePolicy
-	model.DB.Where("user_id = ? AND token_id = 0", f.user.Id).First(&row)
-	_, err := model.SaveResourcePolicy(f.user.Id, 0, row.Revision, sources)
+	err := model.DB.Where("user_id = ? AND token_id = ?", f.user.Id, f.token.Id).First(&row).Error
+	// 只允许首次没有记录，其他数据库故障不能被零版本掩盖。
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		require.NoError(t, err)
+	}
+	_, err = model.SaveResourcePolicy(f.user.Id, f.token.Id, row.Revision, sources)
 	require.NoError(t, err)
 }
 
@@ -245,10 +250,10 @@ func TestResourceRelayExhaustionAndNoReplay(t *testing.T) {
 	require.Equal(t, []string{"Bearer internal-0"}, f.calls)
 }
 
-// Key 完整覆盖不合并用户默认，空数组表示禁用全部来源。
+// Key 自己的来源顺序决定调度，空数组表示禁用全部来源。
 // 模型限制、未支持协议、重复 model 与异步请求都在上游调用前拒绝。
-// 先建立可用默认，再保存空 Key 覆盖，证明覆盖不是与默认合并。
-// 删除覆盖后才恢复默认来源，避免禁用全部被误当成继承。
+// 先保存可用来源，再保存空数组，证明旧来源不会被保留。
+// 重新显式保存来源后继续校验输入，不通过删除触发隐式收费。
 // 不支持的图片协议必须在统一鉴权入口阻断，不能落回旧付费通道。
 // 后台异步请求不属于当前同步调度契约，应在发送前明确拒绝。
 // 重复 model 字段存在解析歧义，不能让不同阶段使用不同模型名。
@@ -257,11 +262,10 @@ func TestResourceRelayExhaustionAndNoReplay(t *testing.T) {
 func TestResourceRelayPolicyAndInputBoundaries(t *testing.T) {
 	f := newResourceFixture(t)
 	f.setPolicy(t, model.ResourceSource{Kind: "hosting", AccountID: f.accounts[0].ID, Enabled: true})
-	_, err := model.SaveResourcePolicy(f.user.Id, f.token.Id, 0, []model.ResourceSource{})
-	require.NoError(t, err)
+	f.setPolicy(t)
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
 	require.Equal(t, 503, f.request(t, "POST", "/v1/chat/completions", body).Code)
-	require.NoError(t, model.DB.Where("user_id = ? AND token_id = ?", f.user.Id, f.token.Id).Delete(&model.ResourcePolicy{}).Error)
+	f.setPolicy(t, model.ResourceSource{Kind: "hosting", AccountID: f.accounts[0].ID, Enabled: true})
 	require.Equal(t, 400, f.request(t, "POST", "/v1/images/generations", body).Code)
 	require.Equal(t, 400, f.request(t, "POST", "/v1/responses", `{"model":"gpt-4","input":"hi","background":true}`).Code)
 	require.Equal(t, 400, f.request(t, "POST", "/v1/chat/completions", `{"model":"gpt-4","model":"forbidden","messages":[]}`).Code)
@@ -429,7 +433,7 @@ func TestResourceRelayStaleObservationDoesNotSkip(t *testing.T) {
 // 高级自定义渠道分别声明 Chat、Responses 和图片路径，验证模型级路由匹配。
 // 同名模型在其他分组支持更多协议，是全站缓存误合并的直接复现条件。
 // 另一个仅存在于其他组的模型必须完全不可见，不能只裁剪它的协议。
-// 先调用控制台 Key 配置处理器，覆盖用户设置、Key 归属与默认策略的实际组合。
+// 先调用控制台 Key 配置处理器，覆盖用户设置、Key 归属与独立策略的实际组合。
 // 再通过真实 Key 调用 OpenAI 目录，证明两个入口没有不同的能力来源。
 // 对同名模型检查 supported_endpoint_types，防止展示元数据重新引入全站能力。
 // 所有平台模型都应保持未验证，渠道配置并不是本人账号实测结果。

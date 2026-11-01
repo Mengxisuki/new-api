@@ -33,16 +33,15 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Code }
 
-// Client 使用部署配置访问同机执行层；禁止重定向泄漏管理密钥。
+// Client 使用部署配置访问同机执行层；禁止重定向泄漏短期断言。
 // 控制请求有独立超时，模型流式传输由调用方使用单独生命周期。
 type Client struct {
 	BaseURL string       // 部署地址已经过回环校验，禁止用户重写。
-	key     string       // 管理凭据只保留在进程内存，不序列化。
 	http    *http.Client // 共享传输用于控制请求，禁止跟随重定向。
 }
 
 // 控制请求共享连接池，避免每次列表查询创建无法回收的空闲连接。
-// 禁止环境代理与重定向，管理密钥只能到达已校验的回环服务。
+// 禁止环境代理与重定向，请求断言只能到达已校验的回环服务。
 var controlHTTPClient = &http.Client{
 	Transport: func() *http.Transport {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -53,13 +52,13 @@ var controlHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-// NewClient 不在缺少配置时猜测管理凭据，未配置功能明确不可用。
+// NewClient 只接受本地控制地址，不把执行层管理员权限带入用户链路。
 // Loopback 限制符合当前双服务同机部署，不接受用户提供的 URL。
 // 仅接受字面回环 IP，避免 DNS 重绑定和容器外出站绕过同机边界。
-// 拒绝 URL 用户信息、查询和路径，防止管理凭据被拼到意外目标。
-// 管理密钥缺失是功能未配置，不得退回公共接口或默认测试密钥。
+// 拒绝 URL 用户信息、查询和路径，防止请求断言被拼到意外目标。
+// 不读取执行层管理员密钥，控制请求由 Oak 签发专用短期授权。
 // 此配置适用于当前同机部署；跨主机必须先设计受控传输和身份边界。
-// Client 的共享连接池禁用环境代理，管理 Authorization 不会发给代理服务器。
+// Client 的共享连接池禁用环境代理，请求断言不会发给代理服务器。
 // 拒绝 HTTP 重定向，因为重定向不是控制 API 协议的一部分。
 // 模型流式调用不复用这里的控制超时，以免长响应被管理设置截断。
 // 地址是部署配置，所有浏览器输入都不能覆盖它。
@@ -70,18 +69,14 @@ func NewClient() (*Client, error) {
 	}
 	u, err := url.Parse(address)
 	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil, &Error{503, "hosting_not_configured"}
+		return nil, &Error{503, "hosting_invalid_control_url"}
 	}
 	// 仅允许字面回环地址，避免 DNS 指向变化和透明出站代理。
 	ip := net.ParseIP(u.Hostname())
 	if ip == nil || !ip.IsLoopback() {
-		return nil, &Error{503, "hosting_not_configured"}
+		return nil, &Error{503, "hosting_invalid_control_url"}
 	}
-	key := strings.TrimSpace(os.Getenv("OAK_GPT_LOAD_MANAGEMENT_KEY"))
-	if key == "" {
-		return nil, &Error{503, "hosting_not_configured"}
-	}
-	return &Client{BaseURL: address, key: key, http: controlHTTPClient}, nil
+	return &Client{BaseURL: address, http: controlHTTPClient}, nil
 }
 
 // OwnerRef 是服务端生成的非秘密归属引用，不接受浏览器覆盖。
@@ -120,11 +115,16 @@ func (client *Client) Call(ctx context.Context, method, path string, userID int,
 	if err != nil {
 		return &Error{502, "hosting_control_unavailable"}
 	}
-	request.Header.Set("Authorization", "Bearer "+client.key)
 	request.Header.Set("Content-Type", "application/json")
 	if operationID != "" {
 		request.Header.Set("Idempotency-Key", operationID)
 	}
+	// 对最终请求字节和幂等键签名，执行层只取得本次请求的短期授权。
+	assertion, err := signRequestAuthorization(request, userID, body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+assertion)
 	response, err := client.http.Do(request)
 	if err != nil {
 		return &Error{502, "hosting_control_outcome_unknown"}
@@ -378,4 +378,19 @@ type ResetCreditObservation struct {
 	State        string `json:"state"`
 	ObservedAtMS *int64 `json:"observed_at_ms,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
+}
+
+// NewConfiguredClient 统一校验挂靠接入所需的地址和持久加密密钥。
+// 本函数仅检查部署配置，不连接执行层、不创建授权或读取任何原厂账户。
+// 状态查询与授权入口共用它，避免先消费敏感证明才发现服务未配置。
+// 返回错误只含固定代码，不包含地址、密钥值或密文。
+func NewConfiguredClient() (*Client, error) {
+	client, err := NewClient()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := cryptKey(); err != nil {
+		return nil, err
+	}
+	return client, nil
 }

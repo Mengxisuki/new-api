@@ -26,6 +26,7 @@ import {
   accountSchema,
   authorizationSchema,
   policySchema,
+  hostingStatusSchema,
   observationSchema,
   resetOperationSchema,
   hostingTestSchema,
@@ -70,36 +71,35 @@ export async function getHostingAccounts() {
     .object({ items: z.array(accountSchema) })
     .parse(requireServerSuccess(response.data).data).items
 }
-// 用户默认和 Key 覆盖使用同一契约；tokenId 不代表切换所属用户。
-// 未传 Key ID 时读取用户默认配置。
-// 传入 Key ID 时服务端返回完整有效策略及继承标志。
-// 旧 Key 的 legacy 状态由后端决定，前端不推断迁移。
-export async function getResourcePolicy(tokenId?: number) {
-  const path = tokenId ? `/tokens/${tokenId}/policy` : '/policy'
-  const response = await api.get(root + path, { disableDuplicate: true })
+// 配置状态只包含安全摘要，不能让用户尝试授权后才发现服务尚未就绪。
+// 此读取没有创建、换码或消耗单次证明的副作用。
+export async function getHostingStatus() {
+  const response = await api.get(`${root}/status`, { disableDuplicate: true })
+  return hostingStatusSchema.parse(requireServerSuccess(response.data).data)
+}
+// 每个策略请求必须提供具体 Key 编号，不存在用户默认入口。
+// 本人归属由后端校验，前端编号只用于确定用户当前编辑对象。
+// 没有配置的 Key 由 legacy 明确表示，不把空数组误读成旧计费规则。
+export async function getResourcePolicy(tokenId: number) {
+  const response = await api.get(`${root}/tokens/${tokenId}/policy`, {
+    disableDuplicate: true,
+  })
   return policySchema.parse(requireServerSuccess(response.data).data)
 }
-// 提交完整顺序和读取时版本，冲突由服务端拒绝后提示重新加载。
-// 空数组是用户明确禁用全部来源，不转换成默认回退。
-// 来源排序与开关一起提交，不能拆成多次部分更新。
-// 版本冲突时保存失败，让用户重新审查最新策略。
-// 这里不插入默认钱包，也不自动启用被暂停账号。
+// 提交完整顺序和读取时版本，冲突保留为失败，不能自动扩大付费授权。
+// 空数组明确禁止所有来源，与未配置策略不同。
+// 新账号和钱包都必须由用户选中，不在接口层偷偷加入。
+// 保存 A Key 不更改 B Key，也不写回旧的用户计费偏好。
 export async function saveResourcePolicy(
   revision: number,
   sources: ResourceSource[],
-  tokenId?: number
+  tokenId: number
 ) {
-  const path = tokenId ? `/tokens/${tokenId}/policy` : '/policy'
-  const response = await api.put(root + path, { revision, sources })
+  const response = await api.put(`${root}/tokens/${tokenId}/policy`, {
+    revision,
+    sources,
+  })
   return policySchema.parse(requireServerSuccess(response.data).data)
-}
-// 恢复继承通过明确删除覆盖记录，不能以空策略伪装继承。
-// 该操作仅删除 Key 的覆盖，不修改用户默认策略。
-// 删除成功后由组件重新读取实际继承内容。
-// 继承和禁用全部来源是不同业务动作。
-export async function inheritResourcePolicy(tokenId: number) {
-  const response = await api.delete(`${root}/tokens/${tokenId}/policy`)
-  requireServerSuccess(response.data)
 }
 // 授权入口固定首期 Codex；已有账号重新授权只能由服务端核对身份。
 // 证明绑定本次连接或重授权动作，不能跨账号复用。

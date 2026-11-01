@@ -19,6 +19,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Dialog } from '@/components/dialog'
+import { HostingClientConfig } from '@/features/hosting/components/client-config'
 import { ResourcePolicyEditor } from '@/features/hosting/components/resource-policy'
 
 import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
@@ -38,15 +39,36 @@ export function ApiKeysDialogs() {
         currentRow={open === 'update' ? currentRow || undefined : undefined}
       />
       <ApiKeysDeleteDialog />
-      {/* 完整覆盖和恢复继承都走挂靠模块的同一策略编辑器。 */}
+      {/*
+       * 当前行编号固定策略作用域，切换 Key 会释放原草稿。
+       * 只在菜单打开时挂载，避免列表页面预读所有策略。
+       * 弹窗标题展示 Key 名称，备注相同仍以编号隔离数据。
+       * 保存由编辑器调用当前 Key 接口，不写入全局设置。
+       */}
       {open === 'resource-policy' && currentRow && (
         <Dialog
           open
           onOpenChange={(isOpen) => !isOpen && setOpen(null)}
-          title={t('Resource priority')}
+          title={t('Usage order')}
           description={currentRow.name}
         >
-          <ResourcePolicyEditor tokenId={currentRow.id} />
+          <ResourcePolicyEditor key={currentRow.id} tokenId={currentRow.id} />
+        </Dialog>
+      )}
+      {/*
+       * 模型配置从当前 Key 菜单进入，明文读取仍是单独的用户操作。
+       * 关闭后卸载组件，清除模型选择和已经展示的密钥。
+       * Key 编号变化必须重挂载，不能让旧 mutation 结果污染新配置。
+       * 两种菜单共享当前行来源，不再次加载并选择另一个 Key。
+       */}
+      {open === 'client-config' && currentRow && (
+        <Dialog
+          open
+          onOpenChange={(isOpen) => !isOpen && setOpen(null)}
+          title={t('Codex configuration')}
+          description={currentRow.name}
+        >
+          <HostingClientConfig key={currentRow.id} tokenId={currentRow.id} />
         </Dialog>
       )}
       <CCSwitchDialog

@@ -259,7 +259,21 @@ export function DataTableRowActions<TData>({
             setOpen('resource-policy')
           }}
         >
-          {t('Resource priority')}
+          {t('Usage order')}
+        </DropdownMenuItem>
+        {/*
+         * 配置导出同样绑定当前行，用户无需在挂靠页面再次选 Key。
+         * 先设置当前行再打开弹窗，配置目录以这一编号查询。
+         * 菜单本身不读取明文 Key，也不发送模型测试请求。
+         * 打开配置不会保存或改变该 Key 的额度使用顺序。
+         */}
+        <DropdownMenuItem
+          onClick={() => {
+            setCurrentRow(apiKey)
+            setOpen('client-config')
+          }}
+        >
+          {t('Codex configuration')}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem

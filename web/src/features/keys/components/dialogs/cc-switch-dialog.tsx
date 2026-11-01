@@ -141,15 +141,19 @@ export function CCSwitchDialog(props: Props) {
   // 旧 Key 保持原目录；已启用统一策略的 Key 必须按自己的权限发现模型。
   // 查询失败不能回退全站目录，否则会推荐该 Key 无权调用的模型。
   // 策略查询是目录选择的前置依赖。
-  // 只读取当前 Key，不能把用户默认请求当成 Key 请求的替代。
+  // 只读取当前 Key，不存在用户全局资源顺序。
   // 查询失败保留错误状态，不自动退回原 user-models。
-  // 返回的 legacy 标志由后端根据默认与覆盖两层共同决定。
+  // legacy 由后端按当前 Key 是否配置独立顺序决定。
   // 空 sources 仍是一份有效策略，不等价于旧合同。
   // 因此不能通过 sources.length 判断是否走旧目录。
   // 未打开弹窗时保持惰性读取，避免无关请求。
   const policy = useQuery({
     queryKey: ['hosting', 'policy', props.tokenId],
-    queryFn: () => getResourcePolicy(props.tokenId),
+    queryFn: () => {
+      // 启用条件之外仍保证调用边界只接收具体 Key，避免缺编号变成全局请求。
+      if (props.tokenId === undefined) throw new Error('API key is unavailable')
+      return getResourcePolicy(props.tokenId)
+    },
     enabled: props.open && props.tokenId !== undefined,
   })
   const unified = policy.data?.legacy === false

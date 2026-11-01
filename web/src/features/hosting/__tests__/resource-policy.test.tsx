@@ -59,10 +59,9 @@ let client: QueryClient
 // 初始钱包启用，使禁用开关产生可观察的用户文案变化。
 // 不把包月加入该 fixture，避免无关来源增加断言负担。
 // 空策略用独立交互产生，不能以初始缺少字段冒充。
-// 继承场景覆盖 initial 的标志，保留相同有效来源以隔离模式变化。
+// 每个 Key 使用独立版本，不借用其他 Key 的快照。
 const initial: ResourcePolicy = {
   revision: 3,
-  inherited: false,
   legacy: false,
   sources: [
     { kind: 'hosting', account_id: 1, enabled: true },
@@ -74,12 +73,12 @@ const initial: ResourcePolicy = {
 // 查询重试关闭，异常不会被测试运行时间掩盖。
 // 无限新鲜度避免测试通过依赖不相关的后台自动刷新。
 // mutation 重试关闭，测试不能因重复写入恰好成功而通过。
-// 默认层和 Key 层查询键与真实组件一致。
+// 查询键以真实 Key 编号为作用域，没有默认层。
 // 这里只封装重复装配，不替换被测编辑器、排序控件或安全契约。
 // 当前传入的 tokenId 决定真实请求路径，断言因此能保护作用域隔离。
 // 清理 QueryClient 释放异步缓存，保证各场景可单独运行。
 // 界面交互仍由 userEvent 产生，不直接调用组件内部 setter。
-function mount(policy = initial, tokenId?: number) {
+function mount(policy = initial, tokenId = 7) {
   client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, staleTime: Infinity },
@@ -87,15 +86,15 @@ function mount(policy = initial, tokenId?: number) {
     },
   })
   client.setQueryData(['hosting', 'accounts'], accounts)
-  client.setQueryData(['hosting', 'policy', tokenId ?? 'default'], policy)
-  render(
+  client.setQueryData(['hosting', 'policy', tokenId], policy)
+  return render(
     <QueryClientProvider client={client}>
       <ResourcePolicyEditor tokenId={tokenId} />
     </QueryClientProvider>
   )
 }
 afterEach(() => {
-  client.clear()
+  client.clear() // 释放异步查询，防止下一场景复用上一个 Key 的缓存。
 })
 
 describe('资源优先级', () => {
@@ -149,44 +148,11 @@ describe('资源优先级', () => {
     ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Save priority' }))
     await waitFor(() =>
-      expect(put).toHaveBeenCalledWith('/api/hosting/policy', {
-        revision: 3,
+      expect(put).toHaveBeenCalledWith('/api/hosting/tokens/7/policy', {
+        revision: 3, // 排序不自行增加并发版本，仍由服务端执行冲突检测。
         sources: [
           { kind: 'wallet', enabled: false },
           { kind: 'hosting', account_id: 1, enabled: true },
-        ],
-      })
-    )
-  })
-  // Key 继承默认时必须真正只读，不能只显示一段继承文字。
-  // 手柄的禁用属性是键盘用户可观察的约束。
-  // 自定义操作复制完整有效来源，新增账号后仍保留原有项。
-  // 请求 URL 必须指向该 Key，不能误改用户默认策略。
-  // 新增账号放在末尾，保护显式排序的可预测性。
-  // 断言完整三个来源，能捕获覆盖被实现成部分追加的错误。
-  // 保持原读取版本，避免把继承行和默认行的版本混用。
-  // 测试不读取 Key 明文，策略权限仅依赖管理会话和编号。
-  it('继承策略禁用排序，进入自定义后才保存 Key 完整覆盖', async () => {
-    const user = userEvent.setup()
-    const put = vi
-      .spyOn(api, 'put')
-      .mockResolvedValue({ data: { success: true, data: initial } })
-    vi.spyOn(api, 'get').mockResolvedValue({
-      data: { success: true, data: initial },
-    })
-    mount({ ...initial, inherited: true }, 7)
-    expect(
-      screen.getByRole('button', { name: 'Drag Account 1 to reorder' })
-    ).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Customize priority' }))
-    await user.click(screen.getByRole('button', { name: 'Add Account 2' }))
-    await user.click(screen.getByRole('button', { name: 'Save priority' }))
-    await waitFor(() =>
-      expect(put).toHaveBeenCalledWith('/api/hosting/tokens/7/policy', {
-        revision: 3,
-        sources: [
-          ...initial.sources,
-          { kind: 'hosting', account_id: 2, enabled: true },
         ],
       })
     )
@@ -196,7 +162,7 @@ describe('资源优先级', () => {
   // 状态提示必须解释未来请求会被拒绝，避免用户误判服务故障。
   // 仍允许保存空策略，保护禁止全部来源这一产品能力。
   // 此处不提交 HTTP，重点是编辑阶段的即时反馈和可保存性。
-  // 删除策略与保存空策略的区别由下一场景单独覆盖。
+  // 保存空策略只影响当前 Key，其他 Key 不受影响。
   it('移除全部来源显示拒绝提示，不自动恢复继承或钱包', async () => {
     const user = userEvent.setup()
     mount()
@@ -209,30 +175,81 @@ describe('资源优先级', () => {
     )
     expect(screen.getByRole('button', { name: 'Save priority' })).toBeEnabled()
   })
-  // 恢复继承必须删除覆盖记录，不能写入空来源数组。
-  // 真实 DELETE 请求路径保护不会误删账号或默认策略。
-  // 额外观察 PUT 未被调用，捕获空数组冒充继承的回归。
-  // 服务器读回 inherited=true，让编辑器显示新的继承状态。
-  // 请求成功仍由组件自己的 invalidation 触发后续查询。
-  // 不模拟内部 mutation 成功回调，避免遗漏真实接线问题。
-  // Key 编号七与账号编号不同，降低误用命名空间被 fixture 掩盖的机会。
-  // 测试不依赖 Toast 文案，核心契约是实际授权记录发生的变更。
-  it('恢复默认明确删除覆盖，绝不提交空数组冒充继承', async () => {
-    const user = userEvent.setup()
-    const remove = vi
-      .spyOn(api, 'delete')
-      .mockResolvedValue({ data: { success: true } })
-    const put = vi.spyOn(api, 'put')
-    vi.spyOn(api, 'get').mockResolvedValue({
-      data: { success: true, data: { ...initial, inherited: true } },
-    })
-    mount(initial, 7)
-    await user.click(
-      screen.getByRole('button', { name: 'Restore default priority' })
-    )
-    await waitFor(() =>
-      expect(remove).toHaveBeenCalledWith('/api/hosting/tokens/7/policy')
-    )
-    expect(put).not.toHaveBeenCalled()
+})
+
+// 用户直接进入具体 Key 的设置就应能编辑，不能先理解全局继承。
+// 尚未保存的 Key 仍保留原平台规则，点击添加不会自动加入钱包。
+// 请求通过真实 API 包装发出，以 Key 路径确认没有修改全局配置。
+// 所有来源都由明确点击产生，禁止用默认值伪造付费授权。
+it('未配置的 Key 直接添加本人账号，不显示继承或自定义开关', async () => {
+  const user = userEvent.setup()
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true, data: initial } })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: initial },
   })
+  mount({ revision: 0, legacy: true, sources: [] }, 7) // 缺策略与显式空策略不是同一授权。
+  expect(
+    screen.queryByText('Inheriting your default priority')
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Add Account 2' }))
+  await user.click(screen.getByRole('button', { name: 'Save priority' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith('/api/hosting/tokens/7/policy', {
+      revision: 0, // 首次保存使用读取版本，不借用其他 Key 的版本。
+      sources: [{ kind: 'hosting', account_id: 2, enabled: true }],
+    })
+  )
+})
+
+// 同一弹窗切换 Key 必须丢弃前一份未保存草稿。
+// A 首选账号、B 首选包月，两份授权故意使用不同来源。
+// 模型测试与实际额度不属于排序编辑的副作用，因此只隔离 HTTP。
+// 最后保存 B 时请求路径与完整顺序必须同时正确。
+// 不只检查界面文字，避免 UI 展示 B 而仍把 A 编号用于保存。
+// 没有显式操作的 Key 保持原记录，不能触发全局写入。
+it('切换 A/B Key 时保持独立顺序，保存只影响当前 Key', async () => {
+  const user = userEvent.setup()
+  const second: ResourcePolicy = {
+    revision: 5, // 不同版本可发现切换 Key 时误用前一个快照。
+    legacy: false,
+    sources: [{ kind: 'subscription', enabled: true }], // B 的首选来源与 A 不同。
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true, data: second } })
+  vi.spyOn(api, 'get').mockImplementation(async (path) => ({
+    data: {
+      success: true,
+      data: String(path).includes('/8/') ? second : initial,
+    },
+  }))
+  const view = mount(initial, 7) // 先在 A 的真实编辑器中制造未保存草稿。
+  await user.click(screen.getByRole('button', { name: 'Add Account 2' }))
+  client.setQueryData(['hosting', 'policy', 8], second) // B 缓存独立，不能改写 A。
+  view.rerender(
+    // 保持父弹窗挂载，模拟直接切换当前行的边界。
+    <QueryClientProvider client={client}>
+      <ResourcePolicyEditor tokenId={8} />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Drag Account 1 to reorder' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Drag Subscription quota to reorder' })
+  ).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Add Wallet balance' }))
+  await user.click(screen.getByRole('button', { name: 'Save priority' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith('/api/hosting/tokens/8/policy', {
+      revision: 5, // 提交属于 B 的版本，服务端可据此发现并发覆盖。 // 不同版本可发现切换 Key 时误用前一个快照。
+      sources: [
+        { kind: 'subscription', enabled: true },
+        { kind: 'wallet', enabled: true },
+      ],
+    })
+  )
+  expect(put).toHaveBeenCalledTimes(1) // 不能顺带保存 A 或写全局策略。
 })

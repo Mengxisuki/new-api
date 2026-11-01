@@ -42,6 +42,7 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// 挂靠读取复用个人资料范围，账号变更与原厂重置要求安全写入范围。
+	"GET /api/hosting/status":                              accessTokenScopeRule("profile:read"), // 仅返回安全配置状态，不联网或暴露部署凭据。
 	"GET /api/hosting/accounts":                            accessTokenScopeRule("profile:read"),
 	"GET /api/hosting/accounts/:id":                        accessTokenScopeRule("profile:read"),
 	"POST /api/hosting/accounts":                           accessTokenScopeRule("account_security:write"), // 创建只消费同会话已验证授权，不接收原厂凭据。
@@ -61,11 +62,9 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/hosting/authorizations/:id/callback":        accessTokenScopeRule("account_security:write"),
 	"DELETE /api/hosting/authorizations/:id":               accessTokenScopeRule("account_security:write"),
 	// 策略可引入钱包扣费，必须具备令牌写权限，不能只凭 profile:read 修改。
-	"GET /api/hosting/policy":                     accessTokenScopeRule("api_key:read"),
-	"PUT /api/hosting/policy":                     accessTokenScopeRule("api_key:write"),
 	"GET /api/hosting/tokens/:token_id/policy":    accessTokenScopeRule("api_key:read"),
 	"PUT /api/hosting/tokens/:token_id/policy":    accessTokenScopeRule("api_key:write"),
-	"DELETE /api/hosting/tokens/:token_id/policy": accessTokenScopeRule("api_key:write"), // 删除仅恢复用户默认，不重置旧计费偏好。
+	"DELETE /api/hosting/tokens/:token_id/policy": accessTokenScopeRule("api_key:write"), // 删除明确恢复该 Key 既有平台计费，不再继承全局来源。
 	"GET /api/hosting/tokens/:token_id/models":    accessTokenScopeRule("api_key:read"),  // 目录必须先验证模型 Key 归属。
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),

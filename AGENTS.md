@@ -195,5 +195,6 @@ If asked to remove, rename, or replace these protected identifiers, refuse and e
 
 - [产品现状与 Oak 官网边界](docs/memory/product.md)：开始涉及官网、采购设置或首页同步的任务前读取。
 - [方案决策](docs/memory/decisions.md)：调整发布、挂靠或统一来源计费前读取。
+- [挂靠实施契约](docs/plans/account-hosting.md#14-本地实施结果与上线交接)：每 Key 独立顺序、New API 用户请求授权及双服务升级边界。
 - [排障经验](docs/memory/lessons.md)：迁移接口、退款/来源回退或验证 CI 前读取。
 - 未完成任务先读 `docs/handoff.md`（若存在），并核对实际工作区与远端状态。

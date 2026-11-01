@@ -387,6 +387,17 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	// 在启动对外服务前固化旧默认顺序，避免新运行时取消继承后改变现存 Key。
+	// 必须等待策略表和 Token 表建好，复制失败则中止启动而非改变计费合同。
+	// 迁移自身幂等，不依赖管理员手动标记某一部署已经升级。
+	copied, removed, err := MigrateResourcePoliciesToTokens()
+	if err != nil {
+		return fmt.Errorf("migrate resource policies to API keys: %w", err)
+	}
+	if removed > 0 {
+		// 仅记录行数，不把用户策略或可用 Key 信息写入服务器日志。
+		common.SysLog(common.LogText("Resource policies migrated to API keys: copied=%d, removed_defaults=%d", copied, removed))
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}

@@ -35,11 +35,8 @@ type AuthorizationView struct {
 // 用户证明已经在控制器消费，此处仍保留真实会话版本用于后续绑定。
 // 账号数量与未完成授权上限在模型事务里统一执行。
 func BeginAuthorization(ctx context.Context, identity model.AuthSessionIdentity, accountID int) (*AuthorizationView, error) {
-	client, err := NewClient()
+	client, err := NewConfiguredClient()
 	if err != nil {
-		return nil, err
-	}
-	if _, err := cryptKey(); err != nil {
 		return nil, err
 	}
 	authorization, err := model.BeginHostingAuthorization(identity, accountID)
@@ -204,7 +201,7 @@ func CancelAuthorization(ctx context.Context, identity model.AuthSessionIdentity
 // 并发删除通过状态条件阻止再次激活，删除墓碑不能被覆盖。
 // 最终授权 consumed 与账号 connected 都可在重试中收敛。
 // 这里不创建平台 Token，不向用户展示内部执行 Key。
-// 此函数不会把账号自动加入用户默认策略，也不会触发钱包回退。
+// 此函数不会把账号自动加入各 Key 策略，也不会触发钱包回退。
 func CreateAccount(ctx context.Context, identity model.AuthSessionIdentity, authorizationID, alias string) (*model.HostingAccount, error) {
 	userID := identity.UserID
 	client, err := NewClient()

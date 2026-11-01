@@ -17,138 +17,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
+import { fetchTokenKey } from '@/features/keys/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getTokenResourceModels } from '../api'
 
-// 用户选定统一 Key 后再加载可用模型，不用“全站模型”生成越权配置。
-// 明文 Key 只在用户要求生成配置时读取，切换 Key 时组件卸载清除。
-// 配置入口复用已有 Key，不额外申请平台身份或原厂凭据。
-// Key 列表只读取名称和编号，首次打开不读取明文秘密。
-// 分页使用既有 API 的页码与总数，不把第一页当作全部 Key。
-// 切换页码清除选择，避免显示已不在当前页的旧 Key 配置。
-// 切换 Key 会卸载配置子组件，销毁已读明文和模型选择。
-// Key 的显示名称可重复，选项值必须使用稳定数字 ID。
-// Key 列表失败时显示错误并允许重试，不伪造没有 Key。
-// 用户没有 Key 时可以跳转既有管理页创建。
-// 导出并不改变 Key 的资源策略、限额或模型权限。
-// 同一个 Key 的有效目录由服务端授权和资源状态共同决定。
-// 平台地址使用当前站点的同源入口，不泄露执行层内部地址。
-// 复制基础地址不需要读取 API Key。
-// 用户须先选择已验证模型，之后才开放配置和明文读取动作。
-// 配置文本本身不含 API Key，使用环境变量名称引用秘密。
-// 读取密钥是显式按钮操作，避免预加载导致不必要的凭据暴露。
-// 复制交互复用共享 CopyButton，保留站点既有失败提示和可访问性。
-// 生成的文本由用户合并进现有配置，不自动覆盖本地文件。
-// 不会调用外部工具或把密钥写入浏览器下载历史。
-// 模型名称可能包含特殊字符，输出时必须按字符串格式转义。
-// 目录变化后检查旧模型是否仍可导出，而不是只检查曾经选中过。
-// 目录中未验证的发现项不能出现在“已验证模型”选项里。
-// 首期只导出 Responses 的 Codex 配置，不猜测其他客户端兼容性。
-// 空的验证目录明确提示先测试账号，不能默认推荐某个型号。
-// Key 查询成功与模型可调用是两件事，前端不能混成一个已接入状态。
-export function HostingClientConfig() {
-  const { t } = useTranslation()
-  const [page, setPage] = useState(1)
-  const [tokenId, setTokenId] = useState<number | null>(null)
-  const keys = useQuery({
-    queryKey: ['hosting', 'keys', page],
-    queryFn: async () =>
-      requireServerSuccess(await getApiKeys({ p: page, size: 20 })).data,
-  })
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t('Client configuration')}</CardTitle>
-        <CardDescription>
-          {t(
-            'Keep the same Oak address and API key when changing resource priority.'
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className='space-y-4'>
-        {keys.isError && (
-          <ErrorState
-            onRetry={() => {
-              void keys.refetch()
-            }}
-          />
-        )}
-        <Field>
-          <FieldLabel htmlFor='hosting-config-key'>{t('API Key')}</FieldLabel>
-          <Combobox
-            id='hosting-config-key'
-            options={(keys.data?.items ?? []).map((key) => ({
-              value: String(key.id),
-              label: key.name,
-            }))}
-            value={tokenId ? String(tokenId) : null}
-            onValueChange={(value) => setTokenId(value ? Number(value) : null)}
-            placeholder={t('Select an API key')}
-            disabled={keys.isPending}
-          />
-        </Field>
-        <div className='flex flex-wrap gap-2'>
-          <Button
-            variant='outline'
-            size='sm'
-            disabled={page === 1 || keys.isFetching}
-            onClick={() => {
-              setTokenId(null)
-              setPage(page - 1)
-            }}
-          >
-            {t('Previous')}
-          </Button>
-          <Button
-            variant='outline'
-            size='sm'
-            disabled={keys.isFetching || page * 20 >= (keys.data?.total ?? 0)}
-            onClick={() => {
-              setTokenId(null)
-              setPage(page + 1)
-            }}
-          >
-            {t('Next')}
-          </Button>
-          <Button
-            variant='outline'
-            size='sm'
-            render={<Link to='/keys' />}
-            nativeButton={false}
-          >
-            {t('Manage API keys')}
-          </Button>
-        </div>
-        {/* 重挂载使前一 Key 的明文、模型选择和查询失败都不会污染下一项。 */}
-        {tokenId !== null && <TokenConfig key={tokenId} tokenId={tokenId} />}
-      </CardContent>
-    </Card>
-  )
-}
-
+// 入口位于具体 Key 的管理菜单，不再在挂靠页重复选择 Key。
+// 父弹窗按 Key 编号重挂载，切换或关闭会清理模型选择和已读秘密。
+// 配置只使用当前 Key 的授权目录，不改变资源顺序。
 // 仅输出通过真实验证记录的 Responses 配置，不把模型发现当作客户端兼容验收。
 // TOML 字符串用 JSON 转义表达，防止模型名或站点地址破坏配置结构。
 // 配置子组件只接收非敏感 Key 编号。
 // 明文密钥保存在当前 mutation 结果内，不放进 query 持久缓存。
-// 父组件通过稳定 Key 编号重新挂载，确保不同 Key 不共享秘密。
 // 显式重新选择模型也清理已展示密钥，避免复制旧上下文。
 // 接口返回空密钥视为失败，不生成只有前缀的伪密钥。
 // 前缀规范化保留已经带前缀的真实值，避免重复拼接。
@@ -162,7 +50,7 @@ export function HostingClientConfig() {
 // 复制密钥之后剪贴板由用户设备管理，界面不持久化副本。
 // 部署在不同域名时导出使用当前域名，避免交付测试环境地址。
 // 模型列表错误时保持错误状态，不退回之前缓存的全站模型。
-function TokenConfig(props: { tokenId: number }) {
+export function HostingClientConfig(props: { tokenId: number }) {
   const { t } = useTranslation()
   const [selected, setSelected] = useState('')
   const models = useQuery({
@@ -204,8 +92,6 @@ function TokenConfig(props: { tokenId: number }) {
   // 即使旧选择还在本地 state，supported 也会关闭导出区域。
   // 接口出错时显示重试，不把错误当成全站所有模型可选。
   // 重试读取只针对选中 Key，不增加它的权限。
-  // Key 列表的加载状态不触发秘密读取。
-  // 翻页清空 Key 选择，也随之卸载已读秘密。
   // 复制完成不向服务器提交密钥内容。
   // 明文仅进入共享复制控件，界面不打印到调试日志。
   // 用户可不读取秘密而先审查 TOML 配置内容。

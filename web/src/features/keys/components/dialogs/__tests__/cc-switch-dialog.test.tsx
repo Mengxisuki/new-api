@@ -80,7 +80,7 @@ describe('CC Switch model selection', () => {
       data: {
         success: true,
         data: url.endsWith('/policy')
-          ? { revision: 1, inherited: false, legacy: false, sources: [] }
+          ? { revision: 1, legacy: false, sources: [] }
           : {
               models: [
                 {

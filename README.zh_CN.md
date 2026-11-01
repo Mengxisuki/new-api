@@ -290,9 +290,9 @@ bun run dev -- --port 5173
 
 ### Oak 免费账号挂靠与统一资源顺序
 
-入口 `/hosting` 支持多个 ChatGPT/Codex 账号、逐账号额度、手动使用原厂重置机会及配置导出。同一 API Key 可以继承用户默认顺序或完整覆盖，例如“账号 A → 账号 B → 包月 → 钱包”；挂靠调用免费，付费回退只按选中的来源结算。日志展示实际来源，未知原厂用量不伪装为零。
+入口 `/hosting` 管理多个 ChatGPT/Codex 账号、逐账号额度和手动原厂重置机会。连接流程为备注 → 生成/打开授权链接 → 粘贴完整回调 → 完成授权并添加；不会自动发送耗额模型测试。在 `/keys` 的具体 Key 菜单设置“额度使用顺序”和“Codex 接入配置”，例如 A 先账号后包月、B 先包月后钱包；两者互不影响，没有全局继承。挂靠调用免费，平台来源按实际选择结算。
 
-New API 配置 `OAK_GPT_LOAD_URL`（默认 `http://127.0.0.1:3001`）、`OAK_GPT_LOAD_MANAGEMENT_KEY`（对应 gpt-load `AUTH_KEY`）与持久、显式不少于 32 字节的 `CRYPTO_SECRET`。不要把管理 Key 放进浏览器。先升级 gpt-load 私有门禁与迁移，再升级 New API。未配置策略的旧 Key 保留既有行为。
+New API 配置 `OAK_GPT_LOAD_URL`（默认 `http://127.0.0.1:3001`）与持久、显式不少于 32 字节的 `CRYPTO_SECRET`；gpt-load 配置 `OAK_NEW_API_URL`（默认 `http://127.0.0.1:3000`）。不再需要 `OAK_GPT_LOAD_MANAGEMENT_KEY`，也不向 New API 提供 gpt-load `AUTH_KEY`。New API 为具体用户请求签发 30 秒授权，执行层回查 New API 核验用户和请求绑定。两个服务需成套升级；旧全局顺序会原样迁移到现存无独立策略的 Key，新建 Key 不继承，未配置策略的 Key 保持既有平台规则。
 
 源码导航、实际接口、测试命令、回退边界与上线验收见 [Oak 账号挂靠实施记录](docs/plans/account-hosting.md#14-本地实施结果与上线交接)。首期只支持同步 Chat/Responses/compact；429、超时或已输出后不跨来源重放，不自动耗重置机会。文件导入、Claude、异步/持久续接、真实账号与生产验收均不应视为已通过。
 

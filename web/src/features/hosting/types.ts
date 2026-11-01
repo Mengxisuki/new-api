@@ -29,15 +29,18 @@ export const sourceSchema = z.object({
   account_id: z.number().int().positive().optional(),
   enabled: z.boolean(),
 })
-// revision 用于并发编辑检测，继承策略的 sources 是服务端返回的有效顺序。
+// revision 用于当前 Key 的并发编辑检测，sources 是该 Key 独立保存的顺序。
 // legacy 提醒旧 Key 尚在原规则，不自动把账号或钱包加进授权范围。
 export const policySchema = z.object({
   revision: z.number().int(),
-  // 生效版本包含默认层级，继承策略刷新时也应替换展示快照。
-  effective_revision: z.string().optional(),
-  inherited: z.boolean(),
   legacy: z.boolean(),
   sources: z.array(sourceSchema),
+})
+// 仅返回服务是否已配置及稳定错误码，浏览器不获取部署地址或管理凭据。
+// 就绪检查不连接原厂、不生成授权，进入页面时可以安全读取。
+export const hostingStatusSchema = z.object({
+  configured: z.boolean(),
+  code: z.string(),
 })
 // 授权地址只用于跳转；code、回调和原厂凭据均不持久化到浏览器。
 // 一次授权会话只能绑定当前用户，expires_at 使用服务端 Unix 秒。

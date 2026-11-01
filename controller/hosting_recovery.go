@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
@@ -16,8 +15,13 @@ type hostingRecoveryHandler struct{}
 // 独立任务类型让恢复失败可在现有后台任务列表定位。
 func (hostingRecoveryHandler) Type() string { return "hosting_recovery" }
 
-// 未配置挂靠控制密钥时不排空任务，避免影响未启用此功能的安装。
-func (hostingRecoveryHandler) Enabled() bool { return os.Getenv("OAK_GPT_LOAD_MANAGEMENT_KEY") != "" }
+// 本地地址与持久密钥完整时启用，不再依赖执行层管理员权限。
+// 检查本身不联网，执行失败必须由任务结果显式记录。
+// 禁用用户由验证端拒绝，后台恢复不能绕过当前用户状态。
+func (hostingRecoveryHandler) Enabled() bool {
+	_, err := hosting.NewConfiguredClient()
+	return err == nil
+}
 
 // 分钟级检查只处理长期未完成记录，不对每次页面访问产生外部请求。
 func (hostingRecoveryHandler) Interval() time.Duration { return time.Minute }

@@ -120,22 +120,72 @@ afterEach(() => {
   client.clear()
 })
 
+// 场景覆盖首次录入、不可用服务、异步成功和两种不同失败阶段。
+// 原有重置场景继续保留，确保连接流程重做没有影响共享安全证明行为。
+// UI中的“完成授权”不等同于模型测试，测试明确禁止隐式调用测试接口。
+// 每种恢复方式都绑定原授权，不依赖用户重新提交一次性回调。
+// 这些验证只使用测试网络边界，不能代替生产原厂OAuth连通性验收。
+// 页面显示的真实错误由统一处理链负责，测试关注可继续操作的行为。
+// 复制能力通过共享组件实际执行，避免只断言按钮存在而漏接剪贴板。
+// 安全证明依然通过真实hook发起，没有为了简化UI测试而绕过验证。
+// 用例不读取任何开发者本地账号或真实环境变量中的凭据。
+// 日志和失败断言使用固定测试文案，避免将回调内容打印到输出。
+// 成功后的资源配置仍属于父页面导航任务，本测试不修改默认策略。
+// 新流程不会把账号接入自动扩展为对任意API Key的调用授权。
 describe('账号授权和原厂重置', () => {
+  // 父页面探测服务未就绪时传入可读原因，不让用户走到无法完成的OAuth。
+  // 输入备注仍可操作，但不会因为输入完整就绕过服务可用性门槛。
+  // 观察真实HTTP调用次数，防止禁用样式有了但仍发起授权。
+  // 该用例不需要任何成功响应，避免服务不可用被其他fixture意外掩盖。
+  // 可读原因来自父页面，组件无需认识部署配置键或内部服务地址。
+  // 填入有效备注后按钮仍禁用，说明不是字段验证恰好阻止了请求。
+  // 接口spy未被调用包含站点证明入口，不能先打证明再发现服务不可用。
+  // 静态错误原因不应改变账号备注的输入值。
+  // 这个门槛用于连接和重授权，父页不需要另建两套可用性提示。
+  // 不可用时没有授权ID，也就不应存在任何恢复请求。
+  it('服务未就绪时解释原因并禁止生成授权链接', async () => {
+    const user = userEvent.setup()
+    const post = vi.spyOn(api, 'post')
+    render(
+      <QueryClientProvider client={client}>
+        <ConnectHostingDialog
+          disabledReason='Hosting service is unavailable'
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>
+    )
+    await user.type(screen.getByLabelText('Account alias'), 'Work')
+    expect(screen.getByText('Hosting service is unavailable')).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Generate authorization link' })
+    ).toBeDisabled()
+    expect(post).not.toHaveBeenCalled()
+  })
+
   // 此场景保护最危险的阶段边界：已提交 code 但还未取得凭据。
   // HTTP 回调返回 exchanging，故意不立即返回 ready。
   // 页面不能因此保存账号或关闭弹窗提示成功。
-  // 首先验证回调输入清空，确保秘密不因异步等待留在输入框。
+  // 首先验证回调输入撤下，确保秘密不因异步等待继续展示。
   // 然后推进服务端状态为 ready，模拟后台换码完成。
   // 推进只改外部状态，通过真实查询重新渲染，不直接操作组件 state。
-  // 第二次点击完成只允许创建账号，不能再次提交已消费回调。
+  // ready 到达后自动延续用户已授权的添加动作，不要求用户再点一次完成。
   // 保存请求只携带授权引用与备注，不能包含原厂 code。
   // 检查回调请求数量是一次性授权契约，不是组件私有调用细节。
-  // 关闭回调代表用户看到连接流程完成，仅在保存响应后发生。
+  // 添加成功保留下一步引导，只有用户点击完成才关闭弹窗。
   // 模型实际可调用尚未在此证明，后续账号测试仍是独立动作。
   // 测试内容中的 private-code 是固定无效字符串，不来自真实登录。
   it('换码仍在处理时等待 ready，保存时不再次发送已消费的回调', async () => {
     const user = userEvent.setup()
     const close = vi.fn()
+    // 导航回调属于父页面职责，这里只观察成功页是否提供明确入口。
+    // 前往API Key不会改变这次授权结果，也不要求再次读取原厂身份。
+    // Done和导航按钮分别可用，用户可以先返回详情做模型测试。
+    // 成功提示明确先测试连接，避免身份授权被误解成模型兼容性已验收。
+    // 额外检查没有test请求，保护自动添加流程不产生用户未点击的模型耗额。
+    // 等待成功文本后再检查关闭回调，避免异步渲染时序带来误判。
+    // 点击Done才退出，用户有机会阅读接入后的两步引导。
+    // 公共回调spy不会驱动组件内部状态，因此仍测试真实交互路径。
+    const manageKeys = vi.fn()
     // 服务端状态是可控网络边界，允许精确安排交换前后的响应。
     // GET 安全验证方法与 GET 授权状态使用不同响应，避免泛化 mock 误通过。
     // POST 证明、创建授权、提交回调和保存账号各有真实 DTO。
@@ -181,22 +231,49 @@ describe('账号授权和原厂重置', () => {
     })
     render(
       <QueryClientProvider client={client}>
-        <ConnectHostingDialog onClose={close} />
+        <ConnectHostingDialog onClose={close} onManageKeys={manageKeys} />
       </QueryClientProvider>
     )
+    // 备注先校验，再取得授权链接；首次展示不直接索要回调。
+    // 未填写备注时不应调用安全证明或创建授权会话。
+    // 第一步点击空备注时应停留在表单，不申请无用OAuth会话。
+    // 随后用同一组件填入备注并继续，保护校验错误可以正常恢复。
+    // 授权按钮只有在取得有效官方链接后才出现。
+    // 检查href内容能防止按钮意外指向站点自身或占位链接。
+    // 复制动作走真实CopyButton，剪贴板属于userEvent提供的浏览器边界。
+    // 复制成功的内容必须是官方授权链接，不能混入回调地址。
+    // 链接打开和复制是两种用户选择，不互相触发额外网络操作。
     await user.click(
-      screen.getByRole('button', { name: 'Start browser authorization' })
+      screen.getByRole('button', { name: 'Generate authorization link' })
     )
-    await user.type(await screen.findByLabelText('Account alias'), 'Work')
+    expect(post).not.toHaveBeenCalled()
+    await user.type(screen.getByLabelText('Account alias'), 'Work')
+    await user.click(
+      screen.getByRole('button', { name: 'Generate authorization link' })
+    )
+    expect(
+      await screen.findByRole('button', { name: 'Copy authorization link' })
+    ).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Open provider authorization' })
+    ).toHaveAttribute('href', authorization.authorization_url)
+    await user.click(
+      screen.getByRole('button', { name: 'Copy authorization link' })
+    )
+    expect(await navigator.clipboard.readText()).toBe(
+      authorization.authorization_url
+    )
     await user.type(
       screen.getByLabelText('Authorization callback URL'),
       'http://localhost:1455/auth/callback?state=example&code=private-code'
     )
-    await user.click(screen.getByRole('button', { name: 'Finish connecting' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Complete authorization and add' })
+    )
     await waitFor(() =>
-      expect(screen.getByLabelText('Authorization callback URL')).toHaveValue(
-        ''
-      )
+      expect(
+        screen.queryByLabelText('Authorization callback URL')
+      ).not.toBeInTheDocument()
     )
     expect(close).not.toHaveBeenCalled()
     expect(
@@ -205,7 +282,7 @@ describe('账号授权和原厂重置', () => {
     // 此时应仍停留在同一弹窗和同一授权会话。
     // 只读轮询能发现换码完成，不能隐式重新发送 code。
     // 等待回调输入消失，是 ready 状态已被界面接收的可见证据。
-    // 再提交备注会走保存阶段，不依赖测试直接调用 API。
+    // 无需再点击提交即可进入保存阶段，避免多余确认割裂完整用户动作。
     // 若实现错误复用旧回调，这里的请求数量断言会失败。
     // 不使用定时器快进替代真实 Query 更新，避免掩盖缓存键错误。
     status = 'ready'
@@ -217,7 +294,17 @@ describe('账号授权和原厂重置', () => {
         screen.queryByLabelText('Authorization callback URL')
       ).not.toBeInTheDocument()
     )
-    await user.click(screen.getByRole('button', { name: 'Finish connecting' }))
+    await screen.findByText('Account added')
+    expect(post.mock.calls.some(([url]) => url.endsWith('/test'))).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(
+        'Test the connection in account details, then select this account in an API key’s resource settings.'
+      )
+    ).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Go to API keys' }))
+    expect(manageKeys).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: 'Done' }))
     await waitFor(() => expect(close).toHaveBeenCalledOnce())
     expect(
       post.mock.calls.filter(([url]) => url.endsWith('/callback'))
@@ -226,6 +313,191 @@ describe('账号授权和原厂重置', () => {
       authorization_id: 'a-flow',
       alias: 'Work',
     })
+  })
+  // 保存账号失败和原厂换码失败是不同阶段，不能要求用户重新授权。
+  // 此场景让回调直接 ready，以便单独验证保存响应失败后的恢复行为。
+  // 首次保存拒绝只代表控制面写入未完成，不应自动申请另一会话。
+  // 第二次保存由用户明确点击，同一个 authorization_id 保持幂等身份。
+  // 安全证明、OAuth创建和回调请求都不应随着保存重试而重复。
+  // 成功页不自动关闭，保留用户需要的后续测试与Key配置提示。
+  // 网络错误没有包含回调内容，避免把测试秘密写入控制台。
+  // 保存重试场景使用同一个页面实例，保护当前会话上下文能被保留。
+  // 首次网络错误刻意发生在账号保存阶段，而非OAuth exchange阶段。
+  // 错误类型只表达传输失败，避免测试依赖某个服务端文案。
+  // 回调响应先返回ready，因此用户无需再填写授权信息。
+  // 页面应给出“重试添加”，而不是回到最初的生成链接按钮。
+  // 重试后保存请求参数必须完全沿用原授权引用。
+  // 备注仍来自用户在首步骤输入的Work，不能被错误重置为空。
+  // 重复保存数量为二是显式重试契约，不允许后台自动多次提交。
+  // 测试没有调用mutation私有方法，重试仍通过用户可见按钮。
+  // 成功页是添加结果的证据，不能把按钮恢复可点击当成已成功。
+  // 没有把错误响应解析成账号摘要，以免假成功覆盖失败状态。
+  // 原厂登录会话创建数量保持一，防止重试扩展为全流程重来。
+  // 回调POST数量保持一，保护一次性凭证不被保存重试污染。
+  // 模拟服务器返回的是同一个业务账号，前端不生成额外账号ID。
+  it('保存失败后按原授权重试添加，不重新生成链接或重发回调', async () => {
+    const user = userEvent.setup()
+    let status = authorization.status
+    let saves = 0
+    vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/verify/methods'
+            ? requirements
+            : { ...authorization, status },
+      },
+    }))
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/verify') {
+        return {
+          data: {
+            success: true,
+            data: {
+              proof_token: 'test-proof',
+              scope: 'hosting.manage',
+              method: 'session',
+              expires_at: 2000000000,
+            },
+          },
+        }
+      }
+      if (url.endsWith('/callback')) {
+        status = 'ready'
+        return { data: { success: true, data: { ...authorization, status } } }
+      }
+      if (url === '/api/hosting/accounts') {
+        saves += 1
+        if (saves === 1) throw new Error('Account save failed')
+        return { data: { success: true, data: account } }
+      }
+      return { data: { success: true, data: authorization } }
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <ConnectHostingDialog onClose={vi.fn()} />
+      </QueryClientProvider>
+    )
+    await user.type(screen.getByLabelText('Account alias'), 'Work')
+    await user.click(
+      screen.getByRole('button', { name: 'Generate authorization link' })
+    )
+    await user.type(
+      await screen.findByLabelText('Authorization callback URL'),
+      'http://localhost:1455/auth/callback?state=example&code=private-code'
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Complete authorization and add' })
+    )
+    await user.click(
+      await screen.findByRole('button', { name: 'Retry adding account' })
+    )
+    await screen.findByText('Account added')
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/hosting/authorizations')
+    ).toHaveLength(1)
+    expect(
+      post.mock.calls.filter(([url]) => url.endsWith('/callback'))
+    ).toHaveLength(1)
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/hosting/accounts')
+    ).toHaveLength(2)
+    expect(post).toHaveBeenLastCalledWith('/api/hosting/accounts', {
+      authorization_id: 'a-flow',
+      alias: 'Work',
+    })
+  })
+  // 换码HTTP失败可能只是响应丢失，不证明原厂没有消费code。
+  // 本场景保留同一会话，用只读结果查询发现稍后完成的授权。
+  // 回调输入发送后撤下，用户不能通过重复粘贴造成第二次交换。
+  // 只读查询得到ready后，继续此前明确授权的保存动作链。
+  // 检查回调POST总数，保护恢复入口不偷偷重放单次凭证。
+  // 不使用固定延时，通过服务器fixture的状态推进控制异步边界。
+  // 未确认状态向用户解释检查结果，而不宣称授权失败或已保存。
+  // 回调错误只表示浏览器没有取得结果，不表示服务端拒绝该code。
+  // 因此fixture仍保留原授权会话，后续GET能发现ready。
+  // 读取结果按钮在回调响应失败后出现，用户无需重新开始。
+  // 输入框被卸载而不是重新填回秘密，保护共享屏幕的敏感信息。
+  // 服务器状态由测试显式推进，不依赖三秒轮询恰好触发。
+  // 等待查询按钮可用能排除同时进行的自动错误恢复读取。
+  // 点击查询之后的保存属于先前完成按钮批准的动作链。
+  // 此时没有再次提交回调的可见入口，也不应产生新的callback请求。
+  // 保存仅执行一次，防止用户主动查询与后台轮询分别触发添加。
+  // 同一个query key承接原状态，错误恢复不能切换到别人的授权。
+  // fixture不模拟原厂明确拒绝，因此不要求用户重新生成链接。
+  // 真正失败终态由服务端状态决定，不能用HTTP异常反推。
+  // 测试里的秘密字符串是无效固定值，不从浏览器历史读取真实回调。
+  // 断言请求总数并非为了覆盖内部细节，而是保护外部单次消费合同。
+  // 测试继续使用真实Schema解析，缺失授权字段不会被mock隐藏。
+  // 模型真实调用没有接入该恢复流程，避免查询结果产生额外耗额。
+  it('回调响应丢失时查询原会话结果，恢复后不重发一次性回调', async () => {
+    const user = userEvent.setup()
+    let status = authorization.status
+    vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/verify/methods'
+            ? requirements
+            : { ...authorization, status },
+      },
+    }))
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/verify') {
+        return {
+          data: {
+            success: true,
+            data: {
+              proof_token: 'test-proof',
+              scope: 'hosting.manage',
+              method: 'session',
+              expires_at: 2000000000,
+            },
+          },
+        }
+      }
+      if (url.endsWith('/callback')) {
+        throw new Error('Authorization response lost')
+      }
+      return {
+        data: {
+          success: true,
+          data: url === '/api/hosting/accounts' ? account : authorization,
+        },
+      }
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <ConnectHostingDialog onClose={vi.fn()} />
+      </QueryClientProvider>
+    )
+    await user.type(screen.getByLabelText('Account alias'), 'Work')
+    await user.click(
+      screen.getByRole('button', { name: 'Generate authorization link' })
+    )
+    await user.type(
+      await screen.findByLabelText('Authorization callback URL'),
+      'http://localhost:1455/auth/callback?state=example&code=private-code'
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Complete authorization and add' })
+    )
+    const check = await screen.findByRole('button', {
+      name: 'Check authorization result',
+    })
+    expect(
+      screen.queryByLabelText('Authorization callback URL')
+    ).not.toBeInTheDocument()
+    status = 'ready'
+    await waitFor(() => expect(check).toBeEnabled())
+    await user.click(check)
+    await screen.findByText('Account added')
+    expect(
+      post.mock.calls.filter(([url]) => url.endsWith('/callback'))
+    ).toHaveLength(1)
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/hosting/accounts')
+    ).toHaveLength(1)
   })
   // 第二场景保护外部不可撤销消费的确认与恢复边界。
   // 打开详情已有新鲜卡数，但未点击确认前不允许发送 consume。

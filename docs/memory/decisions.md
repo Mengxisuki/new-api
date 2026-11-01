@@ -62,3 +62,13 @@
 代价：新策略首期仅同步文本协议，后台生成、持久续接和任务插件明确拒绝；观测必须fresh且近期，429或未知结果不跨来源重放。每次请求读取本人账号状态和执行层缓存，暂不新增分布式路由缓存。原厂登录/真实耗卡未验收，不据本地模拟测试直接开放生产。
 
 实现与本地验证：`controller/resource_relay.go`、`model/resource_policy.go`、`service/billing_session.go`、`service/hosting/`；三库请求/迁移、会话/归属/重放、退款未知与批量模式回归见 `controller/resource_relay_test.go`、`controller/hosting_test.go` 和 `service/resource_billing_test.go`。完整发布边界见[实施记录](../plans/account-hosting.md)。
+
+## 2026-11-01 16:12:11 +00:00 — 每 Key 独立来源与 New API 用户授权的挂靠控制面
+
+背景：用户明确否定挂靠页全局优先级，也否定将 gpt-load 管理凭据配置到 New API。此条替代 2026-11-01 14:52:17 条目中的“默认/Key完整覆盖”设计；同 Key 共存多来源、免费及付费结算边界继续保留。
+
+备选：保留全局继承；按具体 Key 保存完整顺序。采用后者，入口移到 `/keys` 当前 Key 菜单。启动事务将旧默认行原样复制到现存无独立策略 Key，保留显式策略后删除全局行，新 Key 不继承。代价是用户需要对每个 Key 明确设置，但来源授权与客户端用途一致；连接页只管理账号、额度和维护动作。
+
+授权备选：共享管理员密钥、静态服务密钥、或 New API 为确切用户请求签发短期断言并提供核验。采用第三种：30 秒、固定用途和受众、绑定 owner/方法/原始URI/正文摘要/幂等键；长期签名材料只留 New API。gpt-load 独立认证器回查固定回环端点，实时核验用户启用状态，再按核验 owner 检查资源；普通管理 Key、AccessKey、用户登录 JWT 在本地拒绝，不转发。核验只读可重复，写操作继续原 UUID 幂等。
+
+代价：挂靠控制动作依赖 New API 核验服务，两服务需成套升级；同机回环部署边界不扩展成跨主机协议。不会为兼容旧版降级管理员权限。依据：`service/hosting/request_authorization.go`、`model/resource_policy.go`、`controller/hosting_test.go`、gpt-load [执行契约](../../../gpt-load/docs/hosting-api.md)。SQLite/MySQL/PostgreSQL 的策略迁移与授权定向回归已通过；真实原厂授权、消费与线上发布仍待验收。

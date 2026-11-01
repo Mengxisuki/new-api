@@ -1,4 +1,6 @@
 {
+  "Hosting request authorization failed": "挂靠请求授权验证失败",
+  "Resource policies migrated to API keys: copied=%d, removed_defaults=%d": "资源来源策略已迁移到 API Key：复制 %d 条，移除 %d 条旧默认",
   "%d quota points": "%d 点额度",
   "%s after refresh: %s": "%s（刷新凭证后重试）: %s",
   "%s failed: %s": "%s 构建失败，%s",

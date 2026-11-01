@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -41,7 +42,18 @@ func hostingError(c *gin.Context, err error) {
 	case errors.As(err, &remote):
 		status, code = remote.Status, remote.Code
 	}
-	c.JSON(status, gin.H{"success": false, "message": "Hosting request failed", "code": code})
+	message := "Hosting request failed"
+	// 配置错误提供可翻译的操作提示，具体部署值仍然保持私有。
+	// 英文原文作为控制台七语言词条；调用方不应展示原始错误字符串。
+	// 只区分可操作的部署问题，未知内部故障继续使用通用提示。
+	// 地址无效与执行层离线不同：前者能本地确定，后者只能由真实调用确认。
+	switch code {
+	case "hosting_invalid_control_url":
+		message = "Account hosting control service URL is invalid. Please contact an administrator."
+	case "hosting_encryption_not_configured":
+		message = "Account hosting encryption is not configured. Please contact an administrator."
+	}
+	c.JSON(status, gin.H{"success": false, "message": message, "code": code})
 }
 
 // hostingBody 给账号管理请求设置独立小体积上限，不接受无界授权正文。
@@ -173,7 +185,7 @@ func GetHostingAccount(c *gin.Context) {
 // 服务端先持久化本地操作 UUID，控制面超时仍能返回恢复身份。
 // 带 data 的失败响应表示结果未知，前端必须保留其中的授权 ID。
 // 重新点击应继续该 ID，不能自动创建另一项授权绕过未决状态。
-// 创建授权本身不会把账号加入用户默认策略或任何 Key 覆盖。
+// 创建授权本身不会把账号加入任何 Key 的资源策略。
 // 授权 URL 含登录上下文，只给发起会话展示，不写审计正文。
 // 执行层只允许同一原厂身份归属一个用户，邮箱掩码不能替代该约束。
 // 不同浏览器会话应分别发起自己的验证，不共享短期接入材料。
@@ -202,6 +214,11 @@ func BeginHostingAuthorization(c *gin.Context) {
 			return
 		}
 		action = "reauthorize"
+	}
+	// 缺少服务器配置不是用户验证失败，预检必须先于单次证明消费。
+	if _, err := hosting.NewConfiguredClient(); err != nil {
+		hostingError(c, err)
+		return
 	}
 	if !hostingProof(c, action, input.AccountID, "") {
 		return
@@ -502,7 +519,7 @@ func RefreshHostingObservation(c *gin.Context) {
 // 返回的模型和协议必须与请求匹配，否则按坏控制面响应处理。
 // passed 才能写入 active 和验证时间，failed/inconclusive 均不伪造验证。
 // 并发暂停或删除会通过条件更新阻止测试结果重新激活账号。
-// 测试不修改默认策略，也不为 Key 自动添加其他来源。
+// 测试不修改任何 Key 策略，也不为 Key 自动添加其他来源。
 // 响应只包含结论、原因和延迟，不回传模型生成的正文。
 // 验证标记证明一次实际调用，不承诺账号未来永远可用。
 // 暂停账号必须先显式恢复，测试按钮不能成为隐式恢复入口。
@@ -755,4 +772,57 @@ func AuditHostingRequests(c *gin.Context) {
 		return
 	}
 	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "hosting.manage", Success: c.Writer.Status() < 400, Content: "挂靠资源管理操作"})
+}
+
+// GetHostingStatus 为已登录用户返回可安全展示的本地配置状态。
+// configured 仅表示配置完整，不代表控制面在线或原厂账号已授权。
+// 不访问网络，不消费证明，不创建授权，也不返回管理地址或密钥。
+// 正常配置的 code 为空；坏配置使用固定错误码供界面准确提示。
+// 未配置属于一次成功的状态查询，因此返回 200 和 configured=false。
+// 不写缓存，管理员修复环境后新请求会立即看到当前进程的配置。
+// 意外的内部错误仍走失败响应，不能伪装成可修复的缺配置。
+func GetHostingStatus(c *gin.Context) {
+	if _, err := hosting.NewConfiguredClient(); err != nil {
+		var configuration *hosting.Error
+		if !errors.As(err, &configuration) {
+			hostingError(c, err)
+			return
+		}
+		common.ApiSuccess(c, gin.H{"configured": false, "code": configuration.Code})
+		return
+	}
+	common.ApiSuccess(c, gin.H{"configured": true, "code": ""})
+}
+
+// VerifyHostingControlRequest 为执行层核验当前请求，不能用于登录或签发票据。
+// 此入口不用 UserAuth：普通登录 JWT 必须被专用用途签名校验拒绝。
+// 执行层传入真实请求绑定，成功只返回 owner_ref，不回传任何凭据或声明。
+// 只读核验不消费 nonce；30 秒内重复核验有效，业务幂等仍由原操作 UUID 保障。
+// 认证失败统一响应并记录无秘密的诊断，不泄露用户存在性或签名匹配细节。
+// 限制正文和 Bearer 长度，避免未认证调用造成无界解析或数据库工作。
+// 成功返回体与执行层协议固定一致，不包含控制台常用的附加数据。
+// 此处理器既不信任普通登录身份，也不把已核验的用户设为控制台会话。
+func VerifyHostingControlRequest(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8*1024)
+	var binding hosting.RequestBinding
+	raw, bearer := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
+	var owner string
+	var err error
+	if !bearer || len(c.Request.Header.Values("Authorization")) != 1 || c.ShouldBindJSON(&binding) != nil {
+		err = &hosting.Error{Status: http.StatusUnauthorized, Code: "hosting_request_unauthorized"}
+	} else {
+		owner, err = hosting.VerifyRequestAuthorization(raw, binding)
+	}
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		var rejected *hosting.Error
+		if errors.As(err, &rejected) && rejected.Status == http.StatusUnauthorized {
+			status = http.StatusUnauthorized
+		}
+		// 日志不记录 Bearer、绑定正文、用户引用或底层验证错误。
+		logger.LogWarn(c.Request.Context(), common.LogText("Hosting request authorization failed"))
+		c.JSON(status, gin.H{"success": false, "message": "Hosting request authorization failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"owner_ref": owner}})
 }

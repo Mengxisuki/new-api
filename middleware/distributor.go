@@ -694,3 +694,9 @@ func extractModelNameFromGeminiPath(path string) string {
 	// 返回模型名部分
 	return path[startIndex : startIndex+colonIndex]
 }
+
+// ResourceModelRequest 供统一资源路由复用严格模型解析入口。
+// 免费透传也必须拒绝重复键，避免上游与本地限制选择不同模型。
+func ResourceModelRequest(c *gin.Context) (*ModelRequest, error) {
+	return getModelFromJSONBody(c)
+}

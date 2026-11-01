@@ -441,8 +441,17 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota {
-			common.ApiErrorT(c, "Token quota is exhausted and cannot be enabled. Please modify the remaining quota or set it to unlimited")
-			return
+			// 已配置统一策略的 Key 可以恢复免费来源，付费预算仍由调度时的预扣约束。
+			// 策略读取失败必须可见，不能错误恢复为旧计费合同。
+			policy, policyErr := model.GetEffectiveResourcePolicy(userId, cleanToken.Id)
+			if policyErr != nil {
+				common.ApiError(c, policyErr)
+				return
+			}
+			if policy == nil {
+				common.ApiErrorT(c, "Token quota is exhausted and cannot be enabled. Please modify the remaining quota or set it to unlimited")
+				return
+			}
 		}
 	}
 	if statusOnly != "" {

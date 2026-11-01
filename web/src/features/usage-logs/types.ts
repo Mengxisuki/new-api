@@ -246,6 +246,15 @@ export interface LogOtherData {
   image_generation_call_count?: number
   is_system_prompt_overwritten?: boolean
   po?: string[]
+  // 实际来源由网关最终选路写入，不从余额或日志金额反推。
+  // 账号编号只指向本人挂靠资源，不能包含上游管理标识。
+  resource_source?: 'hosting' | 'subscription' | 'wallet'
+  hosting_account_id?: number
+  resource_policy_revision?: string
+  resource_skip_reasons?: string[]
+  // 未取得原厂用量与请求执行结果分别记录，避免未知伪装为零。
+  usage_status?: 'unknown' | 'known'
+  execution_status?: 'forwarded' | 'outcome_unknown'
   billing_source?: string
   group?: string
   stream_status?: {

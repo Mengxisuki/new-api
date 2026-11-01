@@ -115,3 +115,10 @@ const (
 	MsgChannelUpstreamUpdateFailedChannels  = "channel.upstream_update_failed_channels"
 	MsgChannelUpstreamUpdateMoreOmitted     = "channel.upstream_update_more_omitted"
 )
+
+// 统一来源调度的客户端错误，代码保持稳定，说明随用户语言变化。
+const (
+	MsgResourceSourcesExhausted    = "resource.sources_exhausted"
+	MsgResourceRequestFailed       = "resource.request_failed"
+	MsgResourceEndpointUnsupported = "resource.endpoint_unsupported"
+)

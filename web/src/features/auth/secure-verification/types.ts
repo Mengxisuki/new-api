@@ -25,6 +25,8 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  // 账号挂靠复用同一证明机制，证明不能跨账号或消费操作使用。
+  | 'hosting.manage'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -57,6 +59,16 @@ export type AdminUserManageAction =
   | 'finance'
 
 export type VerificationOperation =
+  | {
+      // 连接不指定账号；重授权、删除与重置都必须绑定明确目标。
+      scope: 'hosting.manage'
+      context: {
+        action: 'connect' | 'reauthorize' | 'delete' | 'reset'
+        account_id: number
+        // 重置沿用持久 UUID，其他操作使用空字符串保持规范化一致。
+        operation_id: string
+      }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -97,6 +109,7 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
+        | 'hosting.manage'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

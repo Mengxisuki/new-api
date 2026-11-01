@@ -733,6 +733,9 @@ export function useCommonLogsColumns(
 
           const other = parseLogOther(log.other)
 
+          // 原厂未返回用量时明确展示未知，避免占位零进入真实统计视图。
+          if (other?.usage_status === 'unknown') return <span>{t('Unknown')}</span>
+
           const promptTokens = log.prompt_tokens || 0
           const completionTokens = log.completion_tokens || 0
           if (promptTokens === 0 && completionTokens === 0) {

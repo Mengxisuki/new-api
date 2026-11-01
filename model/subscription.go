@@ -1351,6 +1351,12 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 }
 
 // PreConsumeUserSubscription pre-consumes from any active subscription total quota.
+// 明确不足的哨兵只在事务确认未扣款时返回，数据库故障不得归入不足。
+// 资源调度据此决定是否允许继续下一个资金来源。
+var ErrNoActiveSubscription = errors.New("no active subscription")
+var ErrInsufficientSubscriptionQuota = errors.New("subscription quota insufficient")
+var ErrSubscriptionLimitExceeded = errors.New("subscription used exceeds total")
+
 func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
 	if userId <= 0 {
 		return nil, errors.New("invalid userId")
@@ -1392,10 +1398,11 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 			Order("end_time asc, id asc").
 			Find(&subs).Error; err != nil {
-			return errors.New("no active subscription")
+			// 查询失败不等于没有订阅；否则统一来源回退可能误扣钱包。
+			return err
 		}
 		if len(subs) == 0 {
-			return errors.New("no active subscription")
+			return ErrNoActiveSubscription
 		}
 		for _, candidate := range subs {
 			sub := candidate
@@ -1446,7 +1453,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			returnValue.AmountUsedAfter = sub.AmountUsed
 			return nil
 		}
-		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
+		return fmt.Errorf("%w, need=%d", ErrInsufficientSubscriptionQuota, amount)
 	})
 	if err != nil {
 		return nil, err
@@ -1579,7 +1586,7 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 		}
 		newUsed := max(sub.AmountUsed+delta, 0)
 		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
-			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
+			return fmt.Errorf("%w, used=%d total=%d", ErrSubscriptionLimitExceeded, newUsed, sub.AmountTotal)
 		}
 		sub.AmountUsed = newUsed
 		return tx.Save(&sub).Error

@@ -31,6 +31,10 @@ import { Button } from '@/components/ui/button'
 
 type AutoGroupOrderItemProps = {
   group: string
+  // 稳定排序标识与显示名称分离，允许账号备注重复而不误换资源。
+  label?: string
+  // 继承策略和正在保存时禁用全部编辑，包括拖动与键盘移动。
+  disabled?: boolean
   index: number
   count: number
   leading?: ReactNode
@@ -42,12 +46,15 @@ type AutoGroupOrderItemProps = {
 export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
   const { t } = useTranslation()
   const dragControls = useDragControls()
+  const label = props.label ?? props.group
 
   const handleDragStart = (event: PointerEvent<HTMLButtonElement>) => {
+    if (props.disabled) return // 不能通过手柄绕过只读策略。
     dragControls.start(event)
   }
 
   const handleDragKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (props.disabled) return // 鼠标、键盘和按钮遵循同一禁用状态。
     if (event.key === 'ArrowUp') {
       event.preventDefault()
       props.onMove(props.index, 'up')
@@ -71,8 +78,9 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
         variant='ghost'
         size='icon-sm'
         className='text-muted-foreground cursor-grab touch-none font-mono active:cursor-grabbing'
-        aria-label={t('Drag {{group}} to reorder', { group: props.group })}
-        title={t('Drag {{group}} to reorder', { group: props.group })}
+        aria-label={t('Drag {{group}} to reorder', { group: label })}
+        title={t('Drag {{group}} to reorder', { group: label })}
+        disabled={props.disabled}
         onPointerDown={handleDragStart}
         onKeyDown={handleDragKeyDown}
       >
@@ -80,11 +88,8 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
       </Button>
       {props.leading}
       <div className='flex min-w-0 flex-1 flex-wrap items-center gap-2'>
-        <span
-          className='min-w-0 truncate text-sm font-medium'
-          title={props.group}
-        >
-          {props.group}
+        <span className='min-w-0 truncate text-sm font-medium' title={label}>
+          {label}
         </span>
         {props.children}
       </div>
@@ -93,8 +98,8 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
           type='button'
           variant='ghost'
           size='icon-sm'
-          disabled={props.index === 0}
-          aria-label={t('Move {{group}} up', { group: props.group })}
+          disabled={props.disabled || props.index === 0}
+          aria-label={t('Move {{group}} up', { group: label })}
           onClick={() => props.onMove(props.index, 'up')}
         >
           <HugeiconsIcon
@@ -107,8 +112,8 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
           type='button'
           variant='ghost'
           size='icon-sm'
-          disabled={props.index === props.count - 1}
-          aria-label={t('Move {{group}} down', { group: props.group })}
+          disabled={props.disabled || props.index === props.count - 1}
+          aria-label={t('Move {{group}} down', { group: label })}
           onClick={() => props.onMove(props.index, 'down')}
         >
           <HugeiconsIcon
@@ -121,7 +126,8 @@ export function AutoGroupOrderItem(props: AutoGroupOrderItemProps) {
           type='button'
           variant='ghost'
           size='icon-sm'
-          aria-label={t('Remove {{group}}', { group: props.group })}
+          disabled={props.disabled}
+          aria-label={t('Remove {{group}}', { group: label })}
           onClick={() => props.onRemove(props.group)}
         >
           <HugeiconsIcon

@@ -104,8 +104,8 @@ func cacheApplyTokenQuotaDelta(id int, key string, delta int64) (cacheQuotaResul
 
 // persistUserQuotaDelta 把已在缓存侧预扣成功的增量落库；批量模式下入队，
 // 直写模式下要求行存在（用户已删除时报错，交由调用方补偿缓存）。
-func persistUserQuotaDelta(id int, delta int) error {
-	if common.BatchUpdateEnabled {
+func persistUserQuotaDelta(id int, delta int, durable bool) error {
+	if common.BatchUpdateEnabled && !durable {
 		addNewRecord(BatchUpdateTypeUserQuota, id, delta)
 		return nil
 	}
@@ -119,8 +119,8 @@ func persistUserQuotaDelta(id int, delta int) error {
 	return nil
 }
 
-func persistTokenQuotaDelta(id int, delta int) error {
-	if common.BatchUpdateEnabled {
+func persistTokenQuotaDelta(id int, delta int, durable bool) error {
+	if common.BatchUpdateEnabled && !durable {
 		addNewRecord(BatchUpdateTypeTokenQuota, id, delta)
 		return nil
 	}
@@ -162,6 +162,16 @@ func reserveTokenQuotaDB(id int, quota int) (bool, error) {
 // 缓存命中时以缓存余额为准（避免批量模式下过期的数据库余额放大并发超扣）；
 // Redis 异常或水合失败时降级为数据库条件更新，保证服务可用。
 func TryReserveUserQuota(id int, quota int) (bool, error) {
+	return tryReserveUserQuota(id, quota, false)
+}
+
+// TryReserveUserQuotaSync 沿用缓存原子守卫，但本次预留必须立即落库。
+// 不修改全局批量配置，其他并行请求仍遵循自己的记账合同。
+func TryReserveUserQuotaSync(id int, quota int) (bool, error) {
+	return tryReserveUserQuota(id, quota, true)
+}
+
+func tryReserveUserQuota(id int, quota int, durable bool) (bool, error) {
 	if quota < 0 {
 		return false, errors.New("quota cannot be negative")
 	}
@@ -187,7 +197,7 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 	if result == cacheQuotaInsufficient {
 		return false, nil
 	}
-	if err = persistUserQuotaDelta(id, -quota); err != nil {
+	if err = persistUserQuotaDelta(id, -quota, durable); err != nil {
 		compensated, compensateErr := cacheApplyUserQuotaDelta(id, int64(quota))
 		if compensateErr != nil || compensated != cacheQuotaOK {
 			common.SysError(common.LogText("failed to compensate reserved user quota: result=%d error=%v", compensated, compensateErr))
@@ -200,6 +210,16 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 // TryReserveTokenQuota atomically checks and deducts a token quota. Unlimited
 // tokens skip the balance check but still update remain/used accounting.
 func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, error) {
+	return tryReserveTokenQuota(id, key, quota, unlimited, false)
+}
+
+// TryReserveTokenQuotaSync 将令牌预算的原子预留与持久化一起完成。
+// 无限预算仍需记账，不能因没有上限而排入异步队列。
+func TryReserveTokenQuotaSync(id int, key string, quota int, unlimited bool) (bool, error) {
+	return tryReserveTokenQuota(id, key, quota, unlimited, true)
+}
+
+func tryReserveTokenQuota(id int, key string, quota int, unlimited, durable bool) (bool, error) {
 	if quota < 0 {
 		return false, errors.New("quota cannot be negative")
 	}
@@ -207,6 +227,9 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 		return true, nil
 	}
 	if unlimited {
+		if durable {
+			return true, ApplyTokenQuotaDeltaSync(id, key, -quota)
+		}
 		return true, DecreaseTokenQuota(id, key, quota)
 	}
 	if !common.RedisEnabled {
@@ -228,7 +251,7 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 	if result == cacheQuotaInsufficient {
 		return false, nil
 	}
-	if err = persistTokenQuotaDelta(id, -quota); err != nil {
+	if err = persistTokenQuotaDelta(id, -quota, durable); err != nil {
 		compensated, compensateErr := cacheApplyTokenQuotaDelta(id, key, int64(quota))
 		if compensateErr != nil || compensated != cacheQuotaOK {
 			common.SysError(common.LogText("failed to compensate reserved token quota: result=%d error=%v", compensated, compensateErr))
@@ -236,4 +259,45 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 		return false, err
 	}
 	return true, nil
+}
+
+// ApplyTokenQuotaDeltaSync 用于已确认预留的结算与释放，不进入批量队列。
+// 数据库确认后同步更新缓存；若缓存失败必须停止回退，不能重试数据库加额。
+// 冷缓存无需创建不完整哈希，下一次鉴权从数据库水合完整令牌。
+func ApplyTokenQuotaDeltaSync(id int, key string, delta int) error {
+	if delta == 0 { // 零差额不更新时间，也避免依赖不同方言的受影响行数语义。
+		return nil
+	}
+	if err := persistTokenQuotaDelta(id, delta, true); err != nil { // 持久化未确认时不得先修改缓存。
+		return err
+	}
+	if common.RedisEnabled {
+		_, err := cacheApplyTokenQuotaDelta(id, key, int64(delta)) // 原子增量保留其他并发请求的预算变化。
+		return err
+	}
+	return nil
+}
+
+// ApplyUserQuotaDeltaSync 在返回前确认钱包变更，避免回退依赖异步入队结果。
+// 正增量沿用钱包容量保护；负增量用于已执行请求按实际用量结算。
+// 缓存更新错误发生时数据库可能已提交，调用方必须保留未知状态而不重试。
+func ApplyUserQuotaDeltaSync(id int, delta int) error {
+	if delta == 0 { // 零差额不触发任何外部写入。
+		return nil
+	}
+	if delta > 0 {
+		if err := common.ValidateWalletQuota(delta); err != nil { // 退款也不能突破钱包数值表示边界。
+			return err
+		}
+		if err := increaseUserQuota(id, delta); err != nil { // 沿用带容量条件的钱包原子加额。
+			return err
+		}
+	} else if err := persistUserQuotaDelta(id, delta, true); err != nil { // 执行后差额不能改扣其他来源。
+		return err
+	}
+	if common.RedisEnabled {
+		_, err := cacheApplyUserQuotaDelta(id, int64(delta)) // 确认失败继续向上传递，禁止外层重复加额。
+		return err
+	}
+	return nil
 }

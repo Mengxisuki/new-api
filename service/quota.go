@@ -403,7 +403,17 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	relayInfo.PerformanceOutputTokens = int64(usage.CompletionTokens)
 }
 
+// ErrInsufficientTokenBudget 只表示原子预留未发生，供资源路由安全跳过付费候选。
+// 数据库失败保持原错误，不能按预算不足继续执行其他来源。
+var ErrInsufficientTokenBudget = errors.New("token quota is not enough")
+
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
+	return preConsumeTokenQuota(relayInfo, quota, false)
+}
+
+// 同步资源会话保留现有原子预算判断，只将持久化承诺提升为立即落库。
+// 该参数属于本次请求，不能修改全局 BatchUpdateEnabled 影响其他用户。
+func preConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int, durable bool) error {
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}
@@ -411,7 +421,13 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 		return nil
 	}
 	// 原子预扣：检查与扣减在同一操作中完成，并发请求不可能同时通过检查后超扣。
-	reserved, err := model.TryReserveTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota, relayInfo.TokenUnlimited)
+	var reserved bool
+	var err error
+	if durable {
+		reserved, err = model.TryReserveTokenQuotaSync(relayInfo.TokenId, relayInfo.TokenKey, quota, relayInfo.TokenUnlimited)
+	} else {
+		reserved, err = model.TryReserveTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota, relayInfo.TokenUnlimited)
+	}
 	if err != nil {
 		return err
 	}
@@ -420,7 +436,7 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 		if token, tokenErr := model.GetTokenByKey(relayInfo.TokenKey, false); tokenErr == nil && token != nil {
 			remainQuota = token.RemainQuota
 		}
-		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(remainQuota), logger.FormatQuota(quota))
+		return fmt.Errorf("%w, token remain quota: %s, need quota: %s", ErrInsufficientTokenBudget, logger.FormatQuota(remainQuota), logger.FormatQuota(quota))
 	}
 	return nil
 }

@@ -17,6 +17,8 @@ import (
 // instances and each run is recorded as one task row. Call this before
 // service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
+	// 挂靠恢复复用系统任务租约，不在各副本启动独立无锁轮询。
+	service.RegisterSystemTaskHandler(hostingRecoveryHandler{})
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})

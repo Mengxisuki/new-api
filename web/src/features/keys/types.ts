@@ -112,4 +112,6 @@ export type ApiKeysDialogType =
   | 'update'
   | 'delete'
   | 'batch-delete'
+  // 同一 Key 的资源策略不改变该 Key 的模型、IP 和有效期约束。
+  | 'resource-policy'
   | 'cc-switch'

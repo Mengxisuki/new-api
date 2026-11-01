@@ -23,7 +23,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -190,7 +190,12 @@ test.each([
         docs_link: 'https://docs.example.org/oak/updated',
       })
     })
-    expect(docs).toHaveAttribute('href', 'https://docs.example.org/oak/updated')
+    await waitFor(() =>
+      expect(docs).toHaveAttribute(
+        'href',
+        'https://docs.example.org/oak/updated'
+      )
+    )
     expect(
       screen.getByRole('link', { name: 'Make your first request' })
     ).toHaveAttribute('href', 'https://docs.example.org/oak/updated')
@@ -223,7 +228,11 @@ test('首页展示四类服务并将咨询入口定位到实际存在的采购�
   const consultations = within(services).getAllByRole('link', {
     name: /Discuss|Ask about/,
   })
-  expect(consultations).toHaveLength(3)
+  expect(consultations).toHaveLength(2)
+  // 挂靠已有独立工作区，不再将用户送到采购咨询。
+  expect(
+    within(services).getByRole('link', { name: 'Connect Codex account' })
+  ).toHaveAttribute('href', '/hosting')
   for (const link of consultations) {
     expect(link).toHaveAttribute('href', '#oak-procurement')
     expect(document.querySelector('#oak-procurement')).toBeVisible()

@@ -135,6 +135,7 @@ export function CommonLogMobileCard<TData>(props: {
     0
   const showTokens =
     displayable &&
+    other?.usage_status !== 'unknown' &&
     props.cells.has('prompt_tokens') &&
     (log.prompt_tokens > 0 ||
       log.completion_tokens > 0 ||
@@ -143,6 +144,8 @@ export function CommonLogMobileCard<TData>(props: {
 
   return (
     <div className='min-w-0 space-y-2.5 text-sm leading-5'>
+      {/* 移动端与桌面一致，未知用量独立提示，不用零号数字替代。 */}
+      {displayable && other?.usage_status === 'unknown' && <p>{t('Provider token usage is unknown')}</p>}
       <div className='flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2'>
         {fields.model.visible && (
           <div className='min-w-0 flex-[1_1_10rem]'>

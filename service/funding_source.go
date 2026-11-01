@@ -33,6 +33,7 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
+	durable  bool // 统一资源链必须同步落库，不能沿用批量队列的提前成功。
 	userId   int
 	consumed int // 实际预扣的用户额度
 }
@@ -43,7 +44,13 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	reserved, err := model.TryReserveUserQuota(w.userId, amount)
+	var reserved bool
+	var err error
+	if w.durable {
+		reserved, err = model.TryReserveUserQuotaSync(w.userId, amount)
+	} else {
+		reserved, err = model.TryReserveUserQuota(w.userId, amount)
+	}
 	if err != nil {
 		return err
 	}
@@ -56,6 +63,9 @@ func (w *WalletFunding) PreConsume(amount int) error {
 }
 
 func (w *WalletFunding) Settle(delta int) error {
+	if w.durable {
+		return model.ApplyUserQuotaDeltaSync(w.userId, -delta)
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -71,6 +81,9 @@ func (w *WalletFunding) Refund() error {
 	}
 	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
 	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
+	if w.durable {
+		return model.ApplyUserQuotaDeltaSync(w.userId, w.consumed)
+	}
 	return model.IncreaseUserQuota(w.userId, w.consumed, false)
 }
 

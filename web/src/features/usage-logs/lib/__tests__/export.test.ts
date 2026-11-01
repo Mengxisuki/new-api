@@ -72,6 +72,12 @@ async function chineseTranslator() {
 }
 
 describe('usage log CSV export', () => {
+  // 原厂用量缺失不影响平台零费用事实，CSV 应单独保留未知语义。
+  test('挂靠日志用量未知时导出未知而不是四个真实零值', async () => {
+    const t = await chineseTranslator()
+    const row = getLogCsvRow({ ...consumeLog, prompt_tokens: 0, completion_tokens: 0, quota: 0, other: JSON.stringify({ usage_status: 'unknown', resource_source: 'hosting' }) }, false, t)
+    expect(row.slice(6, 10)).toEqual(['Unknown', 'Unknown', 'Unknown', 'Unknown'])
+  })
   test('header in the user view has no user or channel column', async () => {
     const t = await chineseTranslator()
 

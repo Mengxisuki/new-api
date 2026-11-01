@@ -216,6 +216,9 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 }
 
 func ListModels(c *gin.Context, modelType int) {
+	if listResourceModels(c) {
+		return
+	}
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
 		userId := c.GetInt("id")
@@ -346,6 +349,9 @@ func EnabledListModels(c *gin.Context) {
 }
 
 func RetrieveModel(c *gin.Context, modelType int) {
+	if listResourceModels(c) {
+		return
+	}
 	modelId := c.Param("model")
 	if aiModel, ok := openAIModelsMap[modelId]; ok {
 		switch modelType {

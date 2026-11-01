@@ -252,6 +252,15 @@ export function DataTableRowActions<TData>({
             <Link size={16} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
+        {/* 策略编辑不读取明文 Key，避免仅管理顺序就触发凭据显示。 */}
+        <DropdownMenuItem
+          onClick={() => {
+            setCurrentRow(apiKey)
+            setOpen('resource-policy')
+          }}
+        >
+          {t('Resource priority')}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={async () => {

@@ -220,14 +220,24 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 }
 
 func ValidateUserToken(key string) (token *Token, err error) {
+	return validateUserToken(key, false)
+}
+
+// ValidateResourceTokenIdentity 只放宽付费预算，供已配置资源策略的请求使用。
+// 禁用、过期、删除等身份限制保持原义；是否允许付费由候选来源预扣决定。
+// 调用方取得非空策略后才能按此结果放行；没有策略时须重新执行完整预算验证。
+func ValidateResourceTokenIdentity(key string) (*Token, error) {
+	return validateUserToken(key, true)
+}
+
+func validateUserToken(key string, resourcePolicy bool) (token *Token, err error) {
 	if key == "" {
 		return nil, ErrTokenNotProvided
 	}
 	token, err = GetTokenByKey(key, false)
 	if err == nil {
-		if token.Status == common.TokenStatusExhausted ||
-			token.Status == common.TokenStatusExpired ||
-			token.Status != common.TokenStatusEnabled {
+		// 额度耗尽是预算状态；用户主动禁用永远不能通过免费来源绕过。
+		if token.Status != common.TokenStatusEnabled && !(resourcePolicy && token.Status == common.TokenStatusExhausted) {
 			return token, ErrTokenInvalid
 		}
 		if token.ExpiredTime != -1 && token.ExpiredTime < common.GetTimestamp() {
@@ -240,7 +250,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 			}
 			return token, ErrTokenInvalid
 		}
-		if !token.UnlimitedQuota && token.RemainQuota <= 0 {
+		if !resourcePolicy && !token.UnlimitedQuota && token.RemainQuota <= 0 {
 			if !common.RedisEnabled {
 				token.Status = common.TokenStatusExhausted
 				err := token.SelectUpdate()

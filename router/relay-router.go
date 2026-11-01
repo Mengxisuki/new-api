@@ -77,7 +77,7 @@ func SetRelayRouter(router *gin.Engine) {
 		// response.create event; each event runs the ordinary request limiter.
 		relayV1Router.GET("/responses", controller.ResponsesWebSocket)
 	}
-	relayV1Router.Use(middleware.ModelRequestRateLimit())
+	relayV1Router.Use(middleware.ModelRequestRateLimit(), controller.ResourceRelay())
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")

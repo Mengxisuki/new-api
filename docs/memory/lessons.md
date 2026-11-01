@@ -79,3 +79,14 @@
 修复：当存在正数面额与正数折扣率的 `AmountDiscount` 配置时，后端 `controller/topup.go` 与前端 `web/src/features/wallet/lib/payment.ts`、`hooks/use-topup-info.ts` 统一按配置的折扣档位升序生成充值 Plan，不再返回默认的 `10/20/50/100`；仅当未配置任何有效充值折扣时才回退到 `amount_options` 或最低充值倍率档位。同时 `web/src/features/wallet/lib/format.ts` 消除折扣百分比计算的浮点尾差。验证见 `controller/topup_currency_test.go` 与 `web/src/features/wallet/__tests__/currency-payment.test.tsx`。
 
 适用边界：仅影响用户端充值页预设套餐按钮与 `/api/user/topup/info` 的套餐输出；自定义金额输入、下单报价及后台设置持久化保持原契约。
+
+
+## 2026-11-01 14:52:17 +00:00 — 来源回退必须辨别不足、陈旧观测与退款未知
+
+现象：原订阅查询错误被转换为“没有套餐”；批量模式的旧退款返回成功时仅入队；补预留回滚响应丢失后再次全额退款可能重复返还。另有原厂重置后保留近期零额度快照但标记stale的真实执行层行为，仅按时间判断会跳过已恢复的免费账号并误用钱包。
+
+根因：将业务不足、系统故障和持久化确认混为一谈，或只看额度数值忽略观测状态。统一来源需要更严格的跨尝试合同，不能直接套用旧单来源的异步回收方式。
+
+修复：订阅不足使用明确哨兵；新策略预留、结算和释放同步落库并更新缓存；回滚未知冻结会话并停止，不能自动再次加额；耗尽预判同时要求fresh、近期、模型适用和未到重置时间。适用范围为已启用统一资源策略的请求，旧Key合同保留。回归覆盖真实数据库以及Redis/批量开关，详见 `service/resource_billing_test.go` 与 `controller/resource_relay_test.go`。
+
+补充：结算已提交但确认返回失败，也必须冻结后续结算与退款；移除瞬时故障不能使未知结果自动变为未执行。`TestResourceBillingUnknownSettlementDoesNotRefund` 在真实数据库更新完成后注入确认错误，验证重复调用不会再次扣款或退还已消费金额。

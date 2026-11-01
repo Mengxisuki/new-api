@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,12 +18,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Dialog } from '@/components/dialog'
+import { ResourcePolicyEditor } from '@/features/hosting/components/resource-policy'
+
 import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
 import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
 import { useApiKeys } from './api-keys-provider'
 import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
 
 export function ApiKeysDialogs() {
+  const { t } = useTranslation()
   const { open, setOpen, currentRow, resolvedKey } = useApiKeys()
 
   return (
@@ -32,10 +38,22 @@ export function ApiKeysDialogs() {
         currentRow={open === 'update' ? currentRow || undefined : undefined}
       />
       <ApiKeysDeleteDialog />
+      {/* 完整覆盖和恢复继承都走挂靠模块的同一策略编辑器。 */}
+      {open === 'resource-policy' && currentRow && (
+        <Dialog
+          open
+          onOpenChange={(isOpen) => !isOpen && setOpen(null)}
+          title={t('Resource priority')}
+          description={currentRow.name}
+        >
+          <ResourcePolicyEditor tokenId={currentRow.id} />
+        </Dialog>
+      )}
       <CCSwitchDialog
         open={open === 'cc-switch'}
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
         tokenKey={resolvedKey}
+        tokenId={currentRow?.id}
       />
     </>
   )

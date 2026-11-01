@@ -91,3 +91,8 @@ channel.upstream_update_added_models: "Added model examples (showing {{.Shown}}/
 channel.upstream_update_removed_models: "Removed model examples (showing {{.Shown}}/{{.Total}}): {{.Models}}"
 channel.upstream_update_failed_channels: "Failed channel IDs (showing {{.Shown}}/{{.Total}}): {{.Ids}}"
 channel.upstream_update_more_omitted: " ({{.Count}} more omitted)"
+
+# 统一资源调度
+resource.sources_exhausted: "No enabled resource can serve this request. Check your account quotas and resource priority."
+resource.request_failed: "The resource request could not be completed ({{.Code}})."
+resource.endpoint_unsupported: "This endpoint does not support resource priority yet."

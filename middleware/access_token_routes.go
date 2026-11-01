@@ -41,6 +41,32 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// 挂靠读取复用个人资料范围，账号变更与原厂重置要求安全写入范围。
+	"GET /api/hosting/accounts":                            accessTokenScopeRule("profile:read"),
+	"GET /api/hosting/accounts/:id":                        accessTokenScopeRule("profile:read"),
+	"POST /api/hosting/accounts":                           accessTokenScopeRule("account_security:write"), // 创建只消费同会话已验证授权，不接收原厂凭据。
+	"PATCH /api/hosting/accounts/:id":                      accessTokenScopeRule("account_security:write"),
+	"DELETE /api/hosting/accounts/:id":                     accessTokenScopeRule("account_security:write"),
+	"GET /api/hosting/accounts/:id/models":                 accessTokenScopeRule("profile:read"), // 账号目录只读不授予执行权限。
+	"GET /api/hosting/accounts/:id/observation":            accessTokenScopeRule("profile:read"),
+	"POST /api/hosting/accounts/:id/refresh-observation":   accessTokenScopeRule("account_security:write"),
+	"POST /api/hosting/accounts/:id/test":                  accessTokenScopeRule("account_security:write"),
+	"POST /api/hosting/accounts/:id/reset-credits/consume": accessTokenScopeRule("account_security:write"), // 原厂不可逆动作另需绑定 UUID 的证明。
+	"GET /api/hosting/accounts/:id/reset-operations":       accessTokenScopeRule("profile:read"),
+	"GET /api/hosting/reset-operations/:id":                accessTokenScopeRule("profile:read"), // 纯查询未知状态，不能再次消费。
+	"POST /api/hosting/reset-operations/:id/resume":        accessTokenScopeRule("account_security:write"),
+	"POST /api/hosting/authorizations":                     accessTokenScopeRule("account_security:write"),
+	"GET /api/hosting/authorizations/:id":                  accessTokenScopeRule("account_security:write"),
+	"POST /api/hosting/authorizations/:id/resume":          accessTokenScopeRule("account_security:write"), // 恢复写操作不能伪装为轮询 GET。
+	"POST /api/hosting/authorizations/:id/callback":        accessTokenScopeRule("account_security:write"),
+	"DELETE /api/hosting/authorizations/:id":               accessTokenScopeRule("account_security:write"),
+	// 策略可引入钱包扣费，必须具备令牌写权限，不能只凭 profile:read 修改。
+	"GET /api/hosting/policy":                     accessTokenScopeRule("api_key:read"),
+	"PUT /api/hosting/policy":                     accessTokenScopeRule("api_key:write"),
+	"GET /api/hosting/tokens/:token_id/policy":    accessTokenScopeRule("api_key:read"),
+	"PUT /api/hosting/tokens/:token_id/policy":    accessTokenScopeRule("api_key:write"),
+	"DELETE /api/hosting/tokens/:token_id/policy": accessTokenScopeRule("api_key:write"), // 删除仅恢复用户默认，不重置旧计费偏好。
+	"GET /api/hosting/tokens/:token_id/models":    accessTokenScopeRule("api_key:read"),  // 目录必须先验证模型 Key 归属。
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),

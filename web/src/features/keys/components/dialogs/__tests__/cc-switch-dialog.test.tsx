@@ -21,6 +21,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { api } from '@/lib/api'
+
 import { CCSwitchDialog } from '../cc-switch-dialog'
 
 let queryClient: QueryClient
@@ -48,6 +50,81 @@ function renderDialog(models = ['gpt-5.4', 'claude-sonnet-4-6']) {
 }
 
 describe('CC Switch model selection', () => {
+  // 真实组件仅隔离 HTTP，保护统一 Key 不被旧全站目录扩权。
+  // 新场景提供明确 Key 编号，原有场景省略编号继续验证旧行为。
+  // 策略响应 legacy=false 是进入统一资源目录的真实契约。
+  // 目录中同时放已验证和未验证模型，防止实现只检查协议字段。
+  // 两项都声明 Responses，使 verified 的过滤作用可以被独立观察。
+  // Key 编号七只出现在本人目录路径，不能请求全站模型后再前端猜权限。
+  // 真实组件的异步策略查询决定默认应用，测试等待 Codex 被选中。
+  // 不直接修改组件 state，也不 mock 挂靠 API 包装函数。
+  // Base UI 单选项使用 aria-disabled，因此不误用原生 disabled 断言。
+  // Claude 与 Gemini 在统一策略首期未被验证，必须不能导出占位配置。
+  // 模型选择使用真实下拉，能同时保护接口解析和选项过滤接线。
+  // 未验证模型不可见，避免用户得到必然无法保证兼容的配置。
+  // 请求集合只允许当前 Key 的 hosting 路径，防止隐式全站回退。
+  // 测试不真正调用外部 CC Switch 协议，避免启动用户电脑上的应用。
+  // 导出 URL 构造沿用原实现，本场景聚焦可导出模型的授权边界。
+  // 固定 test-only 密钥是无效 fixture，不是可用于平台请求的凭据。
+  // 既有三个应用的测试继续保留，保护旧 Key 不被统一策略限制误伤。
+  // 策略与模型查询都保留 success/data 信封，实际入口 Schema 会参与验证。
+  // 没有浏览器延时假设，findByRole 等待真实选项加载完成。
+  // 断言用户可见状态和公开 HTTP 路径，不依赖私有缓存变量。
+  // 上游实测记录真假由后端负责，前端只遵守服务端 verified 事实。
+  // 该测试不证明原厂模型实时可用，只保护导出不会夸大能力。
+  // 查询失败不能以旧全站目录兜底，这个路径范围断言能捕获回归。
+  // 如果后续增加供应商协议，需增加相应验证 fixture 后再放开应用。
+  it('统一策略只显示该Key已验证Responses模型，其他客户端不可导出', async () => {
+    const user = userEvent.setup()
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data: url.endsWith('/policy')
+          ? { revision: 1, inherited: false, legacy: false, sources: [] }
+          : {
+              models: [
+                {
+                  id: 'verified-codex',
+                  verified: true,
+                  protocols: ['responses'],
+                },
+                { id: 'unverified', verified: false, protocols: ['responses'] },
+              ],
+            },
+      },
+    }))
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CCSwitchDialog
+          open
+          onOpenChange={vi.fn()}
+          tokenKey='test-only'
+          tokenId={7}
+        />
+      </QueryClientProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: 'Codex' })).toBeChecked()
+    )
+    expect(screen.getByRole('radio', { name: 'Claude' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    expect(screen.getByRole('radio', { name: 'Gemini' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Primary Model' }))
+    expect(
+      await screen.findByRole('option', { name: 'verified-codex' })
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('option', { name: 'unverified' })
+    ).not.toBeInTheDocument()
+    expect(
+      get.mock.calls.every(([url]) => url.startsWith('/api/hosting/tokens/7/'))
+    ).toBe(true)
+  })
   it.each(['Claude', 'Codex', 'Gemini'])(
     'opens %s models outside the clipping dialog and keeps the dialog open after selection',
     async (app) => {

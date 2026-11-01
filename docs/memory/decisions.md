@@ -51,3 +51,14 @@
 权限选择数字角色5并授finance读写，低于Admin10，避免旧AdminAuth等级比较顺带开放全部管理功能。Root创建/授予沿用原step-up，角色变更撤销旧会话和覆盖；API/PAT/UI共同限制。
 
 代价：新增表、订单布尔字段和私有附件目录需随数据库备份；需前后端一起发布。仅CNY本地网关及本地订阅支持发票，其他渠道明确拒绝，不虚假收费。拒绝/已开具为当前终态，退款、红冲、重开和自动税务开票留待明确需求。参考 controller/invoice_test.go、service/authz/resources_finance.go 和 web/src/features/invoices/。
+
+
+## 2026-11-01 14:52:17 +00:00 — 同一 Key 按资源顺序共用挂靠、订阅与钱包
+
+背景：用户否定互斥 Key 类型，要求多个原厂账号、包月和量贩余额共存且可排序，并批准实施已修订方案。挂靠免费，原厂重置机会只能手动使用。
+
+备选：按 Key 固定业务类型；靠平台零倍率挂靠；或由 New API 统一选择来源、gpt-load 隔离私有执行。采用第三种：独立资源策略表提供默认/Key完整覆盖；免费执行不进入计费链，付费会话冻结资金来源。新策略预留和退款同步持久化，未知提交/退款结果停止，不通过反复重试猜测资金状态。
+
+代价：新策略首期仅同步文本协议，后台生成、持久续接和任务插件明确拒绝；观测必须fresh且近期，429或未知结果不跨来源重放。每次请求读取本人账号状态和执行层缓存，暂不新增分布式路由缓存。原厂登录/真实耗卡未验收，不据本地模拟测试直接开放生产。
+
+实现与本地验证：`controller/resource_relay.go`、`model/resource_policy.go`、`service/billing_session.go`、`service/hosting/`；三库请求/迁移、会话/归属/重放、退款未知与批量模式回归见 `controller/resource_relay_test.go`、`controller/hosting_test.go` 和 `service/resource_billing_test.go`。完整发布边界见[实施记录](../plans/account-hosting.md)。

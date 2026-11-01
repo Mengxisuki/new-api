@@ -378,6 +378,11 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		// 挂靠与优先级采用独立表，旧用户未配置时保留既有计费合同。
+		&HostingAccount{},
+		&HostingAuthorization{},
+		&HostingResetOperation{},
+		&ResourcePolicy{},
 	)
 	if err != nil {
 		return err

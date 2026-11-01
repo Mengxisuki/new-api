@@ -92,3 +92,8 @@ channel.upstream_update_added_models: "新增模型示例（展示 {{.Shown}}/{{
 channel.upstream_update_removed_models: "删除模型示例（展示 {{.Shown}}/{{.Total}}）：{{.Models}}"
 channel.upstream_update_failed_channels: "失败渠道 ID（展示 {{.Shown}}/{{.Total}}）：{{.Ids}}"
 channel.upstream_update_more_omitted: "（其余 {{.Count}} 个已省略）"
+
+# 统一资源调度
+resource.sources_exhausted: "当前没有可执行请求的已启用资源，请检查账号额度和资源使用顺序。"
+resource.request_failed: "资源请求未能完成（{{.Code}}）。"
+resource.endpoint_unsupported: "此接口暂不支持资源使用优先级。"

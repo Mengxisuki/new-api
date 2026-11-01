@@ -92,3 +92,8 @@ channel.upstream_update_added_models: "新增模型範例（顯示 {{.Shown}}/{{
 channel.upstream_update_removed_models: "刪除模型範例（顯示 {{.Shown}}/{{.Total}}）：{{.Models}}"
 channel.upstream_update_failed_channels: "失敗管道 ID（顯示 {{.Shown}}/{{.Total}}）：{{.Ids}}"
 channel.upstream_update_more_omitted: "（其餘 {{.Count}} 個已省略）"
+
+# 统一资源调度
+resource.sources_exhausted: "目前沒有可執行請求的已啟用資源，請檢查帳號額度與資源使用順序。"
+resource.request_failed: "資源請求未能完成（{{.Code}}）。"
+resource.endpoint_unsupported: "此介面暫不支援資源使用優先順序。"

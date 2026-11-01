@@ -21,7 +21,7 @@ import { ArrowRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 // 服务说明只负责选型与导航，不创建订阅、绑定账号或发起充值。
-// 量贩价格复用实时目录，其余服务先通过现有采购渠道确认。
+// 量贩和挂靠使用真实控制台入口，其余服务沿用既有采购渠道。
 // 周额度是方案示例，不是后台套餐配置，也不是月费报价。
 // 账号挂靠使用用户已有账号，不能暗示随服务赠送厂商账号。
 // 代充值进入用户自己的厂商账户，区别于平台钱包余额。
@@ -59,18 +59,18 @@ export function OakServices() {
       action: t('Discuss a monthly plan'), // 套餐额度需先确认，不能将示例包装为立即购买。
     },
     {
-      id: 'hosting', // 接入范围需咨询确认，不提供尚不存在的绑定入口。
+      id: 'hosting', // 挂靠入口只提供当前已实现的 Codex 账号接入。
       title: t('Account hosting'), // 挂靠仅描述已有账号接入，不作为账号销售入口。
       label: t('For accounts you already own'), // 明确账号由用户自行持有，避免误解为开通附赠。
       // 接入描述止于平台 API，不宣称支持厂商全部客户端功能。
       description: t(
-        'Bring your existing provider account to Oak. Access it through a platform API endpoint without setting up an overseas network connection, and switch between supported providers’ models.'
+        'Connect an existing account, verify a model call, then add it to your resource priority.'
       ),
       // 已有账号的上游限制仍然有效，不承诺通过挂靠扩大额度。
       detail: t(
-        'Ask about supported account types and models before connecting. Usage remains subject to your account’s access and limits.'
+        'Hosted calls are free on Oak. Subscription or wallet fallback follows your resource priority and can incur charges.'
       ),
-      action: t('Ask about account hosting'), // 通过人工渠道确认接入资格，不暗示已有自助授权。
+      action: t('Connect Codex account'), // 登录后回到本人工作区，不开放技术管理后台。
     },
     {
       id: 'top-ups', // 卡密适用范围以兑换说明为准，不接入平台余额兑换。
@@ -125,9 +125,12 @@ export function OakServices() {
             >
               {service.detail}
             </p>
-            {service.id === 'tokens' ? (
-              // 价格由现有目录维护，首页不复制模型报价。
-              <Link className='oak-text-link' to='/pricing'>
+            {service.id === 'tokens' || service.id === 'hosting' ? (
+              // 两个入口已有真实路由；登录和返回位置由认证父路由处理。
+              <Link
+                className='oak-text-link'
+                to={service.id === 'tokens' ? '/pricing' : '/hosting'}
+              >
                 {service.action}
                 {/* 装饰箭头不加入链接可访问名称，朗读保留服务动作。 */}
                 <ArrowRight size={14} aria-hidden='true' />

@@ -62,6 +62,13 @@ export function getLogCsvRow(
 ): string[] {
   const other = parseLogOther(log.other ?? '')
   const usage = isDisplayableLogType(log.type)
+  // CSV 同样保留未知语义，避免下游报表将缺失用量统计为真实零。
+  // 费用仍导出服务端结算金额，不因用量未知而猜测费用。
+  const tokenValue = (value: number) => {
+    if (!usage) return ''
+    if (other?.usage_status === 'unknown') return t('Unknown')
+    return String(value)
+  }
   const cacheWrite =
     (other?.cache_creation_tokens_5m ?? 0) +
       (other?.cache_creation_tokens_1h ?? 0) ||
@@ -82,10 +89,10 @@ export function getLogCsvRow(
     log.model_name ?? '',
     ...(isAdmin ? [channel] : []),
     usage ? t(log.is_stream ? 'Yes' : 'No') : '',
-    usage ? String(log.prompt_tokens ?? 0) : '',
-    usage ? String(log.completion_tokens ?? 0) : '',
-    usage ? String(other?.cache_tokens ?? 0) : '',
-    usage ? String(cacheWrite) : '',
+    tokenValue(log.prompt_tokens ?? 0),
+    tokenValue(log.completion_tokens ?? 0),
+    tokenValue(other?.cache_tokens ?? 0),
+    tokenValue(cacheWrite),
     usage ? formatLogQuota(log.quota ?? 0) : '',
     isTimingLogType(log.type) ? `${log.use_time ?? 0}s` : '',
     log.ip ?? '',

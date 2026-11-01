@@ -70,6 +70,7 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if ctx == nil || other == nil {
 		return
 	}
+	AppendResourceLogInfo(ctx, other)
 	other.SetAdmin("use_channel", ctx.GetStringSlice("use_channel"))
 	if relayInfo != nil {
 		if billingModel := relayInfo.GetBillingModelName(); billingModel != "" && billingModel != relayInfo.OriginModelName {
@@ -373,5 +374,22 @@ func InjectTieredBillingInfo(other *model.LogOther, relayInfo *relaycommon.Relay
 		if snap.EstimatedFixedPrice != nil {
 			other.SetPublic("fixed_price", *snap.EstimatedFixedPrice)
 		}
+	}
+}
+
+// AppendResourceLogInfo 记录用户可见的实际来源、策略版本与发送前跳过原因。
+// 只保存本地账号 ID，远端组、凭据与内部 Key 都不能进入公共日志。
+// 未启用策略的历史日志不增加虚构来源字段。
+// 跳过原因来自冻结尝试序列，不从最终余额反推历史行为。
+// 前端应将未知用量与费用零分开显示：免费不代表没有消耗原厂token。
+func AppendResourceLogInfo(ctx *gin.Context, other *model.LogOther) {
+	if ctx == nil || other == nil || ctx.GetString("oak.resource_source") == "" {
+		return
+	}
+	other.SetPublic("resource_source", ctx.GetString("oak.resource_source"))
+	other.SetPublic("resource_policy_revision", ctx.GetString("oak.resource_revision"))
+	other.SetPublic("resource_skip_reasons", ctx.GetStringSlice("oak.resource_reasons"))
+	if accountID := ctx.GetInt("oak.resource_account"); accountID > 0 { // 只有实际选择挂靠时才附账号引用。
+		other.SetPublic("hosting_account_id", accountID)
 	}
 }

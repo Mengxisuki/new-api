@@ -88,6 +88,11 @@ export function useSidebarData(): SidebarData {
             icon: LayoutDashboard,
           },
           {
+            title: t('Account hosting'),
+            url: '/hosting',
+            icon: User,
+          },
+          {
             title: t('API Keys'),
             url: '/keys',
             icon: Key,

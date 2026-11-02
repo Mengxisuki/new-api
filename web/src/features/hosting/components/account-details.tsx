@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -42,13 +47,13 @@ import {
   getHostingObservation,
   getResetOperations,
   getResetOperation,
-  refreshHostingObservation,
   resumeResetOperation,
   testHostingAccount,
   updateHostingAccount,
 } from '../api'
 import type { HostingAccount, ResetOperation } from '../types'
 import { AccountQuota } from './account-quota'
+import { AccountQuotaActions } from './account-quota-actions'
 
 type Action = 'pause' | 'delete' | 'reset' | 'test' | 'resume'
 // 详情按账号挂载，不为列表中的全部账号并发查询上游。
@@ -89,13 +94,17 @@ type Action = 'pause' | 'delete' | 'reset' | 'test' | 'resume'
 // 详情关闭只改变界面状态，不等价于撤销已经发送的外部操作。
 export function HostingAccountDetails(props: {
   account: HostingAccount
+  // 列表快捷入口只允许预选重置，其他动作仍从详情明确发起。
+  initialAction?: 'reset'
   onClose: () => void
   onReauthorize: () => void
 }) {
   const { t } = useTranslation()
   const client = useQueryClient()
   const verification = useSecureVerification()
-  const [action, setAction] = useState<Action | null>(null)
+  const [action, setAction] = useState<Action | null>(
+    props.initialAction ?? null
+  )
   const [alias, setAlias] = useState(props.account.alias)
   const [model, setModel] = useState('')
   // UUID 在结果明确前保留，HTTP 超时或同页重试绝不生成第二个消费操作。
@@ -128,16 +137,6 @@ export function HostingAccountDetails(props: {
   const unresolved = operations.data?.items.find((item) =>
     ['prepared', 'outcome_unknown'].includes(item.status)
   )
-  // 刷新额度不调用 consume，也不生成操作 UUID。
-  // 成功快照直接写入当前账号的观测查询，保持列表详情共享契约。
-  // 刷新返回部分观测仍保留它的新鲜度，不强行改成 fresh。
-  // 失败继续展示原有历史快照及错误反馈，不把原额度归零。
-  // 再次刷新是独立只读同步，不意味着撤回上次重置。
-  const refresh = useMutation({
-    mutationFn: () => refreshHostingObservation(props.account.id),
-    onSuccess: (value) =>
-      client.setQueryData(['hosting', 'observation', props.account.id], value),
-  })
   // 改名只提交去掉首尾空白的备注，不提交整个账号 DTO。
   // 后端更新成功后重新读取账号列表，避免本地猜测新状态。
   // 空备注在按钮层阻止，服务端仍有最终长度约束。
@@ -264,7 +263,13 @@ export function HostingAccountDetails(props: {
   // 后端仍会在消费时检查额度、所属和并发，UI 门槛不是授权。
   // 窗口有剩余额度不阻止用户主动重置，因为原厂规则由后端决定。
   // 前端不承诺重置会恢复所有窗口，操作结果另行展示。
+  // 快捷入口可能在详情数据到达前打开确认，加载期不能提交。
+  // 旧缓存即使包含两次机会，也必须等正在进行的历史核对结束。
+  // 观察读取失败时不沿用旧的 fresh 状态开放消费。
   const canReset =
+    !observation.isError &&
+    !observation.isFetching &&
+    !operations.isFetching &&
     observation.data?.state === 'fresh' &&
     snapshot?.reset_credit_observation?.state === 'fresh' &&
     (snapshot.reset_credits_available ?? 0) > 0 &&
@@ -301,7 +306,14 @@ export function HostingAccountDetails(props: {
   // 只读结果刷新可用于确认失去响应的历史请求。
   // 敏感恢复始终使用原操作编号，不以新的编号规避冲突。
   // 历史的稳定编号用于支持排障，不应当作用户可修改字段。
-  const busy = mutate.isPending || refresh.isPending || syncReset.isPending
+  // 列表和详情共用刷新状态，查询期间不并发提交消费。
+  // 查询返回后才重新开放模型选择，避免用户误读同一时刻的状态变化。
+  // 这里不取消已发出的原厂请求，关闭确认也不能撤回它。
+  const refreshing =
+    useIsMutating({
+      mutationKey: ['hosting', 'quota-refresh', props.account.id],
+    }) > 0
+  const busy = mutate.isPending || syncReset.isPending || refreshing
   // 确认文案描述动作真实影响，不把平台行为说成原厂行为。
   // 暂停提醒后续来源仍可能付费，防止用户误认为停用整个 Key。
   // 解绑只删除平台持有凭据，不替用户注销原厂订阅。
@@ -380,13 +392,12 @@ export function HostingAccountDetails(props: {
             />
           )}
           {observation.data && <AccountQuota observation={observation.data} />}
-          <Button
-            variant='outline'
+          <AccountQuotaActions
+            accountId={props.account.id}
             disabled={busy}
-            onClick={() => refresh.mutate()}
-          >
-            {t('Refresh quota')}
-          </Button>
+            canReset={canReset}
+            onReset={() => setAction('reset')}
+          />
           {/*
            * 所有账号操作使用明确文字，避免危险操作只靠图标区分。
            * 新消费按钮严格遵守观测与历史的组合门槛。
@@ -396,13 +407,6 @@ export function HostingAccountDetails(props: {
            * 删除使用危险按钮和二次确认，不能由列表普通点击直接执行。
            */}
           <div className='flex flex-wrap gap-2'>
-            <Button
-              variant='outline'
-              disabled={busy || !canReset}
-              onClick={() => setAction('reset')}
-            >
-              {t('Use one reset opportunity')}
-            </Button>
             {unresolved && (
               <Button
                 variant='outline'
@@ -475,13 +479,39 @@ export function HostingAccountDetails(props: {
               {t('Test connection')}
             </Button>
           </Field>
-          {test.data && (
-            <p role='status'>
-              {test.data.outcome === 'passed'
-                ? t('Model call verified')
-                : t('Model call not verified')}{' '}
-              · {test.data.protocol} · {test.data.reason}
-            </p>
+          {test.isPending && (
+            <p role='status'>{t('Waiting for model response…')}</p>
+          )}
+          {test.isError && <p role='alert'>{t('Model call not verified')}</p>}
+          {/* 新测试进行中暂时隐藏旧结果，避免将前一次回复误认为新输出。 */}
+          {/* 请求失败展示独立失败状态，不复用上次 passed 文案。 */}
+          {/* 原厂回复不持久保存到浏览器存储，关闭详情即离开本次结果。 */}
+          {/* 长回复限制展示高度，换行与滚动共同保证窄屏可读。 */}
+          {/* 原厂错误仍由安全 reason 定位，不以错误正文填充模型回复。 */}
+          {test.data && !test.isPending && !test.isError && (
+            <section aria-label={t('Test connection')} className='space-y-3'>
+              <p role='status'>
+                {test.data.outcome === 'passed'
+                  ? t('Model call verified')
+                  : t('Model call not verified')}{' '}
+                · {test.data.model} · {test.data.protocol} · {test.data.reason}
+              </p>
+              {/* 只呈现服务端返回的实际提示词和模型文本，不渲染任意 HTML。 */}
+              {/* 结果绑定返回的模型，切换下拉选项不会篡改历史测试目标。 */}
+              {/* 缺少文本时明确说明，不能用成功文案冒充模型回复。 */}
+              <div>
+                <h3 className='text-sm font-medium'>{t('Sent prompt')}</h3>
+                <pre className='bg-muted max-h-40 overflow-auto rounded p-3 text-sm break-words whitespace-pre-wrap'>
+                  {test.data.prompt}
+                </pre>
+              </div>
+              <div>
+                <h3 className='text-sm font-medium'>{t('Model response')}</h3>
+                <pre className='bg-muted max-h-64 overflow-auto rounded p-3 text-sm break-words whitespace-pre-wrap'>
+                  {test.data.response_text || t('No model response received')}
+                </pre>
+              </div>
+            </section>
           )}
           {/*
            * 历史按服务端返回的持久操作显示，不仅展示本次页面点击。
@@ -531,6 +561,7 @@ export function HostingAccountDetails(props: {
         </div>
       </Dialog>
       {/* 二次确认让出焦点给站点验证弹窗，避免两个模态框争抢焦点。 */}
+      {/* 列表快捷入口也要等详情查询确认可消费，不能只信列表缓存。 */}
       <ConfirmDialog
         open={Boolean(action) && !verification.isActive}
         onOpenChange={(open) => {
@@ -540,10 +571,22 @@ export function HostingAccountDetails(props: {
         desc={action ? confirmations[action] : ''}
         destructive={action === 'delete' || action === 'reset'}
         isLoading={mutate.isPending}
+        disabled={action === 'reset' && !canReset}
         handleConfirm={() => {
           if (action) mutate.mutate(action)
         }}
-      />
+      >
+        {/* 快捷入口等待只读核对；无法确认时解释原因并允许返回详情。 */}
+        {action === 'reset' && !canReset && (
+          <p role='status'>
+            {unresolved
+              ? t(
+                  'The previous reset result is not confirmed. Do not start another reset.'
+                )
+              : t('Quota may be stale or unavailable')}
+          </p>
+        )}
+      </ConfirmDialog>
       <SecureVerificationDialog {...verification.dialogProps} />
     </>
   )

@@ -357,7 +357,7 @@ func relayHostingResource(c *gin.Context, accountID int, modelName string) (stri
 	if err != nil {
 		return "", errors.New("hosting_route_unavailable")
 	}
-	if route.Paused || route.State != "active" {
+	if !model.HostingAccountCanRelay(route.State, route.Paused) {
 		return "account_unavailable", nil
 	}
 	if !slices.Contains(route.Models, modelName) {

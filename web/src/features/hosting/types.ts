@@ -198,7 +198,10 @@ export const resetOperationSchema = z.object({
 // inconclusive 表示未能证实结果，不应显示绿色已验证。
 // 延迟仅在服务端确有记录时可用。
 // 测试时间用于区分历史验证与当前查询时间。
+// 实际发送内容与提取后的纯文本属于测试契约，不能丢弃后只剩状态。
 export const hostingTestSchema = z.object({
+  prompt: z.string(),
+  response_text: z.string(),
   outcome: z.enum(['passed', 'failed', 'inconclusive']),
   model: z.string(),
   protocol: z.string(),

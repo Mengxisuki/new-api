@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { getHostingAccounts, getHostingStatus } from './api'
 import { HostingAccountDetails } from './components/account-details'
 import { AccountQuota } from './components/account-quota'
+import { AccountQuotaActions } from './components/account-quota-actions'
 import { ConnectHostingDialog } from './components/connect-dialog'
 import type { HostingAccount } from './types'
 
@@ -110,6 +111,7 @@ export function HostingWorkspace() {
   // 当前页面是用户视角的资源工作区，不复制管理员渠道配置。
   const [filter, setFilter] = useState('all') // 筛选只影响当前列表，不改变 Key 的来源配置。
   const [selected, setSelected] = useState<number | null>(null) // 以稳定编号查详情，备注可以重复。
+  const [quickReset, setQuickReset] = useState<number | null>(null)
   const [connecting, setConnecting] = useState<HostingAccount | 'new' | null>(
     null
   )
@@ -196,8 +198,34 @@ export function HostingWorkspace() {
       {status(account)}
     </Badge>
   )
+  // 相同账号摘要供桌面行与手机卡片使用，避免两套重置资格判断。
+  // 入口只提示已观测可用的次数，不承担消费授权。
+  // 不用暂停状态推断原厂是否存在重置权益。
+  // 主观测过期时不沿用旧卡数开放快捷重置。
+  // 卡详情失败时即使主额度查询成功也保持入口禁用。
+  // 查询按钮始终可用于恢复未知观测，不要求先完成模型测试。
+  // 预选动作与账号编号同时保存，详情只能打开该账号的确认。
+  // 详情关闭时清除预选动作，之后普通管理入口仍进入常规详情。
+  // 两种布局共用 mutation key，隐藏的另一实例不会产生第二次查询。
+  // 页面筛选不触发原厂请求，重新出现的卡片沿用服务端摘要。
   const quota = (account: HostingAccount) => (
-    <AccountQuota observation={account.observation} />
+    <div className='space-y-1'>
+      <AccountQuota observation={account.observation} />
+      {/* 列表只依据新鲜摘要开放入口，详情会再核对未决历史。 */}
+      <AccountQuotaActions
+        accountId={account.id}
+        canReset={
+          account.observation?.state === 'fresh' &&
+          account.observation.snapshot?.reset_credit_observation?.state ===
+            'fresh' &&
+          (account.observation.snapshot.reset_credits_available ?? 0) > 0
+        }
+        onReset={() => {
+          setQuickReset(account.id)
+          setSelected(account.id)
+        }}
+      />
+    </div>
   )
   return (
     <SectionPageLayout>
@@ -375,8 +403,13 @@ export function HostingWorkspace() {
           <HostingAccountDetails
             key={active.id}
             account={active}
-            onClose={() => setSelected(null)}
+            initialAction={quickReset === active.id ? 'reset' : undefined}
+            onClose={() => {
+              setSelected(null)
+              setQuickReset(null)
+            }}
             onReauthorize={() => {
+              setQuickReset(null)
               setSelected(null) // 重授权只保留一个弹窗，避免焦点被账号详情遮挡。
               setConnecting(active)
             }}

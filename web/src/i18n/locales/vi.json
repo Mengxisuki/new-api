@@ -7858,6 +7858,14 @@
     "Resets in {{duration}}": "Đặt lại sau {{duration}}",
     "{{minutes}}m": "{{minutes}} phút",
     "{{hours}}h {{minutes}}m": "{{hours}} giờ {{minutes}} phút",
-    "{{days}}d {{hours}}h": "{{days}} ngày {{hours}} giờ"
+    "{{days}}d {{hours}}h": "{{days}} ngày {{hours}} giờ",
+    "Fetching account quota…": "Đang lấy hạn mức tài khoản…",
+    "Account added, but quota could not be fetched. Please retry.": "Đã thêm tài khoản nhưng không lấy được hạn mức. Vui lòng thử lại.",
+    "Fetch reset opportunities": "Lấy số lượt đặt lại",
+    "Quota query is incomplete. Please retry.": "Truy vấn hạn mức hoặc số lượt đặt lại chưa hoàn tất. Vui lòng thử lại.",
+    "Waiting for model response…": "Đang chờ phản hồi của mô hình…",
+    "Sent prompt": "Lời nhắc đã gửi",
+    "Model response": "Phản hồi của mô hình",
+    "No model response received": "Chưa nhận được phản hồi văn bản từ mô hình"
   }
 }

@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { HostingAccountDetails } from '../components/account-details'
+import { AccountQuotaActions } from '../components/account-quota-actions'
 import { ConnectHostingDialog } from '../components/connect-dialog'
 import type { HostingAccount } from '../types'
 
@@ -177,7 +178,7 @@ describe('账号授权和原厂重置', () => {
   // 完整链接和纯 code 两种输入都沿用同一会话，不降低服务端校验。
   // code 输入也必须提交原 state，不能把方便粘贴实现成新的无状态换码入口。
   // 两种输入共用后续保存行为，避免仅验证表单接受却漏掉账号添加链路。
-  it.each(['full-url', 'code-only'])(
+  it.each(['full-url', 'code-only', 'quota-failure'])(
     '输入 %s 后等待 ready，保存时不再次发送已消费的回调',
     async (inputMode) => {
       const user = userEvent.setup()
@@ -223,6 +224,12 @@ describe('账号授权和原厂重置', () => {
         }
         if (url === '/api/hosting/authorizations') {
           return { data: { success: true, data: authorization } }
+        }
+        if (url.endsWith('/refresh-observation')) {
+          if (inputMode === 'quota-failure') {
+            throw new Error('Quota unavailable')
+          }
+          return { data: { success: true, data: observation } }
         }
         if (url.endsWith('/callback')) {
           return {
@@ -317,7 +324,27 @@ describe('账号授权和原厂重置', () => {
         ).not.toBeInTheDocument()
       )
       await screen.findByText('Account added')
+      await waitFor(() =>
+        expect(
+          post.mock.calls.filter(([url]) =>
+            url.endsWith('/refresh-observation')
+          )
+        ).toHaveLength(1)
+      )
       expect(post.mock.calls.some(([url]) => url.endsWith('/test'))).toBe(false)
+      if (inputMode === 'quota-failure') {
+        // 查询失败保留成功页，重试不能再消费一次 OAuth 回调。
+        await screen.findByText(
+          'Account added, but quota could not be fetched. Please retry.'
+        )
+        await user.click(screen.getByRole('button', { name: 'Refresh quota' }))
+        expect(
+          post.mock.calls.filter(([url]) => url === '/api/hosting/accounts')
+        ).toHaveLength(1)
+        expect(
+          post.mock.calls.filter(([url]) => url.endsWith('/callback'))
+        ).toHaveLength(1)
+      }
       expect(close).not.toHaveBeenCalled()
       expect(
         screen.getByText(
@@ -401,6 +428,9 @@ describe('账号授权和原厂重置', () => {
         if (saves === 1) throw new Error('Account save failed')
         return { data: { success: true, data: account } }
       }
+      if (url.endsWith('/refresh-observation')) {
+        return { data: { success: true, data: observation } }
+      }
       return { data: { success: true, data: authorization } }
     })
     render(
@@ -432,7 +462,7 @@ describe('账号授权和原厂重置', () => {
     expect(
       post.mock.calls.filter(([url]) => url === '/api/hosting/accounts')
     ).toHaveLength(2)
-    expect(post).toHaveBeenLastCalledWith('/api/hosting/accounts', {
+    expect(post).toHaveBeenCalledWith('/api/hosting/accounts', {
       authorization_id: 'a-flow',
       alias: 'Work',
     })
@@ -643,3 +673,237 @@ describe('账号授权和原厂重置', () => {
     )
   })
 })
+
+// 快捷查询测试真实 API 包装与缓存接线，不替换组件内部状态。
+// 每次只点击一个入口，断言它不会误调用不可撤销的消费接口。
+// 缓存内容是公开观测，不涉及授权或原厂秘密。
+// fixture 包含两次权益，禁用消费的原因明确来自 canReset。
+// 禁用门禁与数量无关，避免测试因零次碰巧通过。
+// 查询成功应替换按账号缓存，不能只刷新按钮附近的局部 state。
+// 真实接口包装仍解析 success/data，返回结构必须符合 Zod 契约。
+// HTTP 调用的精确路径防止把查询接到 consume。
+// 返回后不自动打开重置确认，不因出现正次数替用户做决定。
+// 两类入口复用同一联合查询，目标账号必须保持一致。
+it.each(['Refresh quota', 'Fetch reset opportunities'])(
+  '%s 同步额度和次数，不消费权益',
+  async (label) => {
+    // 用户事件保留真实焦点与禁用语义，不能直接触发组件回调。
+    const user = userEvent.setup()
+    // 在网络边界暂停响应，稳定验证加载期间的禁用状态。
+    // 不使用固定 sleep，执行快慢不会改变可观察的中间阶段。
+    // Promise 只阻塞测试响应，不改变 mutation 的实际生命周期。
+    const gate = Promise.withResolvers<void>()
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => {
+      await gate.promise
+      return { data: { success: true, data: observation } }
+    })
+    // 消费回调只观察是否被误触发，不替换任何查询实现。
+    const reset = vi.fn()
+    render(
+      <QueryClientProvider client={client}>
+        <AccountQuotaActions accountId={1} canReset={false} onReset={reset} />
+      </QueryClientProvider>
+    )
+    expect(
+      screen.getByRole('button', { name: 'Use one reset opportunity' })
+    ).toBeDisabled()
+    // 第一个按钮通过键盘提交，验证共享按钮的标准激活语义。
+    // 第二个按钮沿用指针操作，覆盖两个入口都正确绑定目标。
+    if (label === 'Refresh quota') {
+      await user.tab()
+      await user.keyboard('{Enter}')
+    } else {
+      await user.click(screen.getByRole('button', { name: label }))
+    }
+    // 同一账号的两个查询入口必须同时关闭，避免重复上游观测。
+    // 消费按钮原本就不可用，不能仅依赖它来证明刷新互斥。
+    // 此时缓存尚未写入，禁止先渲染假成功再等待真实响应。
+    expect(screen.getByRole('button', { name: 'Refresh quota' })).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Fetch reset opportunities' })
+    ).toBeDisabled()
+    expect(client.getQueryData(['hosting', 'observation', 1])).toBeUndefined()
+    // 放行响应后用缓存结果作为同步点，避免仅等待动画结束。
+    // 成功值仍由真实 API 解析产生，不手工注入目标缓存。
+    gate.resolve()
+    await waitFor(() =>
+      expect(client.getQueryData(['hosting', 'observation', 1])).toEqual(
+        observation
+      )
+    )
+    // 精确断言一次请求，避免确认链路和子 mutation 各执行一次。
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      '/api/hosting/accounts/1/refresh-observation'
+    )
+    // 两个只读按钮都重新开放，完成一次查询不会把入口锁死。
+    // 消费仍保持不可用，不因本次响应含正次数擅自扩展父级授权。
+    expect(screen.getByRole('button', { name: 'Refresh quota' })).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Fetch reset opportunities' })
+    ).toBeEnabled()
+    expect(reset).not.toHaveBeenCalled()
+  }
+)
+
+// 主额度成功不能代表重置次数可用，部分成功必须可见。
+// 网络失败也保留旧快照，不能把未知次数改成零。
+// 完整性检查依据本次响应，不依据测试缓存的更新时间。
+// 使用真实坏响应路径验证按钮会重新开放供用户重试。
+// 部分成功的主状态仍是 fresh，专门检验卡详情子状态。
+// 网络异常由传输边界抛出，不模拟组件内部错误标志。
+// 原有快照用于证明失败不会被静默转换成空观测。
+// 不设置固定延迟，通过错误文案出现等待异步流程结束。
+// retry=false 应保证一次点击只产生一次请求。
+// 重试按钮重新可用，用户无需删除账号才能恢复查询。
+it.each(['partial', 'network'])(
+  '查询 %s 时保留历史额度并提示失败',
+  async (mode) => {
+    // 用户事件保留真实焦点与禁用语义，不能直接触发组件回调。
+    const user = userEvent.setup()
+    // 同一账号缓存与实际 queryKey 对齐，跨账号缓存不会使按钮可用。
+    client.setQueryData(['hosting', 'observation', 1], observation)
+    // 只在 HTTP 边界控制失败；API 层校验和 mutation 状态照常执行。
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => {
+      if (mode === 'network') throw new Error('Unavailable')
+      return {
+        data: {
+          success: true,
+          data: {
+            ...observation,
+            snapshot: { reset_credit_observation: { state: 'unavailable' } },
+          },
+        },
+      }
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <AccountQuotaActions accountId={1} canReset={false} onReset={vi.fn()} />
+      </QueryClientProvider>
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Fetch reset opportunities' })
+    )
+    expect(
+      await screen.findByText('Quota query is incomplete. Please retry.')
+    ).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Fetch reset opportunities' })
+    ).toBeEnabled()
+    expect(post).toHaveBeenCalledTimes(1)
+    if (mode === 'network') {
+      expect(client.getQueryData(['hosting', 'observation', 1])).toEqual(
+        observation
+      )
+    }
+  }
+)
+
+// 从列表直接进入重置确认也不能跳过历史门禁。
+// 即使额度仍有两次，未决操作仍使确认不可提交。
+// 不请求安全证明，保证禁用不是只改变按钮外观。
+// 原详情确认流程保持同一个消费入口。
+// 使用服务端持久未决状态，不向组件注入其内部 action。
+// initialAction 是列表入口公开契约，允许直接进入业务确认。
+// 观察缓存预置新鲜，排除额度查询失败造成的偶然禁用。
+// 历史里的一条未决操作足以阻止新消费，与其他成功记录无关。
+// 不需要模拟安全证明的成功响应，因为它根本不该被请求。
+// 只断言对外按钮状态及网络请求，不依赖内部 DOM 层级。
+it('快捷重置发现未决历史时禁止确认消费', async () => {
+  client.setQueryData(['hosting', 'observation', 1], observation)
+  client.setQueryData(['hosting', 'models', 1], { models: [] })
+  client.setQueryData(['hosting', 'operations', 1], {
+    items: [{ operation_id: 'pending', status: 'outcome_unknown' }],
+  })
+  const post = vi.spyOn(api, 'post')
+  render(
+    <QueryClientProvider client={client}>
+      <HostingAccountDetails
+        account={account}
+        initialAction='reset'
+        onClose={vi.fn()}
+        onReauthorize={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+  expect(
+    await screen.findByRole('button', { name: /^Continue$/ })
+  ).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+})
+
+// 测试结果保留服务端实际发送内容，不能只显示状态标签。
+// 文本按 React 默认转义，模型返回的 HTML 不会成为可执行 DOM。
+// 用户选模型后仍必须确认；打开详情本身不调用模型。
+// 失败文本明确为空，不能伪造一条 OK 消息。
+// 模型来自账号目录，测试不注入绕过选择器的私有 state。
+// 固定提示词与返回 DTO 一起穿过真实 API 校验。
+// 回复包含换行，断言使用原文避免测试归一化掩盖内容丢失。
+// 回复包含 HTML 标签字面量，元素必须作为文本被查到。
+// 不生成真实账号密钥，唯一网络隔离边界是同源 API。
+// 提交仍携带防自动重放标记，耗额动作不能被认证刷新重复执行。
+// 验证状态失败不影响显示已发送的提示词，用户仍可定位本次请求。
+// 提示词存在不能作为通过依据，成功和未能确认分别由 outcome 判断。
+// 模型编号和协议由返回结果保存，不随用户未来的选项变化。
+// GET 返回分别覆盖观测、目录与历史，避免通用成功对象掩盖坏契约。
+it.each(['passed', 'inconclusive'])(
+  '连接测试 %s 时展示实际提示词和模型返回',
+  async (outcome) => {
+    // 用户事件保留真实焦点与禁用语义，不能直接触发组件回调。
+    const user = userEvent.setup()
+    // 同一账号缓存与实际 queryKey 对齐，跨账号缓存不会使按钮可用。
+    client.setQueryData(['hosting', 'observation', 1], observation)
+    client.setQueryData(['hosting', 'models', 1], { models: [{ id: 'gpt-5' }] })
+    client.setQueryData(['hosting', 'operations', 1], { items: [] })
+    vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      let data: unknown = { items: [] }
+      if (url.endsWith('/models')) data = { models: [{ id: 'gpt-5' }] }
+      if (url.endsWith('/observation')) data = observation
+      return { data: { success: true, data } }
+    })
+    // 没有文本的结果不会使用测试成功文案补齐，必须明确显示未收到。
+    const responseText = outcome === 'passed' ? '<b>OK</b>\nReady' : ''
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          outcome,
+          model: 'gpt-5',
+          protocol: 'openai-responses',
+          prompt: 'Reply only OK.',
+          response_text: responseText,
+          tested_at_ms: 100,
+        },
+      },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <HostingAccountDetails
+          account={account}
+          onClose={vi.fn()}
+          onReauthorize={vi.fn()}
+        />
+      </QueryClientProvider>
+    )
+    await user.click(screen.getByRole('button', { name: /^Open$/ }))
+    await user.click(await screen.findByRole('option', { name: 'gpt-5' }))
+    await user.click(screen.getByRole('button', { name: 'Test connection' }))
+    expect(post).not.toHaveBeenCalled()
+    // 确认是实际耗额的边界；此前选模型和打开弹窗均不发请求。
+    await user.click(screen.getByRole('button', { name: /^Continue$/ }))
+    // 等待服务端返回的提示词出现，确保断言不是请求前的固定说明。
+    expect(await screen.findByText('Reply only OK.')).toBeVisible()
+    // 查询全文的字面量，防止将标签当 HTML 后仅剩 OK。
+    // 空回复走显式占位说明，不能与成功样本共用硬编码正文。
+    expect(
+      screen.getByText(responseText || 'No model response received', {
+        normalizer: (text) => text,
+      })
+    ).toBeVisible()
+    // 精确断言一次请求，避免确认链路和子 mutation 各执行一次。
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      '/api/hosting/accounts/1/test',
+      { model: 'gpt-5' },
+      { singleUseAuthorization: true }
+    )
+  }
+)

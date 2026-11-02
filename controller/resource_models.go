@@ -40,7 +40,7 @@ type resourceModel struct {
 // 二者必须保持区别，不能将空策略误当成允许所有平台模型。
 // 同名模型通过模型 ID 去重，来源优先级仍由实际执行器决定。
 // 一个账号测试通过不能替另一个账号证明身份或调用能力。
-// verified 的合并只用于导出提示，实际调用仍逐账号重新检查 active 状态。
+// verified 仅表示诊断事实；目录和调用统一检查已完成接入且未暂停。
 // 测试记录包含模型及协议，避免测过一个模型后给全部目录盖章。
 // 用户暂停或删除账号会即时影响目录，不能继续使用旧页面缓存授权。
 // 控制面故障返回错误而非空数组，区分不可观测与确定没有模型。
@@ -81,7 +81,7 @@ func resourceModels(c *gin.Context, policy *model.ResourcePolicySnapshot) ([]res
 			if err != nil {
 				return nil, err
 			}
-			if route.Paused || route.State != "active" { // 待验证账号不能伪装成可用调用来源。
+			if !model.HostingAccountCanRelay(route.State, route.Paused) { // 未测试不等于未授权。
 				continue
 			}
 			account, err := model.GetHostingAccount(c.GetInt("id"), source.AccountID)

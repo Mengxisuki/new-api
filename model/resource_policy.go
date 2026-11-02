@@ -50,7 +50,7 @@ var ErrResourcePolicyInvalid = errors.New("invalid resource policy")
 // Key 必须是正数，禁止内部调用意外重新启用全局策略语义。
 // 编辑接口读取原始池标识，执行接口才读取动态账号集合，两种视图不能混用。
 // 池不按远端组名或邮箱查找，所有权只认本地账号表的 user_id。
-// connected、待验证、删除和暂停账号都不是当前可执行候选。
+// connected 与 active 均可执行，诊断测试标记不作为额外的消费资格。
 // 展开不写策略版本，因此版本描述授权顺序，账号状态仍是实时资源状态。
 // 账号池为空时保留非空策略对象，不能被误读为恢复旧钱包合同。
 func GetEffectiveResourcePolicy(userID, tokenID int) (*ResourcePolicySnapshot, error) {
@@ -67,10 +67,15 @@ func GetEffectiveResourcePolicy(userID, tokenID int) (*ResourcePolicySnapshot, e
 			continue
 		}
 		var accounts []HostingAccount
-		if err := DB.Select("id").Where("user_id = ? AND status = ? AND paused = ?", userID, "active", false).Order("id ASC").Find(&accounts).Error; err != nil {
+		if err := DB.Select("id", "status", "paused").Where("user_id = ?", userID).Order("id ASC").Find(&accounts).Error; err != nil {
 			return nil, err
 		}
+		// 账号数量受接入上限约束；读取最小状态投影，复用执行入口的同一规则。
+		// 不在 SQL 中再维护一份状态白名单，避免目录、池和真实调用再次分叉。
 		for _, account := range accounts {
+			if !HostingAccountCanRelay(account.Status, account.Paused) {
+				continue
+			}
 			expanded = append(expanded, ResourceSource{Kind: "hosting", AccountID: account.ID, Enabled: true})
 		}
 	}

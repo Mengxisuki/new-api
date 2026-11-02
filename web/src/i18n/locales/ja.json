@@ -7858,6 +7858,14 @@
     "Resets in {{duration}}": "{{duration}}後にリセット",
     "{{minutes}}m": "{{minutes}}分",
     "{{hours}}h {{minutes}}m": "{{hours}}時間{{minutes}}分",
-    "{{days}}d {{hours}}h": "{{days}}日{{hours}}時間"
+    "{{days}}d {{hours}}h": "{{days}}日{{hours}}時間",
+    "Fetching account quota…": "アカウントの割り当てを取得中…",
+    "Account added, but quota could not be fetched. Please retry.": "アカウントは追加されましたが、割り当てを取得できませんでした。再試行してください。",
+    "Fetch reset opportunities": "リセット可能回数を取得",
+    "Quota query is incomplete. Please retry.": "割り当てまたはリセット回数の取得が不完全です。再試行してください。",
+    "Waiting for model response…": "モデルの応答を待機中…",
+    "Sent prompt": "送信したプロンプト",
+    "Model response": "モデルの応答",
+    "No model response received": "モデルからテキスト応答がありません"
   }
 }

@@ -34,6 +34,15 @@ type HostingAccount struct {
 	UpdatedAt           int64  `json:"updated_at"`
 }
 
+// HostingAccountCanRelay 统一账号池、目录与执行前的生命周期资格判断。
+// connected 已完成远端激活和内部 Key 持久化，可以承接用户主动发起的请求。
+// active 额外表示通过诊断测试；未测试不是授权失败，也不能引发付费回退。
+// 暂停和所有未完成/故障/删除状态一律拒绝，不从状态未知推断可调用。
+// 此规则只判断本地状态，归属、模型、额度和执行层授权仍分别校验。
+func HostingAccountCanRelay(status string, paused bool) bool {
+	return !paused && (status == "connected" || status == "active")
+}
+
 // HostingAuthorization 将短期授权 Stage 绑定到本人及原账号。
 // 授权网址留在执行层；这里只记录继续流程所需的非秘密引用。
 type HostingAuthorization struct {

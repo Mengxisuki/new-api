@@ -7858,6 +7858,14 @@
     "Resets in {{duration}}": "Сброс через {{duration}}",
     "{{minutes}}m": "{{minutes}} мин",
     "{{hours}}h {{minutes}}m": "{{hours}} ч {{minutes}} мин",
-    "{{days}}d {{hours}}h": "{{days}} д {{hours}} ч"
+    "{{days}}d {{hours}}h": "{{days}} д {{hours}} ч",
+    "Fetching account quota…": "Получение квоты…",
+    "Account added, but quota could not be fetched. Please retry.": "Аккаунт добавлен, но квоту получить не удалось. Повторите попытку.",
+    "Fetch reset opportunities": "Запросить число сбросов",
+    "Quota query is incomplete. Please retry.": "Данные квоты или сбросов неполные. Повторите попытку.",
+    "Waiting for model response…": "Ожидание ответа модели…",
+    "Sent prompt": "Отправленный запрос",
+    "Model response": "Ответ модели",
+    "No model response received": "Текстовый ответ модели не получен"
   }
 }

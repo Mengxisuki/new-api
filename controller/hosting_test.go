@@ -241,7 +241,7 @@ func TestTokenResourcePolicyAtomicEditing(t *testing.T) {
 
 // TestTokenResourcePolicyLegacyAndPool 验证旧合同只读投影与动态本人账号池。
 // 默认钱包顺序仅适用于新建，四类旧偏好都不自动迁移。
-// 池展开只取本人 active 且未暂停账号，排序使用稳定账号 ID。
+// 池展开只取本人已完成接入且未暂停账号，未手动测试也可使用。
 // 新接入可用账号影响下一请求，但不会改变持久策略版本。
 // 显式账号策略不自动变池，池和显式账号也不能混合扩大授权。
 // 三库复用同一隔离夹具，不能按方言跳过归属和回滚断言。
@@ -274,18 +274,24 @@ func TestTokenResourcePolicyLegacyAndPool(t *testing.T) {
 		{UserID: user.Id, RemoteRef: "pool-paused", Status: "active", Paused: true},
 		{UserID: user.Id, RemoteRef: "pool-pending", Status: "connected"},
 		{UserID: user.Id + 1, RemoteRef: "pool-foreign", Status: "active"},
+		{UserID: user.Id, RemoteRef: "pool-provisioning", Status: "provisioning"},
+		{UserID: user.Id, RemoteRef: "pool-error", Status: "error"},
+		{UserID: user.Id, RemoteRef: "pool-deleted", Status: "deleted"},
+		{UserID: user.Id, RemoteRef: "pool-deleting", Status: "deleting"},
+		{UserID: user.Id, RemoteRef: "pool-connected-paused", Status: "connected", Paused: true},
+		{UserID: user.Id + 1, RemoteRef: "pool-foreign-connected", Status: "connected"},
 	}
 	require.NoError(t, model.DB.Create(&accounts).Error)
 	_, err := model.SaveResourcePolicy(user.Id, token.Id, 0, []model.ResourceSource{{Kind: "hosting_pool", Enabled: true}})
 	require.NoError(t, err)
 	snapshot, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
 	require.NoError(t, err)
-	require.Equal(t, []model.ResourceSource{{Kind: "hosting", AccountID: accounts[0].ID, Enabled: true}}, snapshot.Sources)
+	require.Equal(t, []model.ResourceSource{{Kind: "hosting", AccountID: accounts[0].ID, Enabled: true}, {Kind: "hosting", AccountID: accounts[2].ID, Enabled: true}}, snapshot.Sources)
 	// 解除暂停只改变动态可用集合，不要求修改每一把 Key。
 	require.NoError(t, model.DB.Model(&accounts[1]).Update("paused", false).Error)
 	next, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
 	require.NoError(t, err)
-	require.Len(t, next.Sources, 2)
+	require.Len(t, next.Sources, 3)
 	require.Equal(t, snapshot.Revision, next.Revision)
 	require.Equal(t, accounts[1].ID, next.Sources[1].AccountID)
 	// 编辑仍返回池标识，不能将请求快照误作为新的显式账号授权。
@@ -575,7 +581,8 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 			if wrongModel {
 				name = "different-model"
 			}
-			data = gin.H{"outcome": "passed", "model": name, "protocol": "openai-responses"}
+			// 执行层的专用文本字段必须保留，完整响应中的额外字段不能泄露。
+			data = gin.H{"outcome": "passed", "model": name, "protocol": "openai-responses", "prompt": "Reply only OK.", "response_text": "OK from test model", "private_metadata": "must-not-leak"}
 		default:
 			t.Errorf("unexpected control path: %s", r.URL.Path)
 			w.WriteHeader(500)
@@ -612,6 +619,16 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 	wrongModel = false // 同一路径仅改变可信结果字段，隔离模型绑定条件。
 	response := request()
 	require.Equal(t, 200, response.Code, response.Body.String())
+	// 浏览器只收到固定 DTO 的文本结果，不能收到未知控制面字段。
+	// 使用生产 DTO 解码，遗漏字段或错误 JSON 名称都将导致明确失败。
+	// 此处只验证投影，模型回复是否合法仍由执行层的协议测试负责。
+	var transcript struct {
+		Data hosting.ProbeResult `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &transcript))
+	assert.Equal(t, "Reply only OK.", transcript.Data.Prompt)
+	assert.Equal(t, "OK from test model", transcript.Data.ResponseText)
+	assert.NotContains(t, response.Body.String(), "must-not-leak")
 	stored, err = model.GetHostingAccount(user.Id, account.ID)
 	require.NoError(t, err)
 	require.Equal(t, "active", stored.Status)

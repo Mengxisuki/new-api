@@ -646,3 +646,33 @@ bun run build
 验证：挂靠前端 5 文件 18 项回归通过，`bunx tsgo -b`、受影响文件 lint、`bun run build` 通过。浏览器使用隔离模拟账号验证真实 `/hosting` 页面：桌面三账号行高约 139px，390px/320px 无页面横向溢出，暗色模式及金额隐藏通过；未触发任何模型或重置请求。开发模式共享 Combobox 的既有 nativeButton 警告仍存在，本轮未改该通用控件。
 
 后端先以真实挂靠 HTTP 入口复现 403，再验证通过；回归覆盖本人/他人隔离、暂停/删除、非法模型与协议、401/429/超时，以及真实 CPA 转换、凭据准备和 SSE 聚合（只替换网络 transport）。`go test ./internal/control -count=1 -timeout=180s`、`go test ./internal/execution/cpa ./internal/subscription -count=1 -timeout=180s`、`go vet ./internal/control`、gpt-load 构建通过。New API 的 `TestHostingCredentialAndProbeBoundaries` 接口契约回归亦通过。没有表结构或数据库写入规则变更。真实线上模型连接仍需发布后由用户测试，离线回归不代表该账号在原厂必然可用。
+
+
+## 17. 额度快捷操作与测试内容
+
+更新时间：2026-11-02 09:47:50 +00:00。本轮本地实现，未提交、推送或部署，未调用真实厂商模型或消费重置权益。
+
+账号创建和重授权保存成功后，由 `connect-dialog.tsx` 发起一次只读额度刷新。保存与查询状态独立：额度失败保留已添加结果，重试只调用观测接口。`account-quota-actions.tsx` 为列表及详情共用的三个快捷按钮；查询额度和查询重置次数复用既有联合观测接口（执行层会查询额度与卡详情），统一更新详情缓存和列表摘要，不另建查询接口或数据表。次数查询失败不能被主额度成功掩盖。列表重置进入原详情确认，必须等新鲜观测和持久历史核对完成，且不存在未决消费，才开放确认及原站点安全验证流程。
+
+测试结果新增 `prompt` 与 `response_text`：执行层发送固定 `Reply only OK.`，仅提取完成响应中的 assistant/output_text；New API 透传给详情并按纯文本展示。无有效文本、坏 JSON 或未完成响应返回 `inconclusive/probe_incompatible`。响应不包含原厂完整正文、推理、工具参数或恢复证明；模型回复不写入账号和审计。双方后端与前端需配套发布。
+
+组件沿用已有 `Button`、`Dialog`、`ConfirmDialog`、`Spinner` 与安全验证流程，新业务组件只组合额度查询和确认入口，不替代公共交互组件。新增八个词条已覆盖七种界面语言。未改数据库、权限契约、计费或依赖声明。
+
+验证命令：
+
+```sh
+# New API
+cd web
+bun run test src/features/hosting --maxWorkers=1
+bunx tsgo -b
+bunx oxlint -c .oxlintrc.json src/features/hosting
+bun run build
+cd ..
+go test ./controller -run TestHostingCredentialAndProbeBoundaries -count=1
+go vet ./service/hosting
+# gpt-load
+go test ./internal/control -run 'TestHosting|TestGroupCredentialProbe|TestClassifyCredentialProbe' -count=1
+go vet ./internal/control
+```
+
+本次前端范围 4 文件 23 项回归通过，包括添加后一次刷新、查询失败保留保存结果、两类查询不消费、部分观测提示、未决历史禁用快捷重置、模型文本及空回复。后端以新增失败用例验证旧实现缺少测试内容，修复后真实 HTTP 和 CPA/SSE 聚合回归通过。类型、lint 和生产构建通过。全挂靠目录早期 26 项通过；最终整目录复跑有 1 项并行修改的 `client-config.test.tsx` 用例失败（查找 discovered-only 选项超时），本轮未修改该模块及其测试，后续以对应任务验证为准。既有 `bun check` 脚本在本机不可用，使用已有 `tsgo` 检查；本机依赖已按锁文件冻结同步，未改变依赖声明及锁文件。构建及模拟网络测试不代表真实账号在原厂可用，仍需发布后由账号持有人验证。

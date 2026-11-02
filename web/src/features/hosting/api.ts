@@ -198,7 +198,7 @@ export async function deleteHostingAccount(id: number, proof: string) {
   requireServerSuccess(response.data)
 }
 
-// 额度查询读取缓存投影，用户主动刷新才访问上游；两个动作绝不耗卡。
+// 额度读取使用缓存投影；添加后的首次查询和手动刷新才访问上游，均不耗卡。
 // 没有观测时合法返回 null，界面显示尚不可用。
 // 已存在但结构异常的快照会解析失败。
 // 查询缓存不等于原厂额度实时刷新。

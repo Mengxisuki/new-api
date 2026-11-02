@@ -7858,6 +7858,14 @@
     "Resets in {{duration}}": "Resets in {{duration}}",
     "{{minutes}}m": "{{minutes}}m",
     "{{hours}}h {{minutes}}m": "{{hours}}h {{minutes}}m",
-    "{{days}}d {{hours}}h": "{{days}}d {{hours}}h"
+    "{{days}}d {{hours}}h": "{{days}}d {{hours}}h",
+    "Fetching account quota…": "Fetching account quota…",
+    "Account added, but quota could not be fetched. Please retry.": "Account added, but quota could not be fetched. Please retry.",
+    "Fetch reset opportunities": "Fetch reset opportunities",
+    "Quota query is incomplete. Please retry.": "Quota query is incomplete. Please retry.",
+    "Waiting for model response…": "Waiting for model response…",
+    "Sent prompt": "Sent prompt",
+    "Model response": "Model response",
+    "No model response received": "No model response received"
   }
 }

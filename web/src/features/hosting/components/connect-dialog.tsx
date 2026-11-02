@@ -50,6 +50,7 @@ import {
   getHostingAuthorization,
   HostingAuthorizationError,
   resumeHostingAuthorization,
+  refreshHostingObservation,
   startHostingAuthorization,
 } from '../api'
 import {
@@ -57,6 +58,7 @@ import {
   type HostingAccount,
   type HostingAuthorization,
 } from '../types'
+import { AccountQuota } from './account-quota'
 
 // 按参考项目展示生成链接、浏览器授权、提交回调三步，不提供授权方式选择。
 // 业务弹窗复用项目 Dialog；仓库没有可复用的 Steps 或 FormDialog。
@@ -210,6 +212,32 @@ export function ConnectHostingDialog(props: {
   // 模型兼容性、可用额度与真实请求成功均不由本 mutation 推导。
   // 成功页关闭不会调用取消接口，避免取消已消费会话的冲突。
   // 导航到 Key 的动作不读取或复制任何明文 API Key。
+  // 添加已经成功后才发起一次只读刷新，额度失败不能反转保存结果。
+  // 独立 mutation 保留失败状态，用户可重试额度而不重新提交授权。
+  // 禁止自动重试，避免把页面重渲染变为持续访问原厂。
+  // 查询目标取创建响应的稳定 ID，不能使用新建前的占位账号编号。
+  // 重授权也返回同一账号 ID，因此可以同步更新该账号的旧快照。
+  // onSuccess 的单次触发依赖保存完成，不依赖 ready 状态轮询次数。
+  // 首次查询尚在进行时允许关闭成功页，已经发出的只读请求仍会结束。
+  // 请求状态与保存状态分离，额度错误不会开放再次提交回调的入口。
+  // 重试按钮仅重做观测，不再次调用 createHostingAccount。
+  // 成功返回部分观测时按原状态展示未知次数，不能改成查询全部成功。
+  // 失败回调也刷新账号摘要，使服务端保存的观测错误能显示到列表。
+  // 列表刷新读取缓存，不会为所有其他账号自动访问原厂。
+  // 详情缓存按账号更新，避免重新打开详情还显示添加前的无额度状态。
+  // 数据来源始终是标准观测 API，不能从授权身份字段推算套餐额度。
+  // 不调用模型接口，首次查询本身不会产生推理耗额。
+  // 不调用重置接口，即使观测发现窗口耗尽也只展示事实。
+  const initialQuota = useMutation({
+    mutationFn: refreshHostingObservation,
+    retry: false,
+    onSuccess: (value, id) => {
+      client.setQueryData(['hosting', 'observation', id], value)
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['hosting', 'accounts'] })
+    },
+  })
   const save = useMutation({
     mutationFn: async () => {
       if (!authorization) throw new Error(t('Start authorization first'))
@@ -218,8 +246,9 @@ export function ConnectHostingDialog(props: {
         form.getValues('alias').trim()
       )
     },
-    onSuccess: () => {
+    onSuccess: (account) => {
       void client.invalidateQueries({ queryKey: ['hosting', 'accounts'] })
+      initialQuota.mutate(account.id)
     },
   })
   // 发出回调后锁定输入，即使 HTTP 响应丢失也不重复发送一次性 code。
@@ -510,6 +539,28 @@ export function ConnectHostingDialog(props: {
                 </p>
               </AlertDescription>
             </Alert>
+            {/* 查询失败不隐藏已保存事实，也不要求用户重新授权。 */}
+            {initialQuota.isPending && (
+              <p role='status'>{t('Fetching account quota…')}</p>
+            )}
+            {initialQuota.isError && (
+              <div role='alert' className='space-y-2'>
+                <p>
+                  {t(
+                    'Account added, but quota could not be fetched. Please retry.'
+                  )}
+                </p>
+                <Button
+                  variant='outline'
+                  onClick={() => initialQuota.mutate(save.data.id)}
+                >
+                  {t('Refresh quota')}
+                </Button>
+              </div>
+            )}
+            {initialQuota.isSuccess && (
+              <AccountQuota observation={initialQuota.data} />
+            )}
             {props.onManageKeys && (
               <Button onClick={props.onManageKeys}>
                 {t('Go to API keys')}

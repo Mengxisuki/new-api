@@ -50,6 +50,18 @@ it('七语言挂靠词条位于实际翻译命名空间', () => {
     expect(resource.translation).toHaveProperty('Generate authorization link') // 首要操作的翻译缺失会直接阻断用户理解。
     // 额度词条同样需要进入真实命名空间，避免紧凑布局继续混杂英文。
     // 所有七语言都检查，不能仅依赖中文回退掩盖漏译。
+    // 自动测试的进度与失败是用户接入结论，不能依赖英文回退。
+    // 使用真实七语言资源检查，防止保存成功提示掩盖未翻译的失败信息。
+    for (const key of [
+      'After authorization, a short model test runs automatically and uses a small amount of provider quota.',
+      'Testing account connection…',
+      'Connection verified. This account can now be used by your API keys.',
+      'Connection test did not pass. This account is excluded from routing. Retry in account details.',
+    ]) {
+      expect(
+        resource.translation[key as keyof typeof resource.translation]
+      ).toBeTruthy()
+    }
     expect(resource.translation).toHaveProperty('Quota used')
     expect(resource.translation).toHaveProperty('Resets in {{duration}}')
     expect(resource.translation).toHaveProperty('Awaiting quota refresh')

@@ -193,19 +193,15 @@ describe('CC Switch model selection', () => {
           screen.queryByRole('option', { name: other })
         ).not.toBeInTheDocument()
       }
-      // 私有 Responses 能力不要求先测试，但只能用于 Codex 客户端。
-      // Claude/Gemini 仍按各自平台协议过滤，不能借挂靠能力扩权。
-      // 混合目录可同时具有平台 Claude 与私有 Responses，分别导出。
-      if (app === 'Codex') {
-        expect(
-          screen.getByRole('option', { name: 'unverified-hosting' })
-        ).toBeVisible()
-      } else {
-        expect(
-          screen.queryByRole('option', { name: 'unverified-hosting' })
-        ).not.toBeInTheDocument()
-      }
-      if (app === 'Claude' || app === 'Codex') {
+      // 从未验证的私有模型在所有客户端下都没有可导出入口。
+      // 混合模型只在其平台协议对应的 Claude 目录中存在。
+      expect(
+        screen.queryByRole('option', { name: 'unverified-hosting' })
+      ).not.toBeInTheDocument()
+      // 混合来源场景防止将 platform=true 这种粗粒度标签误当作全协议授权。
+      // 原始 protocols 的并集仍可用于其他发现用途，导出以平台子集为准。
+      // 平台仅支持 Claude 时，私有 Responses 没有实测就不能借用该标记。
+      if (app === 'Claude') {
         expect(
           screen.getByRole('option', { name: 'mixed-unverified' })
         ).toBeVisible()

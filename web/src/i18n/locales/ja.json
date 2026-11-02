@@ -7866,6 +7866,10 @@
     "Waiting for model response…": "モデルの応答を待機中…",
     "Sent prompt": "送信したプロンプト",
     "Model response": "モデルの応答",
-    "No model response received": "モデルからテキスト応答がありません"
+    "No model response received": "モデルからテキスト応答がありません",
+    "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "認証後、短いモデルテストが自動実行され、提供元の利用枠を少量消費します。",
+    "Testing account connection…": "アカウント接続をテスト中…",
+    "Connection verified. This account can now be used by your API keys.": "接続確認が完了しました。API キーからこのアカウントを利用できます。",
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "接続テストに合格しなかったため、このアカウントは振り分け対象外です。アカウント詳細で再試行してください。"
   }
 }

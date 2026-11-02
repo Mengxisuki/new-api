@@ -100,7 +100,9 @@ export function AccountQuotaActions(props: {
           onClick={() => refresh.mutate('quota')}
         >
           {/* 加载图标只标明当前点击的查询，不改变按钮的可访问名称。 */}
-          {refresh.isPending && refresh.variables === 'quota' && <Spinner />}
+          {refresh.isPending && refresh.variables === 'quota' && (
+            <Spinner aria-hidden='true' />
+          )}
           {t('Refresh quota')}
         </Button>
         <Button
@@ -110,7 +112,9 @@ export function AccountQuotaActions(props: {
           onClick={() => refresh.mutate('resets')}
         >
           {/* 次数和额度共用忙碌门禁，但保留各自正在请求的反馈。 */}
-          {refresh.isPending && refresh.variables === 'resets' && <Spinner />}
+          {refresh.isPending && refresh.variables === 'resets' && (
+            <Spinner aria-hidden='true' />
+          )}
           {t('Fetch reset opportunities')}
         </Button>
         {/* 缺少新鲜次数时保持禁用，不把“未知”当成零或可消费。 */}

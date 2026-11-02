@@ -7866,6 +7866,10 @@
     "Waiting for model response…": "正在等候模型回覆…",
     "Sent prompt": "傳送的提示詞",
     "Model response": "模型回覆",
-    "No model response received": "未收到模型文字回覆"
+    "No model response received": "未收到模型文字回覆",
+    "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "授權完成後會自動執行一次簡短的模型測試，消耗少量原廠額度。",
+    "Testing account connection…": "正在自動測試帳號連線…",
+    "Connection verified. This account can now be used by your API keys.": "連線測試通過，帳號已可依 API Key 的資源順序使用。",
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "連線測試未通過，帳號暫不參與調度。請在帳號詳情中查看並重試。"
   }
 }

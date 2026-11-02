@@ -7866,6 +7866,10 @@
     "Waiting for model response…": "Đang chờ phản hồi của mô hình…",
     "Sent prompt": "Lời nhắc đã gửi",
     "Model response": "Phản hồi của mô hình",
-    "No model response received": "Chưa nhận được phản hồi văn bản từ mô hình"
+    "No model response received": "Chưa nhận được phản hồi văn bản từ mô hình",
+    "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "Sau khi ủy quyền, một bài kiểm tra mô hình ngắn sẽ tự động chạy và dùng một ít hạn mức của nhà cung cấp.",
+    "Testing account connection…": "Đang kiểm tra kết nối tài khoản…",
+    "Connection verified. This account can now be used by your API keys.": "Kết nối đã được xác minh. Các khóa API của bạn hiện có thể sử dụng tài khoản này.",
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Kiểm tra kết nối chưa thành công. Tài khoản này không được đưa vào định tuyến. Hãy thử lại trong phần chi tiết tài khoản."
   }
 }

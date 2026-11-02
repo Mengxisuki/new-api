@@ -317,7 +317,7 @@ type Route struct {
 // 不可用账号保留明确状态供调度跳过；解密或控制面失败不能伪装成额度耗尽。
 // 每次首先重新查本地归属和状态，不相信客户端携带的账号信息。
 // 暂停或生命周期不可用时只返回状态，不读取密钥或访问执行层。
-// connected 已完成接入，可以执行用户请求；active 只额外记录诊断成功。
+// connected 可准备测试所需目录与凭据，真正调度仍要求测试通过的 active。
 // 解密使用当前持久密钥和原账号 AAD，损坏或被交换的密文显式拒绝。
 // 内部 Key 只放在请求内存中，不写入用户响应、审计或访问日志。
 // 模型目录从该账号的受限执行组读取，不用平台公共模型补齐。
@@ -332,7 +332,7 @@ func ResolveRoute(ctx context.Context, userID, accountID int) (*Route, error) {
 		return nil, err
 	}
 	route := &Route{AccountID: account.ID, State: account.Status, Paused: account.Paused}
-	if !model.HostingAccountCanRelay(account.Status, account.Paused) {
+	if account.Paused || (account.Status != "active" && account.Status != "connected") {
 		return route, nil
 	}
 	client, err := NewClient()

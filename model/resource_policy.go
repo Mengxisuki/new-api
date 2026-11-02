@@ -50,7 +50,7 @@ var ErrResourcePolicyInvalid = errors.New("invalid resource policy")
 // Key 必须是正数，禁止内部调用意外重新启用全局策略语义。
 // 编辑接口读取原始池标识，执行接口才读取动态账号集合，两种视图不能混用。
 // 池不按远端组名或邮箱查找，所有权只认本地账号表的 user_id。
-// connected 与 active 均可执行，诊断测试标记不作为额外的消费资格。
+// 只有测试通过的 active 账号可入池，connected 与失败账号保留在管理列表。
 // 展开不写策略版本，因此版本描述授权顺序，账号状态仍是实时资源状态。
 // 账号池为空时保留非空策略对象，不能被误读为恢复旧钱包合同。
 func GetEffectiveResourcePolicy(userID, tokenID int) (*ResourcePolicySnapshot, error) {

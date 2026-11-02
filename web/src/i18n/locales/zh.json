@@ -7866,6 +7866,10 @@
     "Waiting for model response…": "正在等待模型回复…",
     "Sent prompt": "发送的提示词",
     "Model response": "模型回复",
-    "No model response received": "未收到模型文本回复"
+    "No model response received": "未收到模型文本回复",
+    "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "授权完成后会自动执行一次简短的模型测试，消耗少量原厂额度。",
+    "Testing account connection…": "正在自动测试账号连接…",
+    "Connection verified. This account can now be used by your API keys.": "连接测试通过，账号已可按 API Key 的资源顺序使用。",
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "连接测试未通过，账号暂不参与调度。请在账号详情中查看并重试。"
   }
 }

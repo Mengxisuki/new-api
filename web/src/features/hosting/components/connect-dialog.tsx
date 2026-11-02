@@ -48,6 +48,8 @@ import {
   completeHostingAuthorization,
   createHostingAccount,
   getHostingAuthorization,
+  getHostingModels,
+  testHostingAccount,
   HostingAuthorizationError,
   resumeHostingAuthorization,
   refreshHostingObservation,
@@ -238,6 +240,32 @@ export function ConnectHostingDialog(props: {
       void client.invalidateQueries({ queryKey: ['hosting', 'accounts'] })
     },
   })
+  // 保存成功后自动做一次真实测试，只有服务端确认 passed 才进入调度池。
+  // 模型从该账号自己的目录选择，不硬编码型号，也不借平台目录补候选。
+  // 首次连接和重授权共用此链路，旧账号不能沿用重授权前的验证事实。
+  // 空目录、网络失败及未明结果均停在失败提示，不自动换模型重复耗额。
+  // 重试关闭，同时沿用测试 API 的单次发送保护，认证恢复也不重放请求。
+  // 测试与额度查询独立，额度查询失败不能覆盖已经完成的模型测试结果。
+  // mutation 的目标只取保存响应编号，避免新建前的空账号引用串用权限。
+  // 创建 mutation 仅成功触发一次，不由状态轮询或组件渲染重复发起。
+  // 用户仍可在详情显式重试；自动链不消费原厂重置机会或平台余额。
+  // 测试失败不会删除已经绑定的账号，便于查看状态和重新授权。
+  const initialTest = useMutation({
+    mutationFn: async (id: number) => {
+      const catalog = await getHostingModels(id)
+      const model = catalog.models[0]?.id
+      if (!model) throw new Error('No models available')
+      return testHostingAccount(id, model)
+    },
+    retry: false,
+    meta: { errorToast: false }, // 页面保留失败说明，避免只弹一次提示后无法定位。
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['hosting', 'accounts'] })
+      void client.invalidateQueries({
+        queryKey: ['hosting', 'models', 'token'],
+      })
+    },
+  })
   const save = useMutation({
     mutationFn: async () => {
       if (!authorization) throw new Error(t('Start authorization first'))
@@ -249,6 +277,7 @@ export function ConnectHostingDialog(props: {
     onSuccess: (account) => {
       void client.invalidateQueries({ queryKey: ['hosting', 'accounts'] })
       initialQuota.mutate(account.id)
+      initialTest.mutate(account.id)
     },
   })
   // 发出回调后锁定输入，即使 HTTP 响应丢失也不重复发送一次性 code。
@@ -322,7 +351,7 @@ export function ConnectHostingDialog(props: {
   // 重新开始成功取消旧会话后才清除标记，下一会话有独立生命周期。
   // React Query 的 mutate 引用作为依赖，避免依赖整个易变的结果对象。
   // effect 不依赖备注输入内容，用户编辑文字不会触发账号创建。
-  // 模型测试和原厂重置均没有接入此自动链路。
+  // 保存成功会自动测试模型，原厂重置不接入自动链路。
   // 保存成功后的列表失效不改变本会话的单次执行限制。
   const saveAccount = save.mutate
   useEffect(() => {
@@ -396,6 +425,7 @@ export function ConnectHostingDialog(props: {
     start.isPending ||
     complete.isPending ||
     save.isPending ||
+    initialTest.isPending ||
     resume.isPending ||
     cancel.isPending
   const waiting = ['exchanging', 'consuming'].includes(current?.status ?? '')
@@ -493,9 +523,7 @@ export function ConnectHostingDialog(props: {
         title={
           props.account ? t('Reauthorize account') : t('Connect Codex account')
         }
-        description={t(
-          'Please follow the steps below to authorize your OpenAI account:'
-        )}
+        description={`${t('Please follow the steps below to authorize your OpenAI account:')} ${t('After authorization, a short model test runs automatically and uses a small amount of provider quota.')}`}
         contentClassName='sm:max-w-3xl'
         showCloseButton={!busy}
         footer={
@@ -528,15 +556,30 @@ export function ConnectHostingDialog(props: {
       >
         {save.isSuccess ? (
           <FieldGroup>
-            {/* 授权成功不等于模型调用验证成功，不自动执行耗额测试。 */}
+            {/* 保存和测试分别报告，只有真实测试通过才提示可调度。 */}
             <Alert>
               <AlertDescription>
                 <p className='font-medium'>{t('Account added')}</p>
-                <p>
-                  {t(
-                    'Test the connection in account details, then select this account in an API key’s resource settings.'
+                {initialTest.isPending && (
+                  <p role='status'>{t('Testing account connection…')}</p>
+                )}
+                {initialTest.isSuccess &&
+                  initialTest.data.outcome === 'passed' && (
+                    <p role='status'>
+                      {t(
+                        'Connection verified. This account can now be used by your API keys.'
+                      )}
+                    </p>
                   )}
-                </p>
+                {(initialTest.isError ||
+                  (initialTest.isSuccess &&
+                    initialTest.data.outcome !== 'passed')) && (
+                  <p role='alert'>
+                    {t(
+                      'Connection test did not pass. This account is excluded from routing. Retry in account details.'
+                    )}
+                  </p>
+                )}
               </AlertDescription>
             </Alert>
             {/* 查询失败不隐藏已保存事实，也不要求用户重新授权。 */}
@@ -562,7 +605,10 @@ export function ConnectHostingDialog(props: {
               <AccountQuota observation={initialQuota.data} />
             )}
             {props.onManageKeys && (
-              <Button onClick={props.onManageKeys}>
+              <Button
+                disabled={initialTest.isPending}
+                onClick={props.onManageKeys}
+              >
                 {t('Go to API keys')}
               </Button>
             )}

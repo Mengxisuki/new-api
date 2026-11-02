@@ -33,7 +33,7 @@ import { getTokenResourceModels } from '../api'
 // 入口位于具体 Key 的管理菜单，不再在挂靠页重复选择 Key。
 // 父弹窗按 Key 编号重挂载，切换或关闭会清理模型选择和已读秘密。
 // 配置只使用当前 Key 的授权目录，不改变资源顺序。
-// 已授权的 Responses 均可导出，手动诊断不是已连接账号的使用前置。
+// 平台已支持的 Responses 可导出，挂靠发现记录仍须先完成实际验证。
 // TOML 字符串用 JSON 转义表达，防止模型名或站点地址破坏配置结构。
 // 配置子组件只接收非敏感 Key 编号。
 // 明文密钥保存在当前 mutation 结果内，不放进 query 持久缓存。
@@ -43,7 +43,7 @@ import { getTokenResourceModels } from '../api'
 // 读取失败由应用统一错误链反馈，不返回空字符串冒充成功。
 // 模型查询不使用全站定价目录，定价可见性不等于调用权限。
 // 服务端可能返回不同协议，导出必须核对 Responses 支持事实。
-// verified 只表示诊断事实；实际协议权限由服务器的 Key 目录给出。
+// verified 缺省不为挂靠授权，平台能力则由独立协议字段表达。
 // 模型确实通过验证仍可能受到额度与状态限制，配置不是可用性承诺。
 // 生成配置不发出模型请求，不在浏览或复制时消耗原厂额度。
 // 环境变量命名固定为产品提供的客户端约定，不改变站点会话。
@@ -72,14 +72,14 @@ export function HostingClientConfig(props: { tokenId: number }) {
         : `sk-${result.data.key}`
     },
   })
-  const available =
+  const verified =
     models.data?.models.filter(
       (item) =>
         item.platform_protocols?.includes('responses') ||
-        item.protocols?.includes('responses')
+        (item.verified === true && item.protocols?.includes('responses'))
     ) ?? []
-  // 每次目录变化重新确认协议权限，策略改变不会沿用旧可导出状态。
-  const supported = available.some((item) => item.id === selected)
+  // 每次目录变化重新确认选中模型仍已验证，策略改变不会沿用旧可导出状态。
+  const supported = verified.some((item) => item.id === selected)
   // 地址与秘密分开呈现，用户可以安全复制基础入口。
   // 基础地址后缀与 Codex Responses 协议相匹配。
   // 配置中的提供方名称是客户端本地标识，不是原厂账户类型。
@@ -106,10 +106,10 @@ export function HostingClientConfig(props: { tokenId: number }) {
   // 用户已有模型限制继续生效，不因挂靠免费而开放全部型号。
   // 配置所需环境变量值应在客户端进程环境内设置。
   // 这里只生成文档片段，不操作用户电脑上的 shell 或配置文件。
-  // 没有明确授权的协议不生成配置，测试标记不扩展协议权限。
+  // 没有真实验证过的协议不生成占位配置。
   // 后续支持更多客户端需增加各自验证和协议目录，而非复制此模板。
   const address = `${window.location.origin}/v1`
-  // 配置只描述当前 Key 已授权的调用协议和选中模型。
+  // 配置只描述已验证的调用协议和选中模型。
   // 模型 ID 与 URL 使用字符串转义，避免换行破坏 TOML 结构。
   // 环境变量值由用户在客户端环境中配置，不嵌入此文本。
   // 生产入口固定使用公开 /v1 路径，不包含管理 API 或私人账号 ID。
@@ -144,7 +144,7 @@ export function HostingClientConfig(props: { tokenId: number }) {
         </FieldLabel>
         <Combobox
           id='hosting-config-model'
-          options={available.map((model) => ({
+          options={verified.map((model) => ({
             label: model.id,
             value: model.id,
           }))}
@@ -157,13 +157,13 @@ export function HostingClientConfig(props: { tokenId: number }) {
           disabled={models.isPending}
         />
       </Field>
-      {models.isSuccess && !available.length && (
+      {models.isSuccess && !verified.length && (
         <p role='status'>
           {t('No authorized model supports this application for this API key.')}
         </p>
       )}
       {/*
-       * 只在当前目录仍允许该协议时展示导出结果。
+       * 只在当前目录仍验证通过时展示导出结果。
        * 策略变化移除模型后旧选择不再产生可复制配置。
        * 配置说明与密钥读取分开，用户不必为查看参数而暴露秘密。
        * 没有使用内联复制实现，继续沿用项目的共享状态反馈。

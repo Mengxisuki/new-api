@@ -7866,6 +7866,10 @@
     "Waiting for model response…": "En attente de la réponse du modèle…",
     "Sent prompt": "Prompt envoyé",
     "Model response": "Réponse du modèle",
-    "No model response received": "Aucune réponse textuelle reçue"
+    "No model response received": "Aucune réponse textuelle reçue",
+    "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "Après l’autorisation, un bref test du modèle est exécuté automatiquement et utilise une petite partie du quota du fournisseur.",
+    "Testing account connection…": "Test de la connexion du compte…",
+    "Connection verified. This account can now be used by your API keys.": "Connexion vérifiée. Ce compte peut désormais être utilisé par vos clés API.",
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Le test de connexion n’a pas abouti. Ce compte est exclu du routage. Réessayez dans les détails du compte."
   }
 }

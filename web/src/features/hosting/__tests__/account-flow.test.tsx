@@ -173,25 +173,40 @@ describe('账号授权和原厂重置', () => {
   // 保存请求只携带授权引用与备注，不能包含原厂 code。
   // 检查回调请求数量是一次性授权契约，不是组件私有调用细节。
   // 添加成功保留下一步引导，只有用户点击完成才关闭弹窗。
-  // 模型实际可调用尚未在此证明，后续账号测试仍是独立动作。
+  // 账号保存后自动执行模型测试，只有通过结果才显示可调度。
   // 测试内容中的 private-code 是固定无效字符串，不来自真实登录。
   // 完整链接和纯 code 两种输入都沿用同一会话，不降低服务端校验。
   // code 输入也必须提交原 state，不能把方便粘贴实现成新的无状态换码入口。
   // 两种输入共用后续保存行为，避免仅验证表单接受却漏掉账号添加链路。
-  it.each(['full-url', 'code-only', 'quota-failure'])(
+  it.each([
+    'full-url',
+    'code-only',
+    'quota-failure',
+    'test-failure',
+    'test-inconclusive',
+    'reauthorize',
+    'test-network-failure',
+    'no-models',
+  ])(
     '输入 %s 后等待 ready，保存时不再次发送已消费的回调',
     async (inputMode) => {
       const user = userEvent.setup()
       const close = vi.fn()
       // 导航回调属于父页面职责，这里只观察成功页是否提供明确入口。
       // 前往API Key不会改变这次授权结果，也不要求再次读取原厂身份。
-      // Done和导航按钮分别可用，用户可以先返回详情做模型测试。
-      // 成功提示明确先测试连接，避免身份授权被误解成模型兼容性已验收。
-      // 额外检查没有test请求，保护自动添加流程不产生用户未点击的模型耗额。
+      // Done 和导航按钮分别可用，连接完成后自动测试，不要求用户去详情触发。
+      // 只有自动测试明确通过才展示可调度提示，保存成功本身不代表可用。
+      // 自动测试仅执行一次，读取额度和授权轮询都不得重复触发推理。
       // 等待成功文本后再检查关闭回调，避免异步渲染时序带来误判。
       // 点击Done才退出，用户有机会阅读接入后的两步引导。
       // 公共回调spy不会驱动组件内部状态，因此仍测试真实交互路径。
       const manageKeys = vi.fn()
+      // 延迟首个测试回包，验证用户看到进度且不能提前关闭或导航。
+      // 使用 ES2022 Promise 构造器，不能再引入 ES2024 withResolvers。
+      let finishTest!: () => void
+      const pendingTest = new Promise<void>((resolve) => {
+        finishTest = resolve
+      })
       // 服务端状态是可控网络边界，允许精确安排交换前后的响应。
       // GET 安全验证方法与 GET 授权状态使用不同响应，避免泛化 mock 误通过。
       // POST 证明、创建授权、提交回调和保存账号各有真实 DTO。
@@ -199,15 +214,28 @@ describe('账号授权和原厂重置', () => {
       // 对 HTTP 响应保留 success/data 信封，让入口校验真正参与测试。
       // 固定响应使测试结果不依赖原厂网络或账户额度。
       let status = authorization.status
-      vi.spyOn(api, 'get').mockImplementation(async (url) => ({
-        data: {
-          success: true,
-          data:
-            url === '/api/verify/methods'
-              ? requirements
-              : { ...authorization, authorization_url: undefined, status },
-        },
-      }))
+      vi.spyOn(api, 'get').mockImplementation(async (url) => {
+        if (url.endsWith('/models')) {
+          return {
+            data: {
+              success: true,
+              data: {
+                models:
+                  inputMode === 'no-models' ? [] : [{ id: 'codex-auto-test' }],
+              },
+            },
+          }
+        }
+        return {
+          data: {
+            success: true,
+            data:
+              url === '/api/verify/methods'
+                ? requirements
+                : { ...authorization, authorization_url: undefined, status },
+          },
+        }
+      })
       const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
         if (url === '/api/verify') {
           return {
@@ -224,6 +252,33 @@ describe('账号授权和原厂重置', () => {
         }
         if (url === '/api/hosting/authorizations') {
           return { data: { success: true, data: authorization } }
+        }
+        if (url.endsWith('/test')) {
+          if (inputMode === 'full-url') {
+            await pendingTest
+          }
+          if (inputMode === 'test-network-failure') {
+            throw new Error('Test unavailable')
+          }
+          return {
+            data: {
+              success: true,
+              data: {
+                outcome:
+                  (
+                    {
+                      'test-failure': 'failed',
+                      'test-inconclusive': 'inconclusive',
+                    } as Record<string, string>
+                  )[inputMode] ?? 'passed',
+                model: 'codex-auto-test',
+                protocol: 'openai-responses',
+                prompt: 'Reply only OK.',
+                response_text: 'OK',
+                tested_at_ms: Date.now(),
+              },
+            },
+          }
         }
         if (url.endsWith('/refresh-observation')) {
           if (inputMode === 'quota-failure') {
@@ -243,7 +298,11 @@ describe('账号授权和原厂重置', () => {
       })
       render(
         <QueryClientProvider client={client}>
-          <ConnectHostingDialog onClose={close} onManageKeys={manageKeys} />
+          <ConnectHostingDialog
+            account={inputMode === 'reauthorize' ? account : undefined}
+            onClose={close}
+            onManageKeys={manageKeys}
+          />
         </QueryClientProvider>
       )
       // 备注先校验，再取得授权链接；首次展示不直接索要回调。
@@ -255,6 +314,7 @@ describe('账号授权和原厂重置', () => {
       // 复制动作走真实CopyButton，剪贴板属于userEvent提供的浏览器边界。
       // 复制成功的内容必须是官方授权链接，不能混入回调地址。
       // 链接打开和复制是两种用户选择，不互相触发额外网络操作。
+      await user.clear(screen.getByLabelText('Account alias'))
       await user.click(
         screen.getByRole('button', { name: 'Generate authorization link' })
       )
@@ -324,6 +384,15 @@ describe('账号授权和原厂重置', () => {
         ).not.toBeInTheDocument()
       )
       await screen.findByText('Account added')
+      if (inputMode === 'full-url') {
+        await screen.findByText('Testing account connection…')
+        expect(screen.getByRole('button', { name: 'Done' })).toBeDisabled()
+        expect(
+          screen.getByRole('button', { name: 'Go to API keys' })
+        ).toBeDisabled()
+        expect(close).not.toHaveBeenCalled()
+        finishTest()
+      }
       await waitFor(() =>
         expect(
           post.mock.calls.filter(([url]) =>
@@ -331,7 +400,29 @@ describe('账号授权和原厂重置', () => {
           )
         ).toHaveLength(1)
       )
-      expect(post.mock.calls.some(([url]) => url.endsWith('/test'))).toBe(false)
+      // 空目录和网络故障都不能伪装通过，不自动挑第二个模型继续耗额。
+      // 失败保留已添加账号供排障，但必须明确其仍在调度池外。
+      const testFailed = [
+        'test-failure',
+        'test-inconclusive',
+        'test-network-failure',
+        'no-models',
+      ].includes(inputMode)
+      await screen.findByText(
+        testFailed
+          ? 'Connection test did not pass. This account is excluded from routing. Retry in account details.'
+          : 'Connection verified. This account can now be used by your API keys.'
+      )
+      expect(
+        post.mock.calls.filter(([url]) => url.endsWith('/test'))
+      ).toHaveLength(inputMode === 'no-models' ? 0 : 1)
+      if (inputMode !== 'no-models') {
+        expect(post).toHaveBeenCalledWith(
+          '/api/hosting/accounts/1/test',
+          { model: 'codex-auto-test' },
+          expect.objectContaining({ singleUseAuthorization: true })
+        )
+      }
       if (inputMode === 'quota-failure') {
         // 查询失败保留成功页，重试不能再消费一次 OAuth 回调。
         await screen.findByText(
@@ -346,11 +437,6 @@ describe('账号授权和原厂重置', () => {
         ).toHaveLength(1)
       }
       expect(close).not.toHaveBeenCalled()
-      expect(
-        screen.getByText(
-          'Test the connection in account details, then select this account in an API key’s resource settings.'
-        )
-      ).toBeVisible()
       await user.click(screen.getByRole('button', { name: 'Go to API keys' }))
       expect(manageKeys).toHaveBeenCalledOnce()
       await user.click(screen.getByRole('button', { name: 'Done' }))
@@ -365,6 +451,13 @@ describe('账号授权和原厂重置', () => {
         callback_url:
           'http://localhost:1455/auth/callback?state=example&code=private-code',
       })
+      if (inputMode === 'reauthorize') {
+        expect(post).toHaveBeenCalledWith(
+          '/api/hosting/authorizations',
+          { provider: 'codex', account_id: account.id },
+          expect.anything()
+        )
+      }
       expect(post).toHaveBeenCalledWith('/api/hosting/accounts', {
         authorization_id: 'a-flow',
         alias: 'Work',
@@ -692,7 +785,12 @@ it.each(['Refresh quota', 'Fetch reset opportunities'])(
     // 在网络边界暂停响应，稳定验证加载期间的禁用状态。
     // 不使用固定 sleep，执行快慢不会改变可观察的中间阶段。
     // Promise 只阻塞测试响应，不改变 mutation 的实际生命周期。
-    const gate = Promise.withResolvers<void>()
+    // 使用 ES2022 支持的 Promise 构造器，不为测试抬高浏览器目标版本。
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const gate = { promise: pending, resolve: release }
     const post = vi.spyOn(api, 'post').mockImplementation(async () => {
       await gate.promise
       return { data: { success: true, data: observation } }

@@ -241,7 +241,7 @@ func TestTokenResourcePolicyAtomicEditing(t *testing.T) {
 
 // TestTokenResourcePolicyLegacyAndPool 验证旧合同只读投影与动态本人账号池。
 // 默认钱包顺序仅适用于新建，四类旧偏好都不自动迁移。
-// 池展开只取本人已完成接入且未暂停账号，未手动测试也可使用。
+// 池展开只取本人测试通过且未暂停账号，授权成功不等于可用。
 // 新接入可用账号影响下一请求，但不会改变持久策略版本。
 // 显式账号策略不自动变池，池和显式账号也不能混合扩大授权。
 // 三库复用同一隔离夹具，不能按方言跳过归属和回滚断言。
@@ -286,12 +286,12 @@ func TestTokenResourcePolicyLegacyAndPool(t *testing.T) {
 	require.NoError(t, err)
 	snapshot, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
 	require.NoError(t, err)
-	require.Equal(t, []model.ResourceSource{{Kind: "hosting", AccountID: accounts[0].ID, Enabled: true}, {Kind: "hosting", AccountID: accounts[2].ID, Enabled: true}}, snapshot.Sources)
+	require.Equal(t, []model.ResourceSource{{Kind: "hosting", AccountID: accounts[0].ID, Enabled: true}}, snapshot.Sources)
 	// 解除暂停只改变动态可用集合，不要求修改每一把 Key。
 	require.NoError(t, model.DB.Model(&accounts[1]).Update("paused", false).Error)
 	next, err := model.GetEffectiveResourcePolicy(user.Id, token.Id)
 	require.NoError(t, err)
-	require.Len(t, next.Sources, 3)
+	require.Len(t, next.Sources, 2)
 	require.Equal(t, snapshot.Revision, next.Revision)
 	require.Equal(t, accounts[1].ID, next.Sources[1].AccountID)
 	// 编辑仍返回池标识，不能将请求快照误作为新的显式账号授权。
@@ -568,6 +568,9 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 	account := model.HostingAccount{UserID: user.Id, Provider: "codex", Alias: "测试账号", RemoteRef: ref, Status: "connected", EncryptedKey: encrypted}
 	require.NoError(t, model.DB.Create(&account).Error)
 	wrongModel := true
+	outcome := "passed"
+	rejectTest := false
+	pauseDuringTest := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, hosting.OwnerRef(user.Id), hostingTestControlAuthorization(t, r))
 		var data any
@@ -577,12 +580,20 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/observation"):
 			data = gin.H{"state": "unavailable", "snapshot": nil}
 		case strings.HasSuffix(r.URL.Path, "/test"):
+			// 模拟模型返回前用户暂停，成功回包不能覆盖已确认的暂停操作。
+			if pauseDuringTest {
+				require.NoError(t, model.DB.Model(&account).Update("paused", true).Error)
+			}
+			if rejectTest {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			name := "codex-test"
 			if wrongModel {
 				name = "different-model"
 			}
 			// 执行层的专用文本字段必须保留，完整响应中的额外字段不能泄露。
-			data = gin.H{"outcome": "passed", "model": name, "protocol": "openai-responses", "prompt": "Reply only OK.", "response_text": "OK from test model", "private_metadata": "must-not-leak"}
+			data = gin.H{"outcome": outcome, "model": name, "protocol": "openai-responses", "prompt": "Reply only OK.", "response_text": "OK from test model", "private_metadata": "must-not-leak"}
 		default:
 			t.Errorf("unexpected control path: %s", r.URL.Path)
 			w.WriteHeader(500)
@@ -635,6 +646,44 @@ func TestHostingCredentialAndProbeBoundaries(t *testing.T) {
 	require.Equal(t, "codex-test", stored.VerifiedModel)
 	require.Equal(t, "openai-responses", stored.VerifiedProtocol)
 	require.Positive(t, stored.VerifiedAt) // 只有成功探测才能产生可展示的验证事实。
+	// 历史通过不能掩盖最新测试失败；失败或结果未明都应立即退出调度。
+	// 先恢复成功再逐个验证失败，防止测试因初始状态本来不可用而假通过。
+	// 控制面错误与业务失败同样不能保留旧 active 和模型验证事实。
+	// 不删除账号或凭据，用户仍能在详情重试并查看失败。
+	// failed 是明确业务拒绝，inconclusive 是拿到结果但无法确认模型成功。
+	// transport 模拟控制面没有可用响应；mismatch 模拟响应属于别的模型。
+	// 四类结果走不同返回码，但准入状态必须保持同一个安全结论。
+	// 循环不等待下一秒，顺带覆盖 MySQL 对同值 UPDATE 返回零修改行。
+	// 每轮通过真实 HTTP 重新激活，不直接写 active 来绕过验证入口。
+	for _, failure := range []string{"failed", "inconclusive", "transport", "mismatch"} {
+		outcome, rejectTest, wrongModel = "passed", false, false
+		require.Equal(t, http.StatusOK, request().Code)
+		outcome = failure
+		rejectTest = failure == "transport"
+		wrongModel = failure == "mismatch"
+		if wrongModel {
+			outcome = "passed"
+		}
+		result := request()
+		if rejectTest || wrongModel {
+			require.Equal(t, http.StatusBadGateway, result.Code)
+		} else {
+			require.Equal(t, http.StatusOK, result.Code)
+		}
+		stored, err = model.GetHostingAccount(user.Id, account.ID)
+		require.NoError(t, err)
+		require.False(t, model.HostingAccountCanRelay(stored.Status, stored.Paused), failure)
+		require.Zero(t, stored.VerifiedAt)
+		require.Empty(t, stored.VerifiedModel)
+	}
+	// 条件更新未激活也必须返回冲突，不能仅凭原厂 passed 向界面报告可用。
+	// 此处通过真实数据库写入暂停，再检查调度门槛仍保持关闭。
+	outcome, rejectTest, wrongModel, pauseDuringTest = "passed", false, false, true
+	require.Equal(t, http.StatusConflict, request().Code)
+	stored, err = model.GetHostingAccount(user.Id, account.ID)
+	require.NoError(t, err)
+	require.True(t, stored.Paused)
+	require.False(t, model.HostingAccountCanRelay(stored.Status, stored.Paused))
 	// 一份晚到的 unknown 观察不能回退成功消费，防止用户再次扣原厂次数。
 	operation := model.HostingResetOperation{ID: uuid.NewString(), UserID: user.Id, AccountID: account.ID, Status: "prepared"}
 	require.NoError(t, model.DB.Create(&operation).Error)

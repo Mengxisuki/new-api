@@ -185,7 +185,7 @@ export function CCSwitchDialog(props: Props) {
   // 每个客户端固定映射实际请求协议，不按模型名称猜测能力。
   // 平台 verified=false 仅表示未做挂靠实测，不妨碍已配置协议的正常导出。
   // platform_protocols 是当前 Key 启用的平台来源能力，不是全站能力。
-  // 私有账号已完成授权即可导出 Responses 配置，实测标记只作诊断。
+  // 仅挂靠来源仍须模型实测通过，且只能导出已验收的 Responses 配置。
   // 总协议并集中的 Claude 不能替另一来源的 Responses 验证背书。
   // 没有平台协议字段的旧响应保持保守，不猜测钱包来源可用能力。
   // 旧目录缓存可能同时存在，但 unified 分支不能读取它。
@@ -199,7 +199,9 @@ export function CCSwitchDialog(props: Props) {
         .filter(
           (model) =>
             model.platform_protocols?.includes(protocol) ||
-            (app === 'codex' && model.protocols?.includes('responses'))
+            (app === 'codex' &&
+              model.verified === true &&
+              model.protocols?.includes('responses'))
         )
         .map((model) => ({ value: model.id, label: model.id }))
     }

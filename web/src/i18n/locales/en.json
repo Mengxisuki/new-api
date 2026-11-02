@@ -7866,6 +7866,10 @@
     "Waiting for model response…": "Waiting for model response…",
     "Sent prompt": "Sent prompt",
     "Model response": "Model response",
-    "No model response received": "No model response received"
+    "No model response received": "No model response received",
+    "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "After authorization, a short model test runs automatically and uses a small amount of provider quota.",
+    "Testing account connection…": "Testing account connection…",
+    "Connection verified. This account can now be used by your API keys.": "Connection verified. This account can now be used by your API keys.",
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Connection test did not pass. This account is excluded from routing. Retry in account details."
   }
 }

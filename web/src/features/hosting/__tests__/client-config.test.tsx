@@ -75,7 +75,7 @@ const travelKey = {
 // 同型号同时出现在两个目录中，专门揭露切 Key 后沿用旧选择的漏洞。
 // 如果第二个 Key 只有完全不同的模型，supported=false 会掩盖秘密残留。
 // 各自专属型号同时验证模型目录来自当前 Key，未混入另一目录。
-// Responses 协议权限决定可导出能力，verified 只记录诊断事实。
+// verified=true 与 Responses 支持共同构成可导出的必要条件。
 // 非 Responses 模型即使验证过，也不能生成 Codex 配置。
 // 模型名称是虚构目录数据，不声称任何原厂真实型号当前可用。
 // 协议数组采用服务端 DTO 的 responses 值，不使用请求路径代替。
@@ -183,11 +183,11 @@ function renderConfigurationDialogs() {
 // 复制出的文本比检查组件源码更直接地保护用户收到的配置和密钥。
 // 每次打开下拉均使用可访问角色，避免依赖样式类或内部节点层级。
 describe('具体 API Key 的客户端配置', () => {
-  // 已授权的 Responses 模型无需先手动测试，诊断不是使用前置门槛。
-  // 非 Responses 模型仍不可导出，也不能在浏览目录时自动读取秘密。
-  // 目录由服务端根据具体 Key 的来源和模型限制计算，前端不扩权限。
-  // 本场景只隔离网络，不 mock 真实表单、查询或复制控件。
-  it('已连接未测试的 Responses 模型可导出，但不自动读取明文', async () => {
+  // 三个目录记录分别隔离缺省验证、失败验证和协议不匹配三种原因。
+  // 若只提供空数组，组件漏掉过滤判断也能通过测试，无法保护合同。
+  // 查询成功后仍无合格模型，与网络失败的错误状态是不同产品含义。
+  // 本场景不触发实际模型测试，浏览配置不应产生原厂费用。
+  it('未验证或没有 Responses 协议的模型不能导出配置或读取明文', async () => {
     const user = userEvent.setup()
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
       if (url === '/api/status') return { data: { success: true, data: {} } }
@@ -197,16 +197,16 @@ describe('具体 API Key 的客户端配置', () => {
             success: true,
             data: {
               models: [
-                // 未测试仍可使用已授权协议，不伪造成功测试记录。
+                // 缺省验证状态不能被当作成功，协议匹配也不能绕过验证。
                 { id: 'discovered-only', protocols: ['responses'] },
                 {
                   id: 'failed-verification',
                   verified: false,
                   protocols: ['responses'],
                 },
-                // 其他协议的测试记录不能代替 Responses 协议权限。
+                // 其他协议的成功记录不能替代 Codex Responses 的实测记录。
                 { id: 'chat-only', verified: true, protocols: ['chat'] },
-                // 混合目录包含已授权的私有 Responses 和平台 Claude。
+                // 同名模型的其他平台协议不能为未实测挂靠 Responses 背书。
                 {
                   id: 'split-protocol',
                   verified: false,
@@ -230,26 +230,29 @@ describe('具体 API Key 的客户端配置', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Configure work key' })
     )
-    const model = await screen.findByRole('combobox', { name: 'Codex model' })
-    await waitFor(() => expect(model).toBeEnabled())
-    // 打开真实选项检查协议交集，不能靠隐藏整个控件假装没有前置门槛。
-    // 未选择前不自动取密，选择后配置只引用环境变量。
-    await user.click(model)
+    // 成功读取空的可导出目录需要明确说明，不用无反馈的空选择器代替。
+    // 地址复制属于公开信息，不应因为尚未验证模型而一并隐藏。
     expect(
-      await screen.findByRole('option', { name: 'discovered-only' })
+      await screen.findByText(
+        'No authorized model supports this application for this API key.'
+      )
     ).toBeVisible()
     expect(
-      screen.getByRole('option', { name: 'failed-verification' })
+      screen.getByRole('button', { name: 'Copy API address' })
     ).toBeVisible()
-    expect(screen.getByRole('option', { name: 'split-protocol' })).toBeVisible()
     expect(
-      screen.queryByRole('option', { name: 'chat-only' })
+      screen.queryByText('Copy Codex configuration')
     ).not.toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: 'discovered-only' }))
-    expect(screen.getByText('Copy Codex configuration')).toBeVisible()
     expect(
-      screen.getByRole('button', { name: 'Reveal selected API key' })
-    ).toBeVisible()
+      screen.queryByRole('button', { name: 'Reveal selected API key' })
+    ).not.toBeInTheDocument()
+    // 打开真实下拉验证过滤结果，而非只检查没有默认选中模型。
+    // 即使服务端返回了型号，也只有满足两项协议合同的选项才能出现。
+    await user.click(screen.getByRole('combobox', { name: 'Codex model' }))
+    // 可访问选项为空说明不可导出的型号没有在交互层残留。
+    // 目录中有数据却不可用时仍保留可读解释，不冒充加载中。
+    // 此处不限制下拉空状态的具体文案，让共享控件保持独立演进。
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
     expect(get.mock.calls.map(([url]) => url).sort()).toEqual([
       '/api/hosting/tokens/11/models',
       '/api/status',

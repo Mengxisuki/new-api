@@ -525,7 +525,7 @@ func RefreshHostingObservation(c *gin.Context) {
 // 暂停账号必须先显式恢复，测试按钮不能成为隐式恢复入口。
 // 测试请求不接受客户端指定协议，以免界面成功与实际支持能力不一致。
 // 模型名称只作为执行层目录中的标识，不参与 URL 或管理地址拼接。
-// 已通过其他模型的历史验证不代表当前测试失败时应该转用钱包。
+// 最新测试开始即撤销历史验证，失败与未知结果不能继续参与调度。
 func TestHostingAccount(c *gin.Context) {
 	account, ok := hostingAccount(c)
 	if !ok {
@@ -545,29 +545,67 @@ func TestHostingAccount(c *gin.Context) {
 		hostingError(c, &hosting.Error{Status: 400, Code: "hosting_invalid_request"})
 		return
 	}
+	// 重测开始先撤销旧验证，任何控制面失败或未明结果都不能继续沿用 active。
+	// 不删除凭据、不暂停远端资源，失败账号仍可从详情重新测试或重新授权。
+	// 只接受可管理的生命周期，创建中与删除中不能借测试入口重新启用。
+	// 条件更新失败必须停止发送，不能在本地门禁未关闭时消耗原厂额度。
+	// verified 字段同时清理，客户端配置不能继续把旧模型当成已验证。
+	// 所有权已由 hostingAccount 校验，此更新继续绑定该主键和启停状态。
+	pending := model.DB.Model(account).Where("paused = ? AND status IN ? AND encrypted_key = ?", false, []string{"connected", "active", "error"}, account.EncryptedKey).Updates(map[string]any{
+		"status": "connected", "verified_at": 0, "verified_model": "", "verified_protocol": "", "last_error": "", "updated_at": time.Now().Unix(),
+	})
+	if pending.Error != nil {
+		hostingError(c, pending.Error)
+		return
+	}
+	if pending.RowsAffected == 0 {
+		// MySQL 默认只计实际修改行；同秒重试 connected 账号可能是合法的零改动。
+		// 重新确认门禁已关闭且凭据未变，不把删除、暂停或重授权当成空更新成功。
+		var ready int64
+		if err := model.DB.Model(&model.HostingAccount{}).Where("id = ? AND paused = ? AND status = ? AND encrypted_key = ? AND verified_at = ? AND verified_model = ? AND verified_protocol = ?", account.ID, false, "connected", account.EncryptedKey, 0, "", "").Count(&ready).Error; err != nil {
+			hostingError(c, err)
+			return
+		}
+		if ready != 1 {
+			hostingError(c, model.ErrHostingConflict)
+			return
+		}
+	}
+	// 配置不可用也视为本次验证未完成；不恢复此前的可调用状态。
 	client, err := hosting.NewClient()
 	if err != nil {
 		hostingError(c, err)
 		return
 	}
+	// 测试始终指向此账号的私有引用，不进入平台渠道和钱包计费链。
+	// 不持有数据库事务跨越网络调用，账号仍可在测试期间被暂停或解绑。
 	var result hosting.ProbeResult
 	if err := client.Call(c.Request.Context(), http.MethodPost, "/accounts/"+url.PathEscape(account.RemoteRef)+"/test", account.UserID, gin.H{"model": input.Model, "protocol": "openai-responses"}, "", &result); err != nil {
 		hostingError(c, err)
 		return
 	}
+	// 模型和协议共同绑定验证事实，不能只信任 passed 字符串。
 	if result.Model != input.Model || result.Protocol != "openai-responses" {
 		hostingError(c, &hosting.Error{Status: 502, Code: "hosting_invalid_probe_result"})
 		return
 	}
+	// 授权凭据更新后，旧凭据上的调用成功不能替代新凭据验证。
 	if result.Outcome == "passed" {
-		if err := model.DB.Model(account).Where("paused = ? AND status NOT IN ?", false, []string{"deleting", "deleted"}).Updates(map[string]any{"status": "active", "verified_at": time.Now().Unix(), "verified_model": input.Model, "verified_protocol": result.Protocol, "last_error": "", "updated_at": time.Now().Unix()}).Error; err != nil {
-			hostingError(c, err)
+		// 原厂通过后仍需确认本地激活成功，不能向已暂停或重授权的账号报告可用。
+		activated := model.DB.Model(account).Where("paused = ? AND status = ? AND encrypted_key = ?", false, "connected", account.EncryptedKey).Updates(map[string]any{"status": "active", "verified_at": time.Now().Unix(), "verified_model": input.Model, "verified_protocol": result.Protocol, "last_error": "", "updated_at": time.Now().Unix()})
+		if activated.Error != nil {
+			hostingError(c, activated.Error)
+			return
+		}
+		if activated.RowsAffected != 1 {
+			hostingError(c, model.ErrHostingConflict)
 			return
 		}
 	} else if result.Outcome != "failed" && result.Outcome != "inconclusive" {
 		hostingError(c, &hosting.Error{Status: 502, Code: "hosting_invalid_probe_result"})
 		return
 	}
+	// HTTP 成功仅代表取得明确测试结果，前端仍须按 outcome 区分是否入池。
 	common.ApiSuccess(c, result)
 }
 

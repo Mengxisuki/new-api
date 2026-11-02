@@ -7858,6 +7858,14 @@
     "Resets in {{duration}}": "{{duration}}後重置",
     "{{minutes}}m": "{{minutes}}分鐘",
     "{{hours}}h {{minutes}}m": "{{hours}}小時{{minutes}}分",
-    "{{days}}d {{hours}}h": "{{days}}天{{hours}}小時"
+    "{{days}}d {{hours}}h": "{{days}}天{{hours}}小時",
+    "Fetching account quota…": "正在取得帳號額度…",
+    "Account added, but quota could not be fetched. Please retry.": "帳號已新增，但額度取得失敗，請重試。",
+    "Fetch reset opportunities": "查詢重設次數",
+    "Quota query is incomplete. Please retry.": "額度或重設次數查詢未完成，請重試。",
+    "Waiting for model response…": "正在等候模型回覆…",
+    "Sent prompt": "傳送的提示詞",
+    "Model response": "模型回覆",
+    "No model response received": "未收到模型文字回覆"
   }
 }

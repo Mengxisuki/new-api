@@ -28,11 +28,14 @@
 
 Token 新增普通 TEXT 列 `model_mapping`，启动自动迁移；旧记录为空。管理 API 复用本人 Token 的创建/更新接口，输入为 JSON 对象的字符串。更新省略或 JSON null 保留，显式 `""` 清空；`status_only` 不修改映射。原事务、缓存失效栅栏及审计字段变更列表继续复用，不新建缓存。
 
+Redis 令牌哈希必须保存 `ModelMapping`（包括空字符串）。旧哈希缺少该字段时回源读取数据库，并在原哈希中仅补齐缺失映射，保留实时额度；编辑栅栏期间禁止补缺。测试必须包含栅栏到期后的热缓存请求，仅验证保存后立即请求不足以覆盖该路径。相关本地修复与验证见[排障记录](../memory/lessons.md#2026-11-03-162813-0000--key-映射必须覆盖-redis-热缓存字段表)。
+
 ## 模块导航
 
 - `common/token_model_mapping.go`：保存/运行共用的规则校验及链解析。
 - `middleware/token_model_mapping.go`：认证后、资源与渠道选择前，改写真实正文或 URL；统一正文替换也供原插件改名复用。
 - `controller/token.go`、`model/token.go`：配置保存及省略/清空语义。
+- `model/token_cache.go`：热缓存映射字段、旧哈希补缺与编辑栅栏。
 - `relay/responses_websocket.go`：归一化事件正文与 typed DTO 同步。
 - `model/log*.go`、`model/task.go`、`service/task_billing.go`：同步和异步日志追踪。
 - `web/src/features/keys/`、`web/src/features/usage-logs/`：Key 表单与日志展示。

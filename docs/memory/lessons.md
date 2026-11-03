@@ -180,3 +180,15 @@
 承接 2026-11-03 14:57:22 条目：用户再次在新任务映射 Kimi 时遇到相同拒绝，并授权先实现新任务范围。GPT-Load 已对 OpenCode Go/Zen 的 GLM、Kimi、DeepSeek 模型族接入现有 Responses→Chat→Responses 转换；两类 New API 映射都在其前完成，无需在 New API 再写一份参数规则。
 
 验证包括真实 HTTP 网关、普通/流式响应、函数工具和结果回传、日志实际协议、原生 GPT 保留、旧状态/不支持工具拒绝、探测协议，以及相关包回归、定向 race 和构建。未部署或调用真实厂商，不能据此承诺所有客户端可无损切换；GPT 推理选项采用目标默认行为，托管/自定义语法工具仍需原生目标。具体模块与命令见 [GPT-Load 说明](../../../gpt-load/README_CN.md#oak新任务的跨模型兼容)。
+
+## 2026-11-03 16:28:13 +00:00 — Key 映射必须覆盖 Redis 热缓存字段表
+
+现象：用户已经保存 GPT→Kimi 的 Key 映射，请求仍调用原 GPT 模型且没有 Key 映射日志。SSH 只读核对发现数据库有规则，审计证明请求前已经保存，而 Redis 令牌哈希缺少 `ModelMapping`。这与此前 GPT-Load 的跨协议参数兼容失败是不同问题。
+
+根因：`model/token_cache.go` 的 Lua 初始化显式列举字段，新增 Token 属性时遗漏了映射；`RedisHGetObj` 对缺失字符串返回空值。编辑后的栅栏期从数据库读取，因此仅测试保存后立即请求会掩盖热缓存失效。
+
+本地修复：初始化写入映射；同一次 HGETALL 要求映射字段存在，缺字段按既有流程回源。旧哈希仅用 HSETNX 补缺，保留实时额度和已有规则；显式空值合法，变更栅栏优先于补缺。无需清空 Redis 或迁移数据库，必须发布 New API 才会在线上生效。
+
+验证：新增回归在修复前复现规则丢失，修复后 `go test ./common ./model ./middleware ./controller -count=1` 全部通过。`model/token_auto_groups_cache_test.go` 覆盖热缓存往返、旧哈希回源补缺、额度不覆盖、编辑/清空在栅栏到期后的热缓存一致性；既有额度与映射请求链路测试一并通过。Redis 使用 miniredis，未向真实厂商重放任务，未修改生产配置、提交或部署。
+
+构建边界：实际 New API 主程序 `go build -o <临时目录>/new-api .` 通过。全目录 `go build ./...` 被本机未纳入 Git 的 `dujiao-next-main` 目录触发的 `gomonkey` 依赖校验缺失阻断；未为此修改依赖或删除该目录。

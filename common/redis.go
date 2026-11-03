@@ -158,7 +158,9 @@ func RedisHSetObj(key string, obj any, expiration time.Duration) error {
 	return nil
 }
 
-func RedisHGetObj(key string, obj any) error {
+// RedisHGetObj 读取哈希并解码；requiredFields 可要求字段存在，空值仍合法。
+// 未指定必需字段的调用方保持原行为，缓存格式升级由各调用方声明。
+func RedisHGetObj(key string, obj any, requiredFields ...string) error {
 	if DebugEnabled {
 		SysLog(LogText("Redis HGETALL: key=%s", key))
 	}
@@ -171,6 +173,14 @@ func RedisHGetObj(key string, obj any) error {
 
 	if len(result) == 0 {
 		return fmt.Errorf("key %s not found in Redis", key)
+	}
+
+	// 校验同一份哈希快照，避免把旧格式缺字段误判为业务上的零值。
+	// 在解码前返回错误，调用方可按既有缓存未命中流程回源。
+	for _, field := range requiredFields {
+		if _, exists := result[field]; !exists {
+			return fmt.Errorf("Redis hash missing required field %s", field)
+		}
 	}
 
 	// Handle both pointer and non-pointer values

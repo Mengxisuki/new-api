@@ -1883,3 +1883,25 @@ func TestMidjourneySubscriptionPreConsumeRefundAtomicPeriod(t *testing.T) {
 	require.NoError(t, model.DB.First(&sub, 7201).Error)
 	assert.EqualValues(t, 50, sub.AmountUsed) // 老记录沿用原解释，不因新增字段丢失退款。
 }
+
+// 后台结算没有提交时的 Gin 上下文，也不能读取后来已修改的 Key 配置。
+// 经真实任务属性序列化再恢复日志，确保映射不是只保存在请求内存。
+// 目标平台模型与渠道上游模型分开断言，避免退款日志混淆价格身份。
+// 从 InitTask 开始构造，保护 RelayInfo 到 Properties 的实际接线。
+// 清空内存属性再 Scan，避免断言没有经过序列化的原对象。
+// 此测试不读当前 Token，证明后台路径依赖提交快照。
+// 其他公开日志键仍由 taskBillingOther 统一生成。
+func TestTaskBillingRetainsTokenModelMapping(t *testing.T) {
+	task := model.InitTask("mapping-test", &relaycommon.RelayInfo{
+		OriginModelName: "target", TokenRequestedModel: "alias", TokenTargetModel: "target",
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "vendor"},
+	})
+	value, err := task.Properties.Value()
+	require.NoError(t, err)
+	task.Properties = model.Properties{}
+	require.NoError(t, task.Properties.Scan(value))
+	other := taskBillingOther(task).Snapshot()
+	require.Equal(t, map[string]string{"requested_model": "alias", "target_model": "target"}, other["token_model_mapping"])
+	require.Equal(t, "vendor", other["upstream_model_name"])
+	require.Equal(t, "target", task.Properties.OriginModelName)
+}

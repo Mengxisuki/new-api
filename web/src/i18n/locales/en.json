@@ -8010,6 +8010,11 @@
     "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.",
     "Invoice information": "Invoice information",
     "Invoice remarks": "Invoice remarks",
-    "No invoice requested": "No invoice requested"
+    "No invoice requested": "No invoice requested",
+    "API Key Model Mapping": "API Key Model Mapping",
+    "Target Model": "Target Model",
+    "Billing Model": "Billing Model",
+    "Invalid API key model mapping": "Invalid API key model mapping",
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward."
   }
 }

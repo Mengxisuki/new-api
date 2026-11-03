@@ -86,3 +86,12 @@ const (
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
 )
+
+// Key 映射与渠道映射使用独立键，避免覆盖平台计费模型。
+// 配置只来自已认证令牌，源名和目标名仅供请求内追踪及公开日志。
+// 配置键不写入消费日志，日志只保留发生过的源名和目标名。
+const (
+	ContextKeyTokenModelMapping   ContextKey = "token_model_mapping_config"
+	ContextKeyTokenRequestedModel ContextKey = "token_requested_model"
+	ContextKeyTokenTargetModel    ContextKey = "token_target_model"
+)

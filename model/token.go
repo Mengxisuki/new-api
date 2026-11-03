@@ -23,6 +23,7 @@ type Token struct {
 	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
 	UnlimitedQuota     bool           `json:"unlimited_quota"`
 	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
+	ModelMapping       string         `json:"model_mapping" gorm:"type:text"` // Key 目标模型决定路由和计费。
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
@@ -331,7 +332,7 @@ func (token *Token) Update() (err error) {
 // 查询条件额外限定本人用户，不更新密钥、历史使用量或其他内部字段。
 func (token *Token) updateFields(tx *gorm.DB) error {
 	return tx.Model(token).Where("user_id = ?", token.UserId).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
+		"model_limits_enabled", "model_limits", "model_mapping", "allow_ips", "group", "cross_group_retry", "auto_groups",
 		"allow_user_quota_query").Updates(token).Error
 }
 

@@ -218,7 +218,16 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		s.stateMu.Unlock()
 		s.clientWriteMu.Unlock()
 	}()
+	// 事件正文经协议校验后才会进入映射；解析失败保留原错误路径。
+	// 请求对象属于本次事件，不能修改会话原始请求来保存映射状态。
+	// 原始连接的模型锁约束在 runCall 中继续按目标模型执行。
+	// 映射目标变更不允许复用一个已经锁定到其他模型的上游连接。
 	request := s.request.Clone(s.ctx)
+	// 每个事件先归一为 HTTP 正文，再由当前 Key 的认证和映射处理中间件读取。
+	// 这样限流、权限、连接锁定与 typed DTO 使用同一个目标模型。
+	if parseErr == nil {
+		message = create.Body
+	}
 	request.Body = io.NopCloser(bytes.NewReader(message))
 	request.ContentLength = int64(len(message))
 	request.Header.Set("Content-Type", "application/json")
@@ -226,8 +235,18 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		if parseErr != nil {
 			return newResponsesWSInvalidRequestError(parseErr)
 		}
-		c.Request.Body = io.NopCloser(bytes.NewReader(create.Body))
-		c.Request.ContentLength = int64(len(create.Body))
+		// 映射后的正文和 DTO 必须一起更新，不能把原 A 再写回已经映射的请求。
+		if target := common.GetContextKeyString(c, appconstant.ContextKeyTokenTargetModel); target != "" {
+			create.Request.Model = target
+			storage, err := common.GetBodyStorage(c)
+			if err != nil {
+				return newResponsesWSInvalidRequestError(err)
+			}
+			create.Body, err = storage.Bytes()
+			if err != nil {
+				return newResponsesWSInvalidRequestError(err)
+			}
+		}
 		callErr := s.runCall(c, state, create)
 		upstreamURLs = common.UpstreamAddresses(c)
 		return callErr

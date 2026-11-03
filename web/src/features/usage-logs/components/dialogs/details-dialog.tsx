@@ -1197,6 +1197,37 @@ export function DetailsDialog(props: DetailsDialogProps) {
           />
         )}
 
+        {/*
+          此区域读取持久日志快照，不查询 Key 的当前配置。
+          原规则被删除后，历史请求仍须解释当时使用了哪个目标。
+          目标名称与计费字段分别展示，保留平台统计身份。
+          上游响应声称的模型由 Response Model 区域表达，不用于重新定价。
+          旧日志缺少快照时整个区域隐藏，不能凭当前配置推测历史映射。
+          普通用户可查看自己配置的别名，不需要管理员渠道权限。
+          JSX 文本输出沿用 React 转义，不将模型名解释为 HTML。
+          桌面预览和移动端详情共用此处，保持两端字段一致。
+        */}
+        {/* Key 改写与响应观测独立展示，不能被上游返回 model 字段隐藏。 */}
+        {/* 计费目标保留平台名称，渠道上游名称仍由下方原有区域说明。 */}
+        {other?.token_model_mapping && (
+          <DetailSection label={t('API Key Model Mapping')}>
+            <DetailRow
+              label={t('Request Model')}
+              value={other.token_model_mapping.requested_model}
+              mono
+            />
+            <DetailRow
+              label={t('Target Model')}
+              value={other.token_model_mapping.target_model}
+              mono
+            />
+            <DetailRow
+              label={t('Billing Model')}
+              value={props.log.model_name}
+              mono
+            />
+          </DetailSection>
+        )}
         {other?.response_model && (
           <DetailSection label={t('Response Model')}>
             <ResponseModelDetails observation={other.response_model} />

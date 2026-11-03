@@ -40,6 +40,8 @@ type tokenRequest struct {
 	AutoGroups     tokenAutoGroupsInput `json:"auto_groups"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
+	// 省略时保留已有配置，显式空字符串清除映射；状态更新不修改此字段。
+	ModelMapping *string `json:"model_mapping"`
 }
 
 type tokenResponse struct {
@@ -323,6 +325,17 @@ func AddToken(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 校验先于生成密钥和写库，失败不产生半成品令牌。
+	// 服务端解析不依赖前端 Zod，直接 API 请求也必须满足同一合同。
+	// 源名允许自定义，因此不以当前上架列表限制保存。
+	// 统一校验新建与编辑输入，不把原始映射正文写入审计。
+	if request.ModelMapping != nil {
+		if _, err := common.ParseTokenModelMapping(*request.ModelMapping); err != nil {
+			common.ApiErrorT(c, "Invalid API key model mapping")
+			return
+		}
+		request.Token.ModelMapping = *request.ModelMapping
+	}
 	token := request.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
@@ -378,6 +391,7 @@ func AddToken(c *gin.Context) {
 		UnlimitedQuota:     token.UnlimitedQuota,
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
+		ModelMapping:       token.ModelMapping,
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
@@ -440,6 +454,14 @@ func UpdateToken(c *gin.Context) {
 		hostingError(c, model.ErrResourcePolicyInvalid)
 		return
 	}
+	// 统一校验新建与编辑输入，不把原始映射正文写入审计。
+	if request.ModelMapping != nil {
+		if _, err := common.ParseTokenModelMapping(*request.ModelMapping); err != nil {
+			common.ApiErrorT(c, "Invalid API key model mapping")
+			return
+		}
+		request.Token.ModelMapping = *request.ModelMapping
+	}
 	token := request.Token
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
@@ -466,6 +488,9 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	params["name"] = cleanToken.Name
+	// 保留更新前快照用于字段级审计，不记录明文 Key 或完整配置。
+	// 模型映射的变更与名称、来源策略在同一事务内生效。
+	// 归属查询失败时不会进入此更新阶段。
 	previous := *cleanToken
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
@@ -496,6 +521,10 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.UnlimitedQuota = token.UnlimitedQuota
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
+		// 旧客户端不传新字段时，保留原规则并复用原事务及缓存失效。
+		if request.ModelMapping != nil {
+			cleanToken.ModelMapping = *request.ModelMapping
+		}
 		cleanToken.AllowIps = token.AllowIps
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
@@ -536,6 +565,7 @@ func UpdateToken(c *gin.Context) {
 			{"unlimited_quota", previous.UnlimitedQuota != cleanToken.UnlimitedQuota},
 			{"model_limits_enabled", previous.ModelLimitsEnabled != cleanToken.ModelLimitsEnabled},
 			{"model_limits", previous.ModelLimits != cleanToken.ModelLimits},
+			{"model_mapping", previous.ModelMapping != cleanToken.ModelMapping},
 			{"allow_ips", (previous.AllowIps == nil) != (cleanToken.AllowIps == nil) ||
 				(previous.AllowIps != nil && cleanToken.AllowIps != nil && *previous.AllowIps != *cleanToken.AllowIps)},
 			{"allow_user_quota_query", previous.AllowUserQuotaQuery != cleanToken.AllowUserQuotaQuery},

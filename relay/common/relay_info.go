@@ -98,7 +98,12 @@ type RelayInfo struct {
 	UsePrice               bool
 	RelayMode              int
 	OriginModelName        string
-	ResponseModel          *ResponseModel
+	// Key 的源名和目标名独立保存，OriginModelName 保留平台计费含义。
+	// 异步任务冻结此快照，后续修改 Key 不应改写历史日志。
+	// 请求源名仅用于追踪，不参与价格查询或渠道候选匹配。
+	TokenRequestedModel string
+	TokenTargetModel    string
+	ResponseModel       *ResponseModel
 
 	// BillingModelName is the pricing identity for this request. It is kept
 	// separate from OriginModelName and UpstreamModelName so virtual pricing
@@ -625,7 +630,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
 		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
-		OriginModelName: originModelName,
+		OriginModelName:     originModelName,
+		TokenRequestedModel: common.GetContextKeyString(c, constant.ContextKeyTokenRequestedModel),
+		TokenTargetModel:    common.GetContextKeyString(c, constant.ContextKeyTokenTargetModel),
 
 		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),

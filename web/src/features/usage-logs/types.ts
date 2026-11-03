@@ -203,6 +203,8 @@ export interface LogOtherData {
   cache_creation_ratio_5m?: number
   cache_creation_ratio_1h?: number
   cache_creation_ratio_12h?: number
+  // Key 映射是计费前的路由改写，独立于渠道上游别名和响应观测。
+  token_model_mapping?: { requested_model: string; target_model: string }
   is_model_mapped?: boolean
   upstream_model_name?: string
   // Diagnostic only. Whether the names disagree is derived in the UI via

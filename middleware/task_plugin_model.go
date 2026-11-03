@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"io"
 	"mime"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 
 // rewriteTaskPluginJSONModel patches the top-level JSON "model" field and
 // replaces BodyStorage. Non-JSON bodies are left untouched.
+// 正文替换与 Key 映射共用缓存清理，后续插件读取不得沿用旧模型。
 func rewriteTaskPluginJSONModel(c *gin.Context, spelling string) error {
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil {
@@ -32,14 +32,5 @@ func rewriteTaskPluginJSONModel(c *gin.Context, spelling string) error {
 	if err != nil {
 		return err
 	}
-	newStorage, err := common.CreateBodyStorage(patched)
-	if err != nil {
-		return err
-	}
-	_ = storage.Close()
-	c.Set(common.KeyBodyStorage, newStorage)
-	c.Set(common.KeyRequestBody, nil)
-	c.Request.Body = io.NopCloser(newStorage)
-	c.Request.ContentLength = int64(len(patched))
-	return nil
+	return replaceRequestBody(c, patched)
 }

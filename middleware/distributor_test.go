@@ -3,6 +3,8 @@ package middleware
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -361,4 +363,127 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 	require.Nil(t, SetupContextForSelectedChannel(c, channel, "task-model"))
 	assert.Equal(t, "alpha", c.GetString("task_plugin_key"), "the first bound candidate executes regardless of the earlier pin")
 	assert.Equal(t, "alpha", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
+}
+
+// 协议边界验证真实正文重写，包括二进制文件和重复字段拒绝。
+// 此处只隔离认证上下文，分发及计费由 controller 的真实请求测试覆盖。
+// 每个用例同时验证存储正文与读取模型，防止只改路由字符串而未改上游输入。
+// JSON 场景包含显式零值和 false，防止重编码时丢失客户端语义。
+// 嵌套 metadata.model 不是路由字段，不能被递归替换。
+// 表单模型可能百分号编码，先解码再匹配才能与客户端意图一致。
+// 图片上传使用包含非 UTF-8 字节的文件，不能按字符串编码后回传。
+// multipart 的 prompt 字段用于验证非模型文本没有丢失。
+// 文件名和字段名分别进入真实 ParseMultipartForm 路径。
+// 正文替换后的读回必须来自 BodyStorage，不能仅靠 Request.Body。
+// 未命中模型保持原始字节，既有签名或扩展字段不应被无故重排。
+// 固定工具接口不把正文 model 当作价格身份，保留原请求。
+// Gemini 的动作后缀保持 generateContent，不应成为映射名称的一部分。
+// Realtime 使用 GET 查询参数，不能落入 POST 正文解析逻辑。
+// Realtime 断言使用 Gin 的公开 Query API，保护查询缓存一致性。
+// 重复 JSON 模型拒绝转发，不能由不同解码器选中不同值。
+// 重复表单模型同样拒绝，不把 JSON 防护错误地视为覆盖全部协议。
+// 所有用例走真实 Gin 中间件链，Abort 必须阻止后续处理。
+// 错误状态通过 HTTP 记录器检查，不直接调用私有解析器。
+// 没有配置模型价格，因为此层不负责收费计算。
+// 权限与钱包结算由控制器层的行为测试单独覆盖。
+// 请求体清理中间件在每个用例结束后释放存储。
+// 测试文件流显式关闭，避免上传用例泄漏文件描述符。
+// 临时 MultipartForm 文件也显式清理，不能污染后续用例。
+// 每个用例使用新引擎，避免 Gin 路由参数或缓存跨请求复用。
+// 模型规则包含中间节点，测试最终目标而不是只替换一次。
+// 原始正文由测试构造，预期目标只在断言中给出。
+// 测试没有复制映射算法，所有改写均调用生产中间件。
+// 不同协议共享相同配置，防止 UI 保存后只在某一种协议生效。
+// 不为协议自动补默认模型，省略模型的解释仍属于既有处理器。
+// 测试请求不会触发真实上游，便于安全检查二进制与坏输入。
+// 请求中其他字段无需符合完整模型 API，因为此层仅验证模型提取合同。
+// 错误路径未断言具体语言，允许服务端根据请求语言翻译错误。
+// 成功路径验证精确目标拼写，不能被大小写规范化改变。
+// 组配置不在测试上下文中设置，模型改写不应暗中补分组。
+// 路由路径去掉查询部分后注册，但实际请求保留原查询。
+// 文件内容和非模型字段同时检查，避免只验证单一字段导致遗漏。
+func TestTokenModelMappingProtocolBodies(t *testing.T) {
+	// 独立运行也要加载错误翻译，不能依赖其他用例偶然初始化全局 bundle。
+	require.NoError(t, i18n.Init())
+	var multipartBody bytes.Buffer
+	writer := multipart.NewWriter(&multipartBody)
+	require.NoError(t, writer.WriteField("model", "alias"))
+	require.NoError(t, writer.WriteField("prompt", "keep this"))
+	file, err := writer.CreateFormFile("image", "sample.png")
+	require.NoError(t, err)
+	_, err = file.Write([]byte{0, 1, 2, 255})
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	for _, tc := range []struct {
+		name, path, contentType, body string
+		status                        int
+	}{
+		{"json", "/v1/chat/completions", "application/json", `{"model":"alias","n":0,"stream":false,"metadata":{"model":"keep"}}`, 200},
+		{"form", "/v1/audio/transcriptions", "application/x-www-form-urlencoded", "model=alias&prompt=keep+this", 200},
+		{"multipart", "/v1/images/edits", writer.FormDataContentType(), multipartBody.String(), 200},
+		{"gemini", "/v1beta/models/alias:generateContent", "application/json", `{"contents":[]}`, 200},
+		{"realtime", "/v1/realtime?model=alias", "", "", 200},
+		{"unmatched", "/v1/chat/completions", "application/json", `{"model":"unmatched"}`, 200},
+		{"duplicate json", "/v1/chat/completions", "application/json", `{"model":"alias","model":"other"}`, 400},
+		{"duplicate form", "/v1/audio/transcriptions", "application/x-www-form-urlencoded", "model=alias&model=other", 400},
+		{"fixed tools", "/v1/tools/search", "application/json", `{"model":"alias","query":"keep"}`, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.Use(BodyStorageCleanup(), func(c *gin.Context) {
+				common.SetContextKey(c, constant.ContextKeyTokenModelMapping, `{"alias":"middle","middle":"target"}`)
+				c.Next()
+			}, TokenModelMapping())
+			method := http.MethodPost
+			if tc.name == "realtime" {
+				method = http.MethodGet
+			}
+			route, _, _ := strings.Cut(tc.path, "?")
+			engine.Handle(method, route, func(c *gin.Context) {
+				if tc.name == "gemini" {
+					require.Equal(t, "/v1beta/models/target:generateContent", c.Request.URL.Path)
+					return
+				}
+				if tc.name == "realtime" {
+					require.Equal(t, "target", c.Query("model"))
+					return
+				}
+				raw, readErr := io.ReadAll(c.Request.Body)
+				require.NoError(t, readErr)
+				if tc.name == "multipart" {
+					c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+					require.NoError(t, c.Request.ParseMultipartForm(1024))
+					defer c.Request.MultipartForm.RemoveAll()
+					require.Equal(t, "target", c.Request.FormValue("model"))
+					require.Equal(t, "keep this", c.Request.FormValue("prompt"))
+					image, _, openErr := c.Request.FormFile("image")
+					require.NoError(t, openErr)
+					defer image.Close()
+					data, readErr := io.ReadAll(image)
+					require.NoError(t, readErr)
+					require.Equal(t, []byte{0, 1, 2, 255}, data)
+				} else if tc.name == "unmatched" || tc.name == "fixed tools" {
+					require.Equal(t, tc.body, string(raw))
+					require.Empty(t, common.GetContextKeyString(c, constant.ContextKeyTokenTargetModel))
+				} else {
+					require.Contains(t, string(raw), "target")
+					if tc.name == "json" {
+						require.Contains(t, string(raw), `"n":0`)
+						require.Contains(t, string(raw), `"stream":false`)
+						require.Contains(t, string(raw), `"metadata":{"model":"keep"}`)
+					}
+					storage, readErr := common.GetBodyStorage(c)
+					require.NoError(t, readErr)
+					stored, readErr := storage.Bytes()
+					require.NoError(t, readErr)
+					require.Equal(t, raw, stored)
+				}
+			})
+			request := httptest.NewRequest(method, tc.path, strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", tc.contentType)
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+			require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+		})
+	}
 }

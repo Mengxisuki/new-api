@@ -8010,6 +8010,11 @@
     "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "請在 New API 伺服器環境中設定 OAK_RECHARGE_DATA_KEY，值為經過 Base64 編碼的 32 位元組隨機金鑰，然後重新啟動服務。請持久備份金鑰，訂單資料仍需解密時不要替換。",
     "Invoice information": "發票資訊",
     "Invoice remarks": "開票備註",
-    "No invoice requested": "此訂單未申請開票"
+    "No invoice requested": "此訂單未申請開票",
+    "API Key Model Mapping": "API Key 模型映射",
+    "Target Model": "目標模型",
+    "Billing Model": "計費模型",
+    "Invalid API key model mapping": "API Key 模型映射無效，請檢查 JSON、重複來源、空名稱或循環映射",
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "此 Key 將請求模型路由至目標模型。存取限制與費用按最終目標模型計算，之後仍會套用渠道映射。"
   }
 }

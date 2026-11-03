@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
+import { validateModelMappingJson } from '@/features/channels/lib/model-mapping-validation'
 import { sourceSchema } from '@/features/hosting/types'
 import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
 
@@ -41,6 +42,17 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
+      // 与渠道共用格式校验；循环、重复键及长度由服务端统一拒绝。
+      // 使用字符串保留 JSON 草稿，不在每次输入时吞掉无效内容。
+      // 允许空字符串作为关闭配置，不能替换成 null。
+      // 错误信息挂在此字段，用户可以直接返回编辑器修正。
+      // 保存调用仍使用原 Key 事务，前端不自行推导收费模型。
+      model_mapping: z
+        .string()
+        .refine(
+          (value) => validateModelMappingJson(value).valid,
+          t('Invalid API key model mapping')
+        ),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
       allow_user_quota_query: z.boolean(),
@@ -118,6 +130,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   remain_quota_dollars: 10,
   expired_time: null,
   unlimited_quota: true,
+  model_mapping: '',
   model_limits: [],
   allow_ips: '',
   allow_user_quota_query: true,
@@ -160,6 +173,8 @@ export function transformFormDataToPayload(
       : -1,
     unlimited_quota: data.unlimited_quota,
     model_limits_enabled: data.model_limits.length > 0,
+    // 空字符串显式清空配置；更新时不依赖额外接口或分步保存。
+    model_mapping: data.model_mapping,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
     allow_user_quota_query: data.allow_user_quota_query,
@@ -198,6 +213,7 @@ export function transformApiKeyToFormDefaults(
     expired_time:
       apiKey.expired_time > 0 ? new Date(apiKey.expired_time * 1000) : null,
     unlimited_quota: apiKey.unlimited_quota,
+    model_mapping: apiKey.model_mapping || '',
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],

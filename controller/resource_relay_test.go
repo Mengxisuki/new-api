@@ -152,7 +152,7 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 	require.NoError(t, channel.Insert())
 	f.engine = gin.New()
 	f.engine.Use(middleware.BodyStorageCleanup())
-	f.engine.Use(middleware.TokenAuth())
+	f.engine.Use(middleware.TokenAuth(), middleware.TokenModelMapping())
 	f.engine.POST("/v1/chat/completions", ResourceRelay(), func(c *gin.Context) { c.JSON(418, gin.H{"legacy": true}) })
 	f.engine.POST("/v1/responses", ResourceRelay())
 	f.engine.POST("/v1/images/generations", ResourceRelay(), middleware.Distribute(), func(c *gin.Context) { Relay(c, types.RelayFormatOpenAIImage) })
@@ -696,4 +696,102 @@ func TestResourceRelayFreePlatformWithZeroBudget(t *testing.T) {
 	key, err := model.GetTokenById(f.token.Id)
 	require.NoError(t, err)
 	require.Zero(t, key.RemainQuota)
+}
+
+// 请求源别名没有平台价格，成功只能来自映射后的目标模型。
+// 渠道把平台目标再映射到上游 gpt-4，实付必须使用目标自己的单价。
+// 免费来源与付费来源使用相同入口，分别检查扣费和公开日志。
+// 夹具上游只接受 gpt-4，因此能发现渠道改名后正文仍停留在 B 的错误。
+// 中间别名不配置渠道或价格，保证解析确实走完整映射链。
+// 钱包和 Key 均配置足够预算，避免余额不足遮蔽路由结果。
+// 目标单价与上游模型单价故意不同，保护按 B 收费的核心要求。
+// 源别名没有价格，不能错误回退到来源名称查询价格。
+// 响应经过真实 Relay 适配器和结算，不仅断言中间件上下文。
+// 模型限制只含目标名，源名无权限也应正常到达已授权目标。
+// 消费日志的 ModelName 保持平台计费身份，用于统计与筛选。
+// 公开元数据保存原名，不能为展示映射修改账单统计字段。
+// 渠道映射元数据继续存在，Key 映射不能覆盖它。
+// 免费分支使用本人挂靠账号，证明选择资源前已经应用规则。
+// 免费日志同样记录映射，不能仅在钱包结算时附加。
+// 免费分支断言零扣费，避免单纯以模型有价格推断应收费。
+// 检查实际钱包余额，而不是只信日志中的 quota 字段。
+// 权限反例发生在成功请求后，保护编辑后的模型限制立即生效。
+// 权限反例保持相同 Key 和正文，失败只能来自目标权限变化。
+// 拒绝后上游调用数不变，不能先执行再检测权限。
+// 所有模拟上游都在本机，不使用真实供应商额度。
+// 每个资金来源使用独立库，避免上一次扣费影响期望。
+// 来源策略仍由真实保存 API 验证，不注入非法授权快照。
+// 测试结束恢复日志配置，不能给后续无关测试留下全局开关。
+func TestResourceRelayTokenModelMapping(t *testing.T) {
+	for _, source := range []string{"wallet", "subscription", "hosting"} {
+		t.Run(source, func(t *testing.T) {
+			free := source == "hosting"
+			var subscription *model.UserSubscription
+			f := newResourceFixture(t)
+			previousLog := common.LogConsumeEnabled
+			common.LogConsumeEnabled = true
+			t.Cleanup(func() { common.LogConsumeEnabled = previousLog })
+			target := "priced-target"
+			if free {
+				target = "gpt-4"
+			}
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"priced-target":0.02,"gpt-4":0.01}`))
+			require.NoError(t, model.DB.Model(f.user).Update("quota", 1_000_000).Error)
+			f.token.RemainQuota = 1_000_000
+			f.token.ModelMapping = fmt.Sprintf(`{"alias":"middle","middle":%q}`, target)
+			f.token.ModelLimitsEnabled = true
+			f.token.ModelLimits = target
+			_, err := f.token.UpdateWithResourcePolicy(nil)
+			require.NoError(t, err)
+			if free {
+				f.setPolicy(t, model.ResourceSource{Kind: "hosting", AccountID: f.accounts[0].ID, Enabled: true})
+			} else {
+				var channel model.Channel
+				require.NoError(t, model.DB.First(&channel).Error)
+				channel.Models = target
+				channel.ModelMapping = common.GetPointer(`{"priced-target":"gpt-4"}`)
+				require.NoError(t, channel.Update())
+				if source == "subscription" {
+					// 订阅有独立额度，实际消费不能转扣钱包来伪造成功。
+					// 目标模型价格仍参与订阅额度扣减，Key 的金额预算同时扣除。
+					plan := &model.SubscriptionPlan{Title: "mapped-plan", Enabled: true, TotalAmount: 1_000_000, QuotaResetPeriod: "never"}
+					require.NoError(t, model.DB.Create(plan).Error)
+					subscription = &model.UserSubscription{UserId: f.user.Id, PlanId: plan.Id, Status: "active", AmountTotal: 1_000_000, StartTime: time.Now().Unix(), EndTime: time.Now().Add(time.Hour).Unix()}
+					require.NoError(t, model.DB.Create(subscription).Error)
+				}
+				f.setPolicy(t, model.ResourceSource{Kind: source, Enabled: true})
+			}
+			response := f.request(t, "POST", "/v1/chat/completions", `{"model":"alias","messages":[{"role":"user","content":"hello"}],"max_tokens":4}`)
+			require.Equal(t, 200, response.Code, response.Body.String())
+			var log model.Log
+			require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Last(&log).Error)
+			require.Equal(t, target, log.ModelName)
+			require.Contains(t, log.Other, `"requested_model":"alias"`)
+			require.Contains(t, log.Other, `"target_model":"`+target+`"`)
+			expected := common.QuotaFromFloat(0.02 * common.QuotaPerUnit)
+			if free {
+				expected = 0
+			} else {
+				require.Contains(t, log.Other, `"upstream_model_name":"gpt-4"`)
+			}
+			require.Equal(t, expected, log.Quota)
+			quota, err := model.GetUserQuota(f.user.Id, false)
+			require.NoError(t, err)
+			if subscription != nil {
+				require.Equal(t, 1_000_000, quota)
+				require.NoError(t, model.DB.First(subscription, subscription.Id).Error)
+				require.Equal(t, int64(expected), subscription.AmountUsed)
+			} else {
+				require.Equal(t, 1_000_000-expected, quota)
+			}
+			// 只允许源名时必须拒绝目标；别名不能作为权限逃逸通道。
+			f.token.ModelLimits = "alias"
+			_, err = f.token.UpdateWithResourcePolicy(nil)
+			require.NoError(t, err)
+			before := len(f.calls)
+			response = f.request(t, "POST", "/v1/chat/completions", `{"model":"alias","messages":[]}`)
+			require.Equal(t, 403, response.Code, response.Body.String())
+			require.Len(t, f.calls, before)
+		})
+	}
 }

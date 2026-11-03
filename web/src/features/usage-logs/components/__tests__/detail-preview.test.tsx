@@ -22,7 +22,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -501,3 +508,51 @@ test.each(['missing schema', 'unsupported expression', 'unknown tier'])(
     )
   }
 )
+
+// 同时存在响应观测和渠道映射时，Key 规则不能被隐藏。
+// 本人应能区分原请求、实际计费平台模型及上游名称。
+// 历史日志仍走原格式，本测试仅增加具有新元数据的场景。
+// 测试使用普通用户视角，映射元数据应属于本人可见字段。
+// 计费模式只为打开现有详情入口提供真实消费日志。
+// 同时提供响应观测，保护新区域不受旧条件分支隐藏。
+// 上游模型与平台目标故意不同，避免测试退化为无变化映射。
+// 源别名独立于两者，用户必须能找到原请求名称。
+// 弹层动画与查询刷新可能替换节点，等待最终可见状态后重新定位。
+// 不依赖旧节点引用判断可见性，避免过渡帧导致偶发失败。
+// 详情组件没有 mock，使用与桌面表格一致的点击入口。
+// 原数据模型保持平台目标，新增区域不能更改账单价格计算。
+// 这里只验证公开展示，管理员敏感信息隔离仍由现有测试覆盖。
+// 翻译键通过现有测试语言资源输出，语言切换测试继续保留。
+// 关键字段按文案语义定位，避免把 Tailwind 布局实现作为业务合同。
+// 不检查整个弹窗快照，允许其他独立日志区域演进。
+// 本用例不读取当前 Key，历史事实必须完全来自日志。
+test('shows key mapping and billing model alongside upstream response observations', async () => {
+  const button = renderPreview(
+    {
+      model_price: 0.25,
+      token_model_mapping: {
+        requested_model: 'my-alias',
+        target_model: 'wan2.5-i2v-preview',
+      },
+      is_model_mapped: true,
+      upstream_model_name: 'vendor-model',
+      response_model: {
+        requested_model: 'wan2.5-i2v-preview',
+        upstream_model: 'vendor-model',
+        returned_model: 'vendor-model',
+      },
+    },
+    false
+  )
+  fireEvent.click(button)
+  await screen.findByRole('dialog')
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('dialog')).getByText('API Key Model Mapping')
+    ).toBeVisible()
+  )
+  expect(within(screen.getByRole('dialog')).getByText('my-alias')).toBeVisible()
+  expect(
+    within(screen.getByRole('dialog')).getByText('Billing Model')
+  ).toBeVisible()
+})

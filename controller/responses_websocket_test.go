@@ -1435,3 +1435,67 @@ func TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification(t *tes
 		})
 	}
 }
+
+// 真实 WebSocket 事件必须先映射再选择渠道，且每个事件刷新 Key 配置。
+// 夹具带 Redis，编辑后的缓存失效也属于此回归的真实调用链。
+// 两次不同源别名落在同一目标，连接复用不得误判为跨模型切换。
+// 上游 WebSocket 接收真实请求事件，最终名称须经过两级映射。
+// 第一次设置规则发生在握手之后，验证配置不在连接时固定。
+// 第二次保存换一个源别名，确保每个事件重新加载令牌。
+// 更新使用已有模型事务，覆盖 Redis 失效而非绕过缓存读写。
+// 两个源别名都落在同一平台目标，允许继续复用同一连接。
+// 只有目标配置动态价格，原别名不能偶然使用另一条计费表达式。
+// 返回不同 response ID，避免终态去重机制把第二次结果当作重放。
+// 每个终态提供明确 token 用量，账单按真实上游用量结算。
+// 读取终态后等待连接清理，避免在结算尚未写库时断言日志。
+// 会话中的两条日志按 ID 排序，对应两次配置快照。
+// 计费模型保持 ws-billing，不因客户端别名改变统计维度。
+// 最终上游名称仍为 gpt-4o，渠道映射合同不受 Key 配置影响。
+// 测试连接在清理函数中关闭，断言失败也不会泄漏服务器。
+// 这个用例复用已有会话夹具，不复制 WebSocket 转发或结算逻辑。
+// 没有修改原连接的权限锁；不同目标的行为仍由原锁测试保护。
+// 缓存刷新与模型映射通过同一真实 TokenAuth 链路发生。
+func TestResponsesWebSocketTokenModelMapping(t *testing.T) {
+	received := make(chan string, 2)
+	fixture := newResponsesWSBillingTest(t, `tier("base", p * 2)`, func(ws *websocket.Conn, r *http.Request) {
+		for index := 1; ; index++ {
+			_, data, err := ws.ReadMessage()
+			if err != nil {
+				return
+			}
+			var request map[string]any
+			if !assert.NoError(t, common.Unmarshal(data, &request)) {
+				return
+			}
+			received <- request["model"].(string)
+			if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"response.completed","response":{"id":"mapped-%d","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":1000,"output_tokens":0,"total_tokens":1000}}}`, index)))) {
+				return
+			}
+		}
+	})
+	for _, alias := range []string{"first-alias", "second-alias"} {
+		// 通过模型更新入口失效 Redis，不能直接改数据库绕过缓存行为。
+		token, err := model.GetTokenById(fixture.token.Id)
+		require.NoError(t, err)
+		token.ModelMapping = fmt.Sprintf(`{%q:"ws-billing"}`, alias)
+		token.ModelLimitsEnabled, token.ModelLimits = true, "ws-billing"
+		_, err = token.UpdateWithResourcePolicy(nil)
+		require.NoError(t, err)
+		payload := fmt.Sprintf(`{"type":"response.create","model":%q,"input":"hello"}`, alias)
+		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(payload)))
+		require.NoError(t, fixture.client.SetReadDeadline(time.Now().Add(3*time.Second)))
+		_, data, err := fixture.client.ReadMessage()
+		require.NoError(t, err)
+		require.Contains(t, string(data), `"response.completed"`)
+		require.Equal(t, "gpt-4o", <-received)
+	}
+	fixture.closeAndWait(t)
+	assertResponsesWSAccounting(t, fixture, []int{1000, 1000})
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("token_id = ? AND type = ?", fixture.token.Id, model.LogTypeConsume).Order("id asc").Find(&logs).Error)
+	require.Len(t, logs, 2)
+	require.Contains(t, logs[0].Other, `"requested_model":"first-alias"`)
+	require.Contains(t, logs[1].Other, `"requested_model":"second-alias"`)
+	require.Equal(t, "ws-billing", logs[0].ModelName)
+	require.Equal(t, int32(1), fixture.connections.Load())
+}

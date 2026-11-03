@@ -54,6 +54,13 @@ export type ModelMappingDraftRequest = {
 }
 
 type ModelMappingEditorProps = {
+  // Key 编辑复用交互，仅替换目标名称和说明，渠道调用默认保持原文案。
+  // 可视化与 JSON 两个页签共享说明，避免切换模式后出现另一业务的术语。
+  // 目标标签同时用于列标题与输入可访问名称，辅助设备也能区分字段。
+  // 不向编辑器注入计费逻辑，它只编辑名称到名称的规则。
+  // 文案由调用方翻译，编辑器继续负责草稿、JSON 和重复来源提示。
+  description?: string
+  targetLabel?: string
   value: string
   onChange: (value: string) => void
   disabled?: boolean
@@ -435,9 +442,10 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
 
         <TabsContent value='visual' className='space-y-2'>
           <p className='text-muted-foreground text-xs'>
-            {t(
-              'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
-            )}
+            {props.description ??
+              t(
+                'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
+              )}
           </p>
           {rows.length > 0 ? (
             <div className='space-y-2'>
@@ -461,7 +469,7 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
               )}
               <div className='grid grid-cols-[1fr_1fr_auto] gap-2 text-sm font-medium'>
                 <div>{t('Request Model Name')}</div>
-                <div>{t('Upstream Model Name')}</div>
+                <div>{props.targetLabel ?? t('Upstream Model Name')}</div>
                 <div className='w-10' />
               </div>
               {visibleRows.map((row) => (
@@ -493,7 +501,7 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
                     emptyText='No matching items'
                     allowCustomValue
                     disabled={props.disabled}
-                    aria-label={t('Upstream Model Name')}
+                    aria-label={props.targetLabel ?? t('Upstream Model Name')}
                   />
                   <Button
                     type='button'
@@ -535,9 +543,10 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
         </TabsContent>
         <TabsContent value='json' className='space-y-2'>
           <p className='text-muted-foreground text-sm'>
-            {t(
-              'JSON keys are request model names; values are upstream model names.'
-            )}
+            {props.description ??
+              t(
+                'JSON keys are request model names; values are upstream model names.'
+              )}
           </p>
           <JsonCodeEditor
             value={jsonValue}

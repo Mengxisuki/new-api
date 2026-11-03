@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, KeyRound, Settings2, WalletCards } from 'lucide-react'
+import {
+  ChevronDown,
+  KeyRound,
+  Route,
+  Settings2,
+  WalletCards,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -62,6 +68,7 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ModelMappingEditor } from '@/features/channels/components/model-mapping-editor'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
@@ -722,6 +729,51 @@ export function ApiKeysMutateDrawer({
                         onCheckedChange={field.onChange}
                       />
                     </FormControl>
+                  </FormItem>
+                )}
+              />
+            </SideDrawerSection>
+
+            {/*
+              模型候选来自当前用户目录，不读取管理员独有的渠道清单。
+              源别名不必上架，因此编辑器保留自定义输入能力。
+              目标列表也只是建议，保存和执行分别由后端验证配置与可用性。
+              这个字段属于当前表单，切换到另一个 Key 时随 reset 一起刷新。
+              创建多个 Key 时使用同一配置，但后续可各自独立编辑。
+              不添加即时保存回调，防止用户取消抽屉时仍改动规则。
+              保存期间禁用编辑，避免提交快照与屏幕草稿不一致。
+              高级模型限制仍是独立字段，映射不会自动扩大允许范围。
+              文案说明两级映射顺序，避免用户把渠道上游名当作平台计费名。
+              JSON 模式适合批量输入，可视化模式沿用渠道的逐行操作。
+              原有抽屉滚动区承载长列表，底部保存操作仍固定可见。
+            */}
+            {/* 映射作为独立区域默认展示，不藏在访问限制内。 */}
+            {/* 沿用渠道编辑器的可视化与 JSON 模式，模型候选只用于建议。 */}
+            {/* 自定义源别名允许手输，目标是否可调用由服务端最终检查。 */}
+            <SideDrawerSection>
+              <SideDrawerSectionHeader
+                title={t('API Key Model Mapping')}
+                icon={<Route className='size-4' />}
+              />
+              <FormField
+                control={form.control}
+                name='model_mapping'
+                render={({ field }) => (
+                  <FormItem>
+                    {/* 整个映射随表单保存，避免用户看到尚未生效的分步配置。 */}
+                    <ModelMappingEditor
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={isSubmitting}
+                      sourceModelOptions={models}
+                      targetModelOptions={models}
+                      targetLabel={t('Target Model')}
+                      description={t(
+                        'This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.'
+                      )}
+                    />
+                    {/* 独立错误区域兼容 JSON 编辑模式，不把坏草稿吞成空配置。 */}
+                    <FormMessage />
                   </FormItem>
                 )}
               />

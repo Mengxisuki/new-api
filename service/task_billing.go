@@ -175,6 +175,8 @@ func taskBillingOther(task *model.Task) *model.LogOther {
 		}
 	}
 	props := task.Properties
+	// 后台轮询没有原 Gin 上下文，从持久任务恢复用户可见的 Key 映射。
+	other.SetTokenModelMapping(props.TokenRequestedModel, props.TokenTargetModel)
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other.SetPublic("is_model_mapped", true)
 		other.SetPublic("upstream_model_name", props.UpstreamModelName)

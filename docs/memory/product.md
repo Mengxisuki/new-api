@@ -95,3 +95,7 @@ New API 提供多模型 API 网关及控制台；本地 Oak 官网面向实验�
 2026-10-29 用户要求启用推送自动发布：推送到 `oak` 后自动测试、构建、备份、部署并检查健康。其他分支不触发。手动入口保留，手动运行时默认只构建，勾选 deploy 才发布。
 
 服务器处理器、受限公钥和环境 Secret 已接通，[手动发布](https://github.com/Mengxisuki/new-api/actions/runs/40666382821)已成功，本轮开始时线上为 `oak-2c47125b0ada-40666382821-1`。每次自动运行结果见 [GitHub 工作流](https://github.com/Mengxisuki/new-api/actions/workflows/oak-deploy.yml)，操作说明见 [部署说明](../../deploy/oak/README.md)。失败后的数据库恢复仍需人工决策，不能盲目切回旧二进制。
+
+## 每 Key 模型映射（本地实现）
+
+API 密钥创建/编辑已增加独立模型映射区域，复用渠道编辑器。请求 A 先变为 Key 目标 B，权限、资源选择及收费按 B，随后渠道可转换为上游 C；映射不扩大 Key 权限。日志保留原请求与目标，计费统计保持 B，异步任务冻结提交时快照。配置清空关闭，旧客户端省略保留；标准协议与特殊任务边界、三库升级及验证记录见[实现说明](../plans/api-key-model-mapping.md)。本轮仅本地预览，未提交或发布。

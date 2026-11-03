@@ -278,3 +278,13 @@ func formatLogOtherJSON(value string, visibility logOtherVisibility) string {
 	}
 	return string(formatted)
 }
+
+// SetTokenModelMapping 记录用户自己配置的模型改写，允许本人日志读取。
+// 渠道映射继续使用原字段，不能把上游名称误标为 Key 计费目标。
+// 空源或相同名称不产生伪映射；异步任务也复用同一公开字段合同。
+func (o *LogOther) SetTokenModelMapping(requested, target string) {
+	if requested == "" || target == "" || requested == target {
+		return
+	}
+	o.SetPublic("token_model_mapping", map[string]string{"requested_model": requested, "target_model": target})
+}

@@ -80,10 +80,15 @@ func (t *Task) GetData(v any) error {
 	return common.Unmarshal(t.Data, &v)
 }
 
+// 这些映射字符串不包含访问凭据，可随任务属性用于本人日志展示。
 type Properties struct {
-	Input             string `json:"input"`
-	UpstreamModelName string `json:"upstream_model_name,omitempty"`
-	OriginModelName   string `json:"origin_model_name,omitempty"`
+	// 使用现有 JSON 属性冻结映射，不新建独立任务列。
+	// 旧任务缺失字段时仍显示原有渠道映射。
+	TokenRequestedModel string `json:"token_requested_model,omitempty"`
+	TokenTargetModel    string `json:"token_target_model,omitempty"`
+	Input               string `json:"input"`
+	UpstreamModelName   string `json:"upstream_model_name,omitempty"`
+	OriginModelName     string `json:"origin_model_name,omitempty"`
 }
 
 func (m *Properties) Scan(val any) error {
@@ -240,6 +245,11 @@ type SyncTaskQueryParams struct {
 
 func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) *Task {
 	properties := Properties{}
+	// Key 改名或清除映射后，任务结算仍沿用提交时的映射快照。
+	if relayInfo != nil {
+		properties.TokenRequestedModel = relayInfo.TokenRequestedModel
+		properties.TokenTargetModel = relayInfo.TokenTargetModel
+	}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
 		// A New API channel may rotate between several gateway tokens, so the

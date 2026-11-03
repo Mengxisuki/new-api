@@ -8010,6 +8010,11 @@
     "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Définissez OAK_RECHARGE_DATA_KEY dans l’environnement du serveur New API avec une clé aléatoire de 32 octets encodée en Base64, puis redémarrez le service. Sauvegardez cette clé et ne la remplacez pas tant que des données de commande doivent être déchiffrées.",
     "Invoice information": "Informations de facturation",
     "Invoice remarks": "Remarques de facturation",
-    "No invoice requested": "Aucune facture demandée"
+    "No invoice requested": "Aucune facture demandée",
+    "API Key Model Mapping": "Correspondance des modèles de la clé API",
+    "Target Model": "Modèle cible",
+    "Billing Model": "Modèle facturé",
+    "Invalid API key model mapping": "Correspondance invalide : vérifiez le JSON, les sources en double, les noms vides et les cycles",
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "Cette clé dirige le modèle demandé vers le modèle cible. Les limites et la facturation suivent la cible finale ; la correspondance du canal reste appliquée ensuite."
   }
 }

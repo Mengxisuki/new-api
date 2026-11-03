@@ -1022,3 +1022,123 @@ func verifyAPITokenAudit(t *testing.T) {
 		assert.EqualValues(t, 1, count)
 	})
 }
+
+// 覆盖真实管理 API 的创建、保留、清除和归属检查，避免只验证内存解析器。
+// 所有编辑都经过原事务，坏配置不得部分更新名称等其他字段。
+// 状态开关仅改变状态，不能顺带改写模型合同。
+// 创建 API 使用真实 Token 模型，能发现显式字段构造遗漏。
+// 测试不依赖前端校验，保护直接调用管理 API 的客户端。
+// 省略字段与空字符串分别代表保留和删除，二者不得混同。
+// JSON 文本中的 null 不表示关闭，避免错误配置被静默接受。
+// 重复源在 map 解码前识别，因此不能依赖最后一个成员覆盖。
+// 多节点循环应保存失败，自映射仍允许作为无变化规则。
+// 空目标会导致后续模型选择失去身份，因此禁止持久化。
+// 前后空白不自动修剪，防止来源名称意外合并。
+// 超长文本在解析前拒绝，测试同时约束入口资源占用。
+// 其他用户的更新使用相同合法正文，失败应来自归属检查。
+// 状态更新带不同合法映射，验证状态接口不能成为配置修改旁路。
+// 返回值继续使用普通脱敏响应，映射不获得读取明文 Key 的能力。
+// 清空规则经 UpdateWithResourcePolicy 保存，不直接清数据库列。
+func TestTokenModelMappingManagement(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	body := map[string]any{"name": "mapped", "expired_time": -1, "unlimited_quota": true, "model_mapping": `{"alias":"gpt-4"}`}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, 1)
+	AddToken(ctx)
+	require.True(t, decodeAPIResponse(t, recorder).Success, recorder.Body.String())
+	var saved model.Token
+	require.NoError(t, db.Where("name = ?", "mapped").First(&saved).Error)
+	require.Equal(t, `{"alias":"gpt-4"}`, saved.ModelMapping)
+	body["id"] = saved.Id
+	delete(body, "model_mapping")
+	// 旧客户端省略字段、更新时返回的脱敏详情也必须保留映射。
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	UpdateToken(ctx)
+	require.True(t, decodeAPIResponse(t, recorder).Success, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), `model_mapping`)
+	require.NoError(t, db.First(&saved, saved.Id).Error)
+	require.Equal(t, `{"alias":"gpt-4"}`, saved.ModelMapping)
+	// 即使知道编号，其他用户也不能改动此 Key。
+	body["model_mapping"] = `{"alias":"other"}`
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 2)
+	UpdateToken(ctx)
+	require.False(t, decodeAPIResponse(t, recorder).Success)
+	body["status"] = common.TokenStatusDisabled
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/?status_only=true", body, 1)
+	UpdateToken(ctx)
+	require.True(t, decodeAPIResponse(t, recorder).Success)
+	require.NoError(t, db.First(&saved, saved.Id).Error)
+	require.Equal(t, `{"alias":"gpt-4"}`, saved.ModelMapping)
+	// 无效对象、歧义来源、空名称和循环均在保存之前拒绝。
+	for _, invalid := range []string{`null`, `[]`, `{"a":1}`, `{"a":""}`, `{"a":"b","a":"c"}`, `{"a":"b","b":"a"}`, `{" a":"b"}`, strings.Repeat("x", 65537)} {
+		body["model_mapping"] = invalid
+		ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+		UpdateToken(ctx)
+		require.False(t, decodeAPIResponse(t, recorder).Success)
+	}
+	body["model_mapping"] = ""
+	ctx, recorder = newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	UpdateToken(ctx)
+	require.True(t, decodeAPIResponse(t, recorder).Success)
+	require.NoError(t, db.First(&saved, saved.Id).Error)
+	require.Empty(t, saved.ModelMapping)
+}
+
+// 新表与当前已发布表分别验证，连续迁移不得清空配置或移除原索引。
+// 使用既有隔离数据库 helper，外部连接仅允许本机测试实例。
+// 升级场景先按当前模型创建代表性表再删新增列，保留所有现有约束。
+// 新表场景验证缺省规则为空，旧客户端不需要立即补字段。
+// 升级场景保留当前 Token 的其余字段与真实索引定义。
+// 删除新增列只用于构造测试旧表，不是应用的实际迁移步骤。
+// 测试连接在随机隔离库中运行，不能复用用户业务库。
+// 重复迁移在保存有效规则之后执行，能发现升级覆盖用户配置。
+// 唯一 Key 索引不仅查存在性，还实际插入重复值验证约束。
+// 读回验证使用数据库查询，不以 GORM 写入对象自身证明成功。
+// 任务属性额外做真实 JSON 往返，覆盖 PostgreSQL 文本编码差异。
+// 任务目标与原有 OriginModelName 一致，供后台结算读取。
+// 测试使用普通字符串列，不引入特定数据库 JSON 操作。
+// 真实版本号由既有连接 helper 输出，便于交接记录。
+// 环境变量缺失显式跳过对应引擎，不伪装成兼容性通过。
+// 主库与日志库在此夹具共用连接，日志没有新增 schema。
+// 三个方言分别运行新建与升级两种路径，不能只跑 SQLite。
+// 没有测试最低版本专用语法，因为本次仅添加普通 TEXT 列。
+func TestTokenModelMappingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		for _, upgrade := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/upgrade=%t", dialect.kind, upgrade), func(t *testing.T) {
+				if dialect.env != "" && os.Getenv(dialect.env) == "" {
+					t.Skip("set " + dialect.env)
+				}
+				db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+				require.NoError(t, db.AutoMigrate(&model.Token{}, &model.ResourcePolicy{}, &model.Task{}))
+				require.NoError(t, db.Create(&model.User{Id: 1, Username: "mapping-owner"}).Error)
+				token := seedToken(t, db, 1, "preserved", "mapping-migration-key")
+				if upgrade {
+					require.NoError(t, db.Migrator().DropColumn(&model.Token{}, "ModelMapping"))
+				}
+				require.NoError(t, db.AutoMigrate(&model.Token{}))
+				require.NoError(t, db.First(token, token.Id).Error)
+				require.Equal(t, "preserved", token.Name)
+				require.Empty(t, token.ModelMapping)
+				// 原子更新白名单必须包含新增列；只测试 Create 无法保护编辑后丢失问题。
+				token.ModelMapping = `{"a":"b"}`
+				_, err := token.UpdateWithResourcePolicy(nil)
+				require.NoError(t, err)
+				require.NoError(t, db.AutoMigrate(&model.Token{}))
+				require.NoError(t, db.First(token, token.Id).Error)
+				require.Equal(t, `{"a":"b"}`, token.ModelMapping)
+				// 任务快照经过真实数据库 JSON 序列化，后台结算才能保留原别名。
+				// 属性扩展不改变旧任务列；重新读取必须同时保留原有平台模型。
+				task := &model.Task{TaskID: "mapping-task", Properties: model.Properties{TokenRequestedModel: "a", TokenTargetModel: "b", OriginModelName: "b"}}
+				require.NoError(t, db.Create(task).Error)
+				task.Properties = model.Properties{}
+				require.NoError(t, db.First(task, task.ID).Error)
+				require.Equal(t, "a", task.Properties.TokenRequestedModel)
+				require.Equal(t, "b", task.Properties.TokenTargetModel)
+				require.Equal(t, "b", task.Properties.OriginModelName)
+				require.True(t, db.Migrator().HasIndex(&model.Token{}, "idx_tokens_key"))
+				duplicate := &model.Token{UserId: 1, Key: token.Key}
+				require.Error(t, db.Create(duplicate).Error)
+			})
+		}
+	}
+}

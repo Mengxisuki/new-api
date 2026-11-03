@@ -243,6 +243,11 @@ export function formatModelName(log: UsageLog): {
   responseModel?: LogOtherData['response_model']
 } {
   const other = parseLogOther(log.other)
+  // 列表展示请求源名，详情仍可还原两级改写。
+  // 渠道上游名优先用于实际模型提示；没有渠道映射时显示 Key 目标。
+  // 响应观测保持独立，不能覆盖用户配置的路由事实。
+  // 历史记录没有 Key 快照时，继续使用原渠道展示逻辑。
+  const keyMapping = other?.token_model_mapping
   const isMapped = !!(
     other?.is_model_mapped &&
     other?.upstream_model_name &&
@@ -250,9 +255,12 @@ export function formatModelName(log: UsageLog): {
   )
 
   return {
-    name: log.model_name,
-    isMapped,
-    actualModel: isMapped ? other.upstream_model_name : undefined,
+    // 列表保留客户端请求名；账单统计继续读取真实 log.model_name。
+    name: keyMapping?.requested_model || log.model_name,
+    isMapped: isMapped || !!keyMapping,
+    actualModel: isMapped
+      ? other.upstream_model_name
+      : keyMapping?.target_model,
     responseModel: other?.response_model,
   }
 }

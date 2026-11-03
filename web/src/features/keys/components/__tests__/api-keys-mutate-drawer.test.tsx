@@ -675,3 +675,33 @@ test('updates resource labels and accessible controls when switching to Chinese'
   expect(screen.getByRole('switch', { name: '启用订阅额度' })).toBeChecked()
   expect(screen.getByRole('switch', { name: '启用自有账号' })).toBeChecked()
 })
+
+// 从用户视角填写可视化映射，提交必须与 Key 的其余配置一起发送。
+// 源别名允许自定义，目标字段使用 Key 语义而不是渠道上游语义。
+// 两个输入都保留可访问名称，以便键盘和辅助设备定位。
+// 测试从新增行按钮开始，覆盖编辑器与表单字段的真实接线。
+// 不 mock ModelMappingEditor，否则无法发现 onChange 没有写入表单。
+// 目录候选为空，仍应允许用户输入自定义别名与目标。
+// 请求捕获只在 API 边界，后端校验另由控制器测试验证。
+// 用户输入的是普通字符串，不依赖 JSON 模式才能保存。
+// 点击保存后等待真实表单提交，而不是读取内部 React state。
+// 断言解析后的规则对象，避免无意义绑定 JSON 缩进风格。
+test('creates a key with a custom model mapping from the visual editor', async () => {
+  const payloads: Array<Record<string, unknown>> = []
+  installApiFixtures(payloads)
+  await renderCreateDrawer()
+  changeInput(getControlByLabel('Name'), 'mapped-key')
+  fireEvent.click(screen.getByRole('button', { name: 'Add Mapping' }))
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Request Model Name' }),
+    { target: { value: 'my-alias' } }
+  )
+  fireEvent.change(screen.getByRole('combobox', { name: 'Target Model' }), {
+    target: { value: 'gpt-4' },
+  })
+  fireEvent.click(findButton('Save changes', true))
+  await waitFor(() => expect(payloads).toHaveLength(1))
+  expect(JSON.parse(payloads[0].model_mapping as string)).toEqual({
+    'my-alias': 'gpt-4',
+  })
+})

@@ -29,6 +29,7 @@ type responsesWSRequestState struct {
 
 // Each response.create runs the ordinary request middleware to completion,
 // without routing another HTTP request or retaining a pooled Gin context.
+// 每次事件认证后立即应用映射，连接建立时的配置不能替代当前 Key 配置。
 var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 	engine := gin.New()
 	engine.ForwardedByClientIP = false
@@ -38,7 +39,7 @@ var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 		c.Set(common.RequestIdKey, state.requestID)
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		c.Next()
-	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), func(c *gin.Context) {
+	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.TokenModelMapping(), middleware.ModelRequestRateLimit(), func(c *gin.Context) {
 		state := c.Request.Context().Value(responsesWSRequestContextKey{}).(*responsesWSRequestState)
 		state.apiError = state.handle(c)
 		if state.apiError != nil {

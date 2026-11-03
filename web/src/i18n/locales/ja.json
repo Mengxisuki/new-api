@@ -8010,6 +8010,11 @@
     "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "New APIサーバーの環境変数OAK_RECHARGE_DATA_KEYに、Base64形式の32バイトのランダムキーを設定し、サービスを再起動してください。キーをバックアップし、注文情報の復号が必要な間は置き換えないでください。",
     "Invoice information": "請求書情報",
     "Invoice remarks": "請求書の備考",
-    "No invoice requested": "この注文では請求書を申請していません"
+    "No invoice requested": "この注文では請求書を申請していません",
+    "API Key Model Mapping": "API キーのモデルマッピング",
+    "Target Model": "対象モデル",
+    "Billing Model": "課金モデル",
+    "Invalid API key model mapping": "API キーのモデルマッピングが無効です。JSON、重複する元モデル、空の名前、循環を確認してください",
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "このキーは要求モデルを対象モデルに振り分けます。アクセス制限と課金には最終対象モデルを使用し、その後にチャネルのマッピングが適用されます。"
   }
 }

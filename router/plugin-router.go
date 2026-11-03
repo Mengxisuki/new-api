@@ -114,10 +114,20 @@ func productionPluginRouteHandlers(generation *jsplugin.RoutingGeneration, bindi
 			c.Writer.Status(),
 		)
 	}
+	// 只有显式声明模型字段位置的原生提交路由才能复用 Key 映射。
 	return []gin.HandlerFunc{
 		pinRoute,
 		middleware.TokenAuth(),
 		middleware.SystemPerformanceCheck(),
+		// 只有声明顶层模型合同的原生提交路由可在解码前改写。
+		// 嵌套模型、任务查询和动态动作继续由插件自己的协议解释。
+		func(c *gin.Context) {
+			if binding.Route.Type == "submit" && len(binding.Route.Models) > 0 {
+				middleware.TokenModelMapping()(c)
+				return
+			}
+			c.Next()
+		},
 		middleware.ModelRequestRateLimit(),
 		middleware.PrepareTaskPluginRoute(),
 		middleware.Distribute(),

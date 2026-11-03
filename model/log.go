@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -284,6 +285,12 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	// 集中附加 Key 映射，普通消费、免费挂靠与失败日志共享相同语义。
+	// 未映射请求不覆盖异步任务已经恢复的提交快照。
+	if other == nil {
+		other = NewLogOther()
+	}
+	other.SetTokenModelMapping(common.GetContextKeyString(c, constant.ContextKeyTokenRequestedModel), common.GetContextKeyString(c, constant.ContextKeyTokenTargetModel))
 	otherStr := other.JSONString()
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -350,6 +357,12 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	createdAt := common.GetTimestamp()
 	other := params.Other
 	content := other.setContent(params.Content)
+	// 集中附加 Key 映射，普通消费、免费挂靠与失败日志共享相同语义。
+	// 未映射请求不覆盖异步任务已经恢复的提交快照。
+	if other == nil {
+		other = NewLogOther()
+	}
+	other.SetTokenModelMapping(common.GetContextKeyString(c, constant.ContextKeyTokenRequestedModel), common.GetContextKeyString(c, constant.ContextKeyTokenTargetModel))
 	otherStr := other.JSONString()
 	// 判断是否需要记录 IP
 	needRecordIp := false

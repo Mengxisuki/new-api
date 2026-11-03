@@ -47,6 +47,8 @@ export const apiKeySchema = z.object({
     }, z.boolean())
     .optional()
     .default(false),
+  // 新字段缺失表示旧服务端响应，编辑时按空映射展示。
+  model_mapping: z.string().nullish(),
   model_limits_enabled: z.boolean(),
   model_limits: z.string().nullish().default(''),
   allow_ips: z.string().nullish().default(''),
@@ -97,6 +99,7 @@ export interface ApiKeyFormData {
   unlimited_quota: boolean
   model_limits_enabled: boolean
   model_limits: string
+  model_mapping?: string
   allow_ips: string
   allow_user_quota_query: boolean
   group: string

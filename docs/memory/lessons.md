@@ -160,3 +160,9 @@
 修复：输入无效、邮箱不匹配、加密未配置使用固定错误类型，控制器仅公开这些安全文案，其他故障保留服务端错误。七语言补齐提示，不回显邮箱或会话。保留账号一致性校验，大小写及邮箱两端空白不构成冲突。
 
 验证：`TestRechargeAccountInfoErrorMessages` 覆盖四类失败、订单不变、错误脱敏及原 JSON 还原；代充值后端回归、前端六项测试通过。本地原请求复现确认现在返回邮箱冲突错误。排障使用的真实凭据未写入源码、测试或记忆。
+
+## 2026-11-03 09:47:19 +00:00 — Realtime 改写 URL 前避免初始化 Gin 查询缓存
+
+现象：Key 映射已把 `Request.URL.RawQuery` 改为目标模型，后续 `c.Query("model")` 仍返回源名。根因：首次通过 `c.Query` 读取会初始化 Gin 的查询缓存；之后只改 URL 不会刷新该缓存。
+
+修复：映射入口直接使用 `c.Request.URL.Query()` 读取及修改，避免提前创建旧缓存；在分发前接入。`middleware/distributor_test.go` 的 `TestTokenModelMappingProtocolBodies/realtime` 用后续处理器的 `c.Query` 验证目标值。适用于本链路中所有前置处理器尚未读取查询缓存的情况，未来增加前置查询读取时需重新检查这一约束。

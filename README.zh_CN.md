@@ -437,3 +437,9 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 <sub>Built with ❤️ by QuantumNous</sub>
 
 </div>
+
+### Oak API Key 模型映射
+
+在 API 密钥的创建/编辑抽屉中配置“API Key 模型映射”，支持可视化或 JSON。请求 A 会先路由到 Key 配置的目标 B，权限、资源选择和费用按 B；之后继续应用管理员的渠道映射。使用日志展示原请求、Key 目标及计费模型，历史记录不受后续改配置影响。
+
+映射为空时保持原行为；链式规则可用，循环与重复来源拒绝。支持标准 HTTP、表单上传、Gemini 与 WebSocket 显式模型。特殊动作/历史任务边界、数据升级及验证命令见[实现说明](docs/plans/api-key-model-mapping.md)。

@@ -8010,6 +8010,11 @@
     "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Đặt OAK_RECHARGE_DATA_KEY trong môi trường máy chủ New API thành khóa ngẫu nhiên 32 byte mã hóa Base64, rồi khởi động lại dịch vụ. Sao lưu khóa và không thay thế khi dữ liệu đơn hàng vẫn cần giải mã.",
     "Invoice information": "Thông tin hóa đơn",
     "Invoice remarks": "Ghi chú hóa đơn",
-    "No invoice requested": "Chưa yêu cầu hóa đơn"
+    "No invoice requested": "Chưa yêu cầu hóa đơn",
+    "API Key Model Mapping": "Ánh xạ mô hình của khóa API",
+    "Target Model": "Mô hình đích",
+    "Billing Model": "Mô hình tính phí",
+    "Invalid API key model mapping": "Ánh xạ không hợp lệ: kiểm tra JSON, nguồn trùng lặp, tên trống và vòng lặp",
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "Khóa này chuyển mô hình yêu cầu sang mô hình đích. Giới hạn truy cập và chi phí dựa trên mô hình đích cuối cùng; ánh xạ kênh vẫn được áp dụng sau đó."
   }
 }

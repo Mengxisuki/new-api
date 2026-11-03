@@ -808,3 +808,75 @@ func TestRechargeConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// 真实三库读取订单关联的发票，不以页面快照代替数据库契约。
+// 每个方言创建独立测试库，不读写本地预览或线上订单。
+// 订单所有者来自认证上下文，接口参数不能切换用户身份。
+// 测试只使用虚构抬头和附件路径，不生成真实税务文件。
+// 摘要不得携带银行资料、税号、完整抬头快照或文件存储路径。
+func TestRechargeOrderInvoice(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
+			if dialect != "sqlite" && dsn == "" {
+				t.Skip("test database DSN is not configured")
+			}
+			db := modelManagementDB(t, dialect, dsn) // 正式方言初始化保证查询与线上相同。
+			require.NoError(t, db.AutoMigrate(&model.AccountRechargeOrder{}, &model.InvoiceRequest{}))
+			order := model.AccountRechargeOrder{UserID: 8, RequestID: "invoice-detail", TradeNo: "RCH-invoice-detail", InvoiceRequired: true}
+			require.NoError(t, db.Create(&order).Error) // 不调用付款接口，避免本测试涉及资金变更。
+			profile, err := common.Marshal(model.InvoiceProfile{Title: "Frozen invoice title", TaxId: "private-tax", BankAccount: "private-bank"})
+			require.NoError(t, err)
+			invoice := model.InvoiceRequest{UserId: 8, TradeNo: order.TradeNo, BusinessType: "recharge", ProfileJSON: string(profile), PayAmount: 1.15, Currency: "CNY"}
+			require.NoError(t, db.Create(&invoice).Error) // 发票主键由数据库生成，下载引用必须使用这个编号。
+			// 正式路由模板决定买家与运营分支，不能直接调用而丢失 FullPath。
+			owner := 8 // 认证上下文固定买家，客户端不能提交所有者。
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) { c.Set("id", owner); c.Set("role", common.RoleCommonUser) })
+			engine.GET("/orders/:id", GetRechargeOrder)
+			engine.GET("/operations/orders/:id", GetRechargeOrder)
+			read := func(prefix string) *httptest.ResponseRecorder {
+				r := httptest.NewRecorder() // 每次读取单独保存响应，不继承上一状态。
+				engine.ServeHTTP(r, httptest.NewRequest("GET", fmt.Sprintf("%s/orders/%d", prefix, order.ID), nil))
+				return r
+			}
+			// 五种状态原样读取，订单是否办理完成不能替代财务开票状态。
+			// 附件存在性来自正式 Expand，文件路径永远不进入摘要。
+			for _, status := range []string{"pending_payment", "pending", "processing", "issued", "rejected"} {
+				require.NoError(t, db.Model(&invoice).Updates(map[string]any{"status": status, "remark": "Invoice review note", "file_path": "private/invoice.pdf", "invoice_number": "INV-test"}).Error)
+				r := read("")
+				var response struct {
+					Success bool
+					Data    struct{ Invoice map[string]any }
+				}
+				require.NoError(t, common.Unmarshal(r.Body.Bytes(), &response)) // 解析真实 JSON 响应，检验序列化契约。
+				require.True(t, response.Success, r.Body.String())
+				assert.Equal(t, status, response.Data.Invoice["status"])
+				assert.Equal(t, "Frozen invoice title", response.Data.Invoice["title"])
+				assert.Equal(t, 1.15, response.Data.Invoice["pay_amount"])
+				assert.Equal(t, true, response.Data.Invoice["has_file"])          // 服务端按文件引用派生公开标记。
+				assert.Equal(t, float64(invoice.Id), response.Data.Invoice["id"]) // JSON 数字解码为浮点数，不能误用订单主键。
+				for _, private := range []string{"private-tax", "private-bank", "private/invoice.pdf", "profile_json"} {
+					assert.NotContains(t, r.Body.String(), private)
+				}
+			}
+			// 业务员可读订单不表示可读税务信息；响应不出现发票对象。
+			assert.NotContains(t, read("/operations").Body.String(), `"invoice":`)
+			// 另一用户不能先读取订单再借其交易号取得发票。
+			owner = 9
+			assert.Equal(t, http.StatusNotFound, read("").Code)
+			owner = 8 // 恢复本人后验证申请自身的关联约束。
+			// 跨用户或跨业务的错误关联必须失败，不用同订单号掩盖坏数据。
+			for _, changed := range []map[string]any{{"user_id": 9}, {"user_id": 8, "business_type": "topup"}, {"business_type": "recharge", "profile_json": "invalid-json"}} {
+				require.NoError(t, db.Model(&invoice).Updates(changed).Error)
+				assert.Contains(t, read("").Body.String(), `"success":false`)
+			}
+			// 已申请却丢失申请时明确报错，不能显示为未申请或待开票。
+			require.NoError(t, db.Delete(&invoice).Error) // 仅删除当前隔离库的测试记录。
+			assert.Contains(t, read("").Body.String(), "Failed to load invoice requests")
+			// 未申请开票无须存在发票行，返回 null 表达真实选择。
+			require.NoError(t, db.Model(&order).Update("invoice_required", false).Error)
+			assert.Contains(t, read("").Body.String(), `"invoice":null`)
+		})
+	}
+}

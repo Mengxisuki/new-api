@@ -8007,6 +8007,9 @@
     "Not confirmed": "Not confirmed",
     "Payment compliance confirmation": "Payment compliance confirmation",
     "Recharge readiness status is read-only": "Recharge readiness status is read-only",
-    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption."
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.",
+    "Invoice information": "Invoice information",
+    "Invoice remarks": "Invoice remarks",
+    "No invoice requested": "No invoice requested"
   }
 }

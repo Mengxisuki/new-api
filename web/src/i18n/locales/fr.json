@@ -8007,6 +8007,9 @@
     "Not confirmed": "Non confirmé",
     "Payment compliance confirmation": "Confirmation de conformité des paiements",
     "Recharge readiness status is read-only": "L’état de préparation des recharges est en lecture seule",
-    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Définissez OAK_RECHARGE_DATA_KEY dans l’environnement du serveur New API avec une clé aléatoire de 32 octets encodée en Base64, puis redémarrez le service. Sauvegardez cette clé et ne la remplacez pas tant que des données de commande doivent être déchiffrées."
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Définissez OAK_RECHARGE_DATA_KEY dans l’environnement du serveur New API avec une clé aléatoire de 32 octets encodée en Base64, puis redémarrez le service. Sauvegardez cette clé et ne la remplacez pas tant que des données de commande doivent être déchiffrées.",
+    "Invoice information": "Informations de facturation",
+    "Invoice remarks": "Remarques de facturation",
+    "No invoice requested": "Aucune facture demandée"
   }
 }

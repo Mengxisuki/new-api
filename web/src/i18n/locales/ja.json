@@ -8007,6 +8007,9 @@
     "Not confirmed": "未確認",
     "Payment compliance confirmation": "決済コンプライアンスの確認",
     "Recharge readiness status is read-only": "チャージの準備状況は読み取り専用です",
-    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "New APIサーバーの環境変数OAK_RECHARGE_DATA_KEYに、Base64形式の32バイトのランダムキーを設定し、サービスを再起動してください。キーをバックアップし、注文情報の復号が必要な間は置き換えないでください。"
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "New APIサーバーの環境変数OAK_RECHARGE_DATA_KEYに、Base64形式の32バイトのランダムキーを設定し、サービスを再起動してください。キーをバックアップし、注文情報の復号が必要な間は置き換えないでください。",
+    "Invoice information": "請求書情報",
+    "Invoice remarks": "請求書の備考",
+    "No invoice requested": "この注文では請求書を申請していません"
   }
 }

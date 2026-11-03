@@ -98,6 +98,7 @@ export const orderSchema = z.object({
   assignee_id: z.number(),
   email_mask: z.string(),
   public_note: z.string(),
+  invoice_required: z.boolean(), // 下单时冻结的开票选择，不从当前抬头配置推断。
   refund_requested: z.boolean(),
   wallet_sync_pending: z.boolean(), // 同步失败提供恢复按钮，不能再次执行数据库加额。
   version: z.number(),
@@ -271,6 +272,27 @@ export async function getOrders(
     .object({ items: z.array(orderSchema), total: z.number() })
     .parse(requireServerSuccess(response.data).data)
 }
+// 订单只读取精简的本人发票摘要，不在详情缓存税号或银行资料。
+// 状态枚举与既有开票流程一致；未知状态应暴露协议错误。
+// 金额来自冻结申请，不能从当前套餐价格重新计算。
+// 下载只需申请 ID，附件路径始终留在后端。
+const orderInvoiceSchema = z.object({
+  id: z.number(),
+  status: z.enum([
+    'pending_payment',
+    'pending',
+    'processing',
+    'issued',
+    'rejected',
+  ]),
+  title: z.string(),
+  pay_amount: z.number(), // 发票以元为单位，不能与订单分金额混用。
+  invoice_number: z.string(), // 未开票允许空串，不用交易号替代。
+  remark: z.string(),
+  has_file: z.boolean(), // 仅表示持久文件引用存在，不携带下载 URL。
+})
+export type OrderInvoice = z.infer<typeof orderInvoiceSchema>
+
 export async function getOrder(id: number, operations: boolean) {
   const response = await api.get(
     `${root}/${operations ? 'operations/' : ''}orders/${id}`,
@@ -279,6 +301,7 @@ export async function getOrder(id: number, operations: boolean) {
   return z
     .object({
       order: orderSchema,
+      invoice: orderInvoiceSchema.nullable().optional(), // 运营响应不含本人税务资料。
       internal_note: z.string().optional(),
       events: z
         .array(

@@ -8007,6 +8007,9 @@
     "Not confirmed": "Не подтверждено",
     "Payment compliance confirmation": "Подтверждение соответствия платежей",
     "Recharge readiness status is read-only": "Статус готовности пополнений доступен только для чтения",
-    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Задайте OAK_RECHARGE_DATA_KEY в окружении сервера New API: случайный ключ из 32 байт в кодировке Base64. Затем перезапустите сервис. Сохраните резервную копию ключа и не заменяйте его, пока требуется расшифровка данных заказов."
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Задайте OAK_RECHARGE_DATA_KEY в окружении сервера New API: случайный ключ из 32 байт в кодировке Base64. Затем перезапустите сервис. Сохраните резервную копию ключа и не заменяйте его, пока требуется расшифровка данных заказов.",
+    "Invoice information": "Информация о счёте",
+    "Invoice remarks": "Примечания к счёту",
+    "No invoice requested": "Счёт не запрошен"
   }
 }

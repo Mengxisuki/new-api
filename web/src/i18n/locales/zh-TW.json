@@ -8007,6 +8007,9 @@
     "Not confirmed": "未確認",
     "Payment compliance confirmation": "支付合規確認",
     "Recharge readiness status is read-only": "代充值就緒狀態為唯讀資訊",
-    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "請在 New API 伺服器環境中設定 OAK_RECHARGE_DATA_KEY，值為經過 Base64 編碼的 32 位元組隨機金鑰，然後重新啟動服務。請持久備份金鑰，訂單資料仍需解密時不要替換。"
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "請在 New API 伺服器環境中設定 OAK_RECHARGE_DATA_KEY，值為經過 Base64 編碼的 32 位元組隨機金鑰，然後重新啟動服務。請持久備份金鑰，訂單資料仍需解密時不要替換。",
+    "Invoice information": "發票資訊",
+    "Invoice remarks": "開票備註",
+    "No invoice requested": "此訂單未申請開票"
   }
 }

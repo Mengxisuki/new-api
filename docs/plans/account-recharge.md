@@ -312,3 +312,19 @@ API 相对方案做了小幅收敛：报价单独使用 `POST /quote`，创建 `
 - 新入口复用 SettingsSection、SettingsForm、SettingsSwitchField 与页头保存按钮，未新增依赖。已有测试数据库和本地环境文件保持不变；本地只为验收保存了一次关闭和一次开启。
 
 上线准备：先核对线上当前版本和待处理资料，备份数据库及环境文件；确认首次配置密钥不会替换既有密文所需密钥后，生成并持久保存 32 字节随机密钥（Base64），与本轮前后端一同发布并重启 New API。实际生产写入与凭证配置需用户确认，不能只打开业务开关而忽略缺失密钥。
+
+
+## 15. 订单内发票状态与下载
+
+更新时间：2026-11-03 08:34:54 +00:00。本地实现及验收完成；等待本次提交推送后的自动发布结果。
+
+买家代充值订单左栏“订单信息”下方新增独立“发票信息”，包含未申请说明，或申请状态、冻结抬头、实付开票金额、号码、财务备注及附件下载。沿用订单查询的轮询和刷新；只有 issued 且 has_file 才提供下载，文件缺失明确报错。桌面保持双栏，小屏按原弹窗单列滚动。
+
+`GetRechargeOrder` 仅在本人详情按 trade_no、user_id、business_type=recharge 精确查询已有申请；状态不随代充值办理状态推断。响应只返回展示及下载所需摘要，不含税号、银行资料或附件路径；运营响应不新增税务访问。前端 `order-invoice.tsx` 复用既有状态映射、金额格式化、按钮和 `downloadUserInvoice`，不嵌入带独立分页的整个钱包发票列表。没有数据库结构、支付金额或财务状态流转变更。
+
+验证：
+
+- SQLite **3.50.4**、MySQL **8.4.2**、PostgreSQL **14.17** 本地隔离实例。配置 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后执行 `go test ./controller -run '^TestRecharge' -count=1 -v` 全部通过，新增 `TestRechargeOrderInvoice` 三库无跳过。覆盖五种状态、快照金额和抬头、摘要脱敏、他人订单拒绝、运营响应隔离、错误用户/业务关联、坏快照、丢失申请和未申请返回 null。
+- `bun run test -- src/features/account-recharge src/features/wallet/__tests__/invoice-payment.test.tsx` 两文件 21 项通过。真实页面验证从待开票刷新为已开票、按申请 ID 下载、JSON 错误附件拒绝、其他状态和未申请呈现。`bunx tsgo -b`、变更文件 oxlint、`bun run build`、`go build -o build/local-preview/new-api .` 通过。
+- 本地浏览器从真实后端读取演示订单；下载的演示 PDF 与服务器文件逐字节一致。390×844 下弹窗宽 358、高 733.44，scrollWidth=clientWidth，无横向溢出且发票区域可滚动访问。截图位于忽略目录 `build/local-preview/screenshots/recharge-invoice-{desktop,mobile}.jpg`。
+- 为预览新增单独标注“本地演示”的订单和发票，未改动原订单和余额，未执行真实付款、开票或线上订单操作。添加前备份为 `build/local-preview/preview-before-invoice-demo.db`；演示记录标识保存在该目录 `invoice-demo.json`，不是产品启动时自动创建的数据。

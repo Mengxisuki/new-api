@@ -468,6 +468,11 @@ func rechargeOrder(c *gin.Context, operations bool) (*model.AccountRechargeOrder
 }
 
 // 内部说明和事件只在运营详情的权限与归属范围返回。
+// 先确认订单归属，再读取该订单的税务摘要。
+// 开票状态不依赖代充值履约状态，已完成订单仍可等待开票。
+// 未申请订单不额外查询发票表，避免增加无关读取。
+// 发票申请与订单已经在创建事务中关联，本接口不补建缺失数据。
+// 本次查询不修改申请或文件，也不向支付网关发起请求。
 func GetRechargeOrder(c *gin.Context) {
 	operations := strings.Contains(c.FullPath(), "/operations/")
 	o, ok := rechargeOrder(c, operations)
@@ -475,6 +480,32 @@ func GetRechargeOrder(c *gin.Context) {
 		return
 	}
 	result := gin.H{"order": o}
+	// 发票属于买家的税务资料，运营读单权限不扩大为财务权限。
+	// 仅本人详情返回摘要；业务员仍从原财务流程协作开票。
+	if !operations {
+		result["invoice"] = nil // 未申请开票与申请读取失败必须区分。
+		if o.InvoiceRequired {
+			// 用服务器订单的交易号、所有者和业务类型精确关联。
+			// 不使用模糊列表搜索，历史订单不会受分页或同号片段影响。
+			var invoice model.InvoiceRequest
+			err := model.DB.Where("trade_no = ? AND user_id = ? AND business_type = ?", o.TradeNo, o.UserID, "recharge").First(&invoice).Error
+			if err == nil {
+				err = invoice.Expand() // 读取冻结抬头，不用用户后来修改的常用抬头。
+			}
+			if err != nil {
+				// 坏快照或丢失记录不能伪装成待开票，也不回显税务原文。
+				common.ApiErrorT(c, "Failed to load invoice requests")
+				return
+			}
+			// 只返回展示和下载所需字段，不扩散税号、银行资料或磁盘路径。
+			// 下载仍用原本人发票接口逐次验证归属，摘要不授予文件访问权。
+			result["invoice"] = gin.H{
+				"id": invoice.Id, "status": invoice.Status, "title": invoice.Profile.Title,
+				"pay_amount": invoice.PayAmount, "invoice_number": invoice.InvoiceNumber,
+				"remark": invoice.Remark, "has_file": invoice.HasFile,
+			}
+		}
+	}
 	if operations && (c.GetInt("role") >= common.RoleAdminUser || o.AssigneeID == c.GetInt("id")) {
 		events := []model.AccountRechargeEvent{}
 		if err := model.DB.Where("order_id = ?", o.ID).Order("id DESC").Limit(200).Find(&events).Error; err != nil {

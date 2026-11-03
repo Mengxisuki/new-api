@@ -30,7 +30,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
-import type { Order, Product } from '../api'
+import type { Order, OrderInvoice, Product } from '../api'
 import { RechargeCheckout } from '../checkout'
 import { AccountRecharge } from '../index'
 import { RechargeOrderDetail } from '../order-detail'
@@ -77,6 +77,7 @@ const order: Order = {
   assignee_id: 0,
   email_mask: '',
   public_note: '',
+  invoice_required: false,
   refund_requested: false,
   wallet_sync_pending: false,
   version: 2,
@@ -98,6 +99,7 @@ function mount(ui: React.ReactNode) {
 afterEach(() => {
   cleanup() // 先卸载组件，确保轮询和敏感计时器停止。
   clients.splice(0).forEach((client) => client.clear()) // 清除安全摘要缓存，测试间不共享已付款状态。
+  vi.unstubAllGlobals() // 下载测试结束后释放 Blob 浏览器替身。
   vi.restoreAllMocks() // 请求代理复原，避免把成功响应带进失败场景。
   useAuthStore.getState().auth.reset('complete') // 身份与权限在测试间隔离，后续买家不能继承 Root。
 })
@@ -562,3 +564,163 @@ test('paused catalog disables purchase while preserving order history', async ()
     await screen.findByRole('button', { name: 'View order' })
   ).toBeVisible()
 })
+
+// 发票与订单办理是两条状态链，测试只使用网络边界的冻结摘要。
+// 真实详情、查询刷新与下载函数都参与，不直接挂载卡片冒充接线完成。
+// 申请 ID 特意不同于订单 ID，避免下载错用订单编号。
+const invoice: OrderInvoice = {
+  id: 72, // 使用不同主键区分发票与订单，保护下载目标。
+  status: 'pending', // 初始为已付款待开票，不能从订单状态覆盖。
+  title: 'Frozen company title', // 快照标题故意不同于套餐名，检测错误字段绑定。
+  pay_amount: 1.15, // 总实付含附加费，前端不能再次计算。
+  invoice_number: '', // 待开票没有号码，不生成占位发票号。
+  remark: '', // 初始无财务意见，不能复用代充值公开说明。
+  has_file: false, // 状态流转前没有附件，必须收起下载入口。
+}
+
+// 已付款时先显示待开票，财务开具后由同一个刷新入口更新。
+// 下载始终使用本人发票接口，而不是拼接文件路径。
+// 只隔离 HTTP 与浏览器 Blob API，不替换业务下载函数。
+// 附件只有明确点击后获取，轮询不应触发文件读取。
+// 金额沿用开票快照，可与测试订单金额不同来发现错误取值。
+test('order invoice refreshes from pending to issued and downloads its own file', async () => {
+  let issued = false // 仅改变 HTTP 响应，界面通过实际刷新更新。
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url.endsWith('/file')) {
+      return { data: new Blob(['%PDF-test'], { type: 'application/pdf' }) } // 虚构内容仅验证附件类型与下载链路。
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          order: { ...order, invoice_required: true }, // 开票选择保存在原订单，不读取当前个人偏好。
+          invoice: {
+            ...invoice,
+            status: issued ? 'issued' : 'pending', // 模拟财务改变状态，独立于代充值办理进度。
+            has_file: issued, // 文件就绪与状态一同来自服务器。
+            invoice_number: issued ? 'INV-72' : '', // 已开票才有号码，下载名称使用原值。
+          },
+        },
+      },
+    }
+  })
+  const create = vi.fn(() => 'blob:recharge-invoice') // 仅隔离浏览器能力，不替换业务下载函数。
+  const revoke = vi.fn() // 记录附件内存是否及时释放。
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = create // 错误响应不得创建可下载对象。
+      static revokeObjectURL = revoke // 与创建对象成对验证，不依赖操作系统下载器。
+    }
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {}) // 阻止测试触发 jsdom 导航，业务请求仍真实执行。
+  mount(<RechargeOrderDetail id={1} operations={false} onClose={vi.fn()} />)
+  const card = await screen.findByRole('region', {
+    name: 'Invoice information',
+  })
+  // 发票必须出现在左侧订单信息区，不能插入右侧提交资料表单。
+  expect(
+    screen.getByRole('region', { name: 'Order information' })
+  ).toContainElement(card)
+  expect(within(card).getByText('Awaiting invoice')).toBeVisible() // 确认待开票文案，而非代充值处理中。
+  expect(within(card).getByText(invoice.title)).toBeVisible() // 冻结抬头必须能在订单中直接核对。
+  expect(card).toHaveTextContent('1.15') // 禁止误显示测试订单本身的另一金额。
+  expect(
+    screen.queryByRole('button', { name: 'Download invoice' })
+  ).not.toBeInTheDocument()
+  expect(create).not.toHaveBeenCalled() // 查看订单不应提前下载税务附件。
+  // 实际点击刷新订单，发票和订单使用同一份响应更新。
+  issued = true // 模拟服务端更新，不直接改变组件 state。
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh order' }))
+  expect(await screen.findByText('Invoice issued')).toBeVisible() // 等待正式查询完成，避免只断言刷新被调用。
+  expect(screen.getByText('INV-72')).toBeVisible() // 原申请号码随状态同步出现。
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Download invoice' })
+  )
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith(
+      '/api/user/invoices/72/file',
+      expect.objectContaining({ responseType: 'blob' })
+    )
+  )
+  expect(create).toHaveBeenCalled() // 用户主动下载确实创建了文件对象。
+  expect(revoke).toHaveBeenCalledWith('blob:recharge-invoice') // 不能遗留包含附件内容的对象地址。
+  // 下载异常不能留下假文件；正式函数拒绝 JSON 错误附件。
+  get.mockResolvedValueOnce({
+    data: new Blob(['{"success":false}'], { type: 'application/json' }),
+  })
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Download invoice' })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Download invoice' })
+    ).toBeEnabled()
+  )
+  expect(create).toHaveBeenCalledTimes(1) // JSON 错误响应不能成为第二份 PDF。
+})
+
+// 每个状态都应有明确文字，非已开票状态不能出现下载入口。
+// 拒绝意见属于开票信息，不与代充值管理员打回说明混合。
+// 已开票但附件缺失要可定位，不能呈现一个无效链接。
+test.each([
+  ['pending_payment', 'Awaiting payment'],
+  ['processing', 'Invoice processing'],
+  ['rejected', 'Invoice rejected'],
+  ['issued', 'Invoice issued'],
+] as const)(
+  'order invoice shows %s and does not invent a file',
+  async (status, label) => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          order: { ...order, invoice_required: true },
+          invoice: { ...invoice, status, remark: 'Finance review explanation' },
+        },
+      },
+    })
+    mount(<RechargeOrderDetail id={1} operations={false} onClose={vi.fn()} />)
+    const card = await screen.findByRole('region', {
+      name: 'Invoice information',
+    })
+    expect(within(card).getByText(label)).toBeVisible() // 所有等待或拒绝状态必须有可读文字。
+    expect(within(card).getByText('Invoice remarks')).toBeVisible() // 财务说明应有独立标签。
+    expect(within(card).getByText('Finance review explanation')).toBeVisible() // 拒绝原因保留在发票区域。
+    expect(
+      screen.queryByRole('button', { name: 'Download invoice' })
+    ).not.toBeInTheDocument()
+    if (status === 'issued') {
+      expect(within(card).getByRole('alert')).toHaveTextContent(
+        'Invoice file is unavailable'
+      )
+    }
+  }
+)
+
+// 未申请与读取失败分开呈现；不能因为缺数据就宣布无需开票。
+// 两种模式都不得产生下载按钮，防止使用其他订单的缓存申请。
+test.each([false, true])(
+  'order invoice explicitly handles required=%s without an invoice',
+  async (required) => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          order: { ...order, invoice_required: required },
+          invoice: null,
+        },
+      },
+    })
+    mount(<RechargeOrderDetail id={1} operations={false} onClose={vi.fn()} />)
+    const card = await screen.findByRole('region', {
+      name: 'Invoice information',
+    })
+    expect(card).toHaveTextContent(
+      required ? 'Failed to load invoice requests' : 'No invoice requested'
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Download invoice' })
+    ).not.toBeInTheDocument()
+  }
+)

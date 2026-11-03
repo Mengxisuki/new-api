@@ -49,6 +49,7 @@ import {
   revealInfo,
   submitInfo,
 } from './api'
+import { RechargeOrderInvoice } from './order-invoice'
 import { RechargeProductInfo } from './product-info'
 import { orderStatus, rechargeActionLabels } from './status'
 
@@ -456,6 +457,15 @@ export function RechargeOrderDetail(props: {
                   </div>
                 </dl>
               </div>
+              {/* 发票跟随订单详情刷新，独立于套餐说明和办理反馈。
+                  仅买家详情展示，业务员不借订单读权限查看税务资料。
+                  查询失败时收起旧下载入口，不能将缓存当作当前授权。 */}
+              {!props.operations && !detail.isError && (
+                <RechargeOrderInvoice
+                  required={order.invoice_required}
+                  invoice={detail.data?.invoice}
+                />
+              )}
               {/* 管理员退回原因独立展示，不能误读为商品条款。 */}
               {order.public_note && (
                 <section

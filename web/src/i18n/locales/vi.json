@@ -8007,6 +8007,9 @@
     "Not confirmed": "Chưa xác nhận",
     "Payment compliance confirmation": "Xác nhận tuân thủ thanh toán",
     "Recharge readiness status is read-only": "Trạng thái sẵn sàng nạp hộ chỉ có thể đọc",
-    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Đặt OAK_RECHARGE_DATA_KEY trong môi trường máy chủ New API thành khóa ngẫu nhiên 32 byte mã hóa Base64, rồi khởi động lại dịch vụ. Sao lưu khóa và không thay thế khi dữ liệu đơn hàng vẫn cần giải mã."
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Đặt OAK_RECHARGE_DATA_KEY trong môi trường máy chủ New API thành khóa ngẫu nhiên 32 byte mã hóa Base64, rồi khởi động lại dịch vụ. Sao lưu khóa và không thay thế khi dữ liệu đơn hàng vẫn cần giải mã.",
+    "Invoice information": "Thông tin hóa đơn",
+    "Invoice remarks": "Ghi chú hóa đơn",
+    "No invoice requested": "Chưa yêu cầu hóa đơn"
   }
 }

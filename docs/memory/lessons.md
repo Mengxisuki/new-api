@@ -166,3 +166,17 @@
 现象：Key 映射已把 `Request.URL.RawQuery` 改为目标模型，后续 `c.Query("model")` 仍返回源名。根因：首次通过 `c.Query` 读取会初始化 Gin 的查询缓存；之后只改 URL 不会刷新该缓存。
 
 修复：映射入口直接使用 `c.Request.URL.Query()` 读取及修改，避免提前创建旧缓存；在分发前接入。`middleware/distributor_test.go` 的 `TestTokenModelMappingProtocolBodies/realtime` 用后续处理器的 `c.Query` 验证目标值。适用于本链路中所有前置处理器尚未读取查询缓存的情况，未来增加前置查询读取时需重新检查这一约束。
+
+## 2026-11-03 14:57:22 +00:00 — Key 跨模型映射不等于 Responses 参数兼容
+
+现象：线上任务把 `gpt-6-luna` 映射到 `glm-5.3` 后失败。通过 SSH 只读核对 New API 与 gpt-load 日志及日志表，确认 Key 目标已生效；gpt-load 的 `opencode_go` 路径返回 400，提示 `reasoning.context: this reasoning option requires a native Responses target`，New API 对客户端返回 502。同期订阅预扣不足后已尝试钱包，不是最终失败原因。
+
+根因与边界：当前映射只改变模型身份，保留其他请求参数；目标链路不支持此次 Responses 推理选项。源码 `middleware/token_model_mapping.go` 与 `gpt-load/internal/execution/bifrost/opencode_presets_test.go` 分别说明改名和原生协议保留边界。未读取完整用户任务正文，未确认 `reasoning.context` 的具体值，也不能据此断言其他所有模型切换都会失败。
+
+规避与后续：这类任务先使用兼容原请求参数的目标；若要跨供应商继续任务，须另行验证参数与历史工具调用的兼容策略，不能承诺仅删除一个字段即可无损继续。本轮仅诊断，未改生产配置、重启服务或向供应商重放任务；兼容修复尚未实施。
+
+## 2026-11-03 15:26:33 +00:00 — 新任务兼容处理已在 GPT-Load 本地落地
+
+承接 2026-11-03 14:57:22 条目：用户再次在新任务映射 Kimi 时遇到相同拒绝，并授权先实现新任务范围。GPT-Load 已对 OpenCode Go/Zen 的 GLM、Kimi、DeepSeek 模型族接入现有 Responses→Chat→Responses 转换；两类 New API 映射都在其前完成，无需在 New API 再写一份参数规则。
+
+验证包括真实 HTTP 网关、普通/流式响应、函数工具和结果回传、日志实际协议、原生 GPT 保留、旧状态/不支持工具拒绝、探测协议，以及相关包回归、定向 race 和构建。未部署或调用真实厂商，不能据此承诺所有客户端可无损切换；GPT 推理选项采用目标默认行为，托管/自定义语法工具仍需原生目标。具体模块与命令见 [GPT-Load 说明](../../../gpt-load/README_CN.md#oak新任务的跨模型兼容)。

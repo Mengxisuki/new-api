@@ -687,3 +687,10 @@ go vet ./internal/control
 CI 的 TS2550 通过 ES2022 Promise 构造器替代 Promise.withResolvers 修复，不升级全局编译目标。额度查询按钮的加载图标设为装饰性，保持加载期间按钮可访问名称稳定。
 
 验证命令：前端 `bun run test -- src/features/hosting src/features/keys/components/dialogs/__tests__/cc-switch-dialog.test.tsx --maxWorkers=1`、`bunx tsgo -b --force`、定向 oxlint、`bun run build`；后端 `go test ./controller ./model ./service/hosting -run 'TestHosting|TestTokenResourcePolicy|TestResourceRelay' -count=1 -timeout=180s`。外部库设置相同的 `TEST_SECURITY_DIALECT`/`TEST_RESOURCE_DB_DIALECT` 与隔离 DSN，再执行 controller 定向命令。真实 SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17，控制面仅替换外部 HTTP，不调用原厂耗额。六个前端测试文件共 40 项通过，类型检查、定向 lint、生产构建及上述三库定向回归通过。本机 Bun 不支持 `bun check`，类型检查使用仓库已有的 tsgo，未改依赖或目标 lib。没有提交、推送或部署，既有未验证账号不会被批量自动测试。
+
+
+## 19. 使用日志账号与回退说明（2026-11-03 03:39:28 +00:00）
+
+日志详情挂靠账号显示当前备注与脱敏邮箱，旧日志编号也在读取时按日志所有者安全解析；已解绑墓碑仍可显示，无法关联时说明账号信息不可用。回退原因按原始顺序翻译成账号额度已用完、无可用订阅额度、钱包余额不足、来源不支持模型等用户可读说明。原始代码继续保留在日志数据及导出中，不改历史事实。Token 用量未知移入现有 Token 明细分区，来源区不再重复展示。
+
+无新增表、依赖或计费变化。`go test ./controller ./model -run 'TestHostingLogAccountDisplay|TestFormat.*Logs|TestGet.*Logs' -count=1 -v -timeout=180s` 通过；外部库以 `TEST_SECURITY_DIALECT=mysql|postgres` 和对应测试 DSN 执行 `go test ./controller -run TestHostingLogAccountDisplay -count=1 -v -timeout=180s`，真实 MySQL 8.4.2、PostgreSQL 14.17 均通过，SQLite 3.50.4 通过。前端 `bun run test -- src/features/usage-logs --maxWorkers=1` 共 458 项通过；`bunx tsgo -b --force`、受影响文件 oxlint、`bun run build` 通过。日志库没有新增查询语法；本轮未另行运行 ClickHouse。没有提交、推送或生产部署。

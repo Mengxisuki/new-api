@@ -7870,6 +7870,16 @@
     "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "Après l’autorisation, un bref test du modèle est exécuté automatiquement et utilise une petite partie du quota du fournisseur.",
     "Testing account connection…": "Test de la connexion du compte…",
     "Connection verified. This account can now be used by your API keys.": "Connexion vérifiée. Ce compte peut désormais être utilisé par vos clés API.",
-    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Le test de connexion n’a pas abouti. Ce compte est exclu du routage. Réessayez dans les détails du compte."
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Le test de connexion n’a pas abouti. Ce compte est exclu du routage. Réessayez dans les détails du compte.",
+    "Hosted account": "Compte hébergé",
+    "Account information unavailable": "Informations du compte indisponibles",
+    "Account quota is exhausted": "Le quota du compte est épuisé",
+    "No available subscription quota": "Aucun quota d’abonnement disponible",
+    "Wallet balance is insufficient": "Le solde du portefeuille est insuffisant",
+    "Account is not currently available for requests": "Le compte ne peut pas traiter de requêtes actuellement",
+    "This resource does not support the requested model": "Cette ressource ne prend pas en charge le modèle demandé",
+    "The current API key cannot use this group": "La clé API actuelle ne peut pas utiliser ce groupe",
+    "This resource was skipped; the specific reason is unavailable": "Cette ressource a été ignorée ; le motif précis est indisponible",
+    "Unknown resource source": "Source de ressources inconnue"
   }
 }

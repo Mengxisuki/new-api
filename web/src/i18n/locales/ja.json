@@ -7870,6 +7870,16 @@
     "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "認証後、短いモデルテストが自動実行され、提供元の利用枠を少量消費します。",
     "Testing account connection…": "アカウント接続をテスト中…",
     "Connection verified. This account can now be used by your API keys.": "接続確認が完了しました。API キーからこのアカウントを利用できます。",
-    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "接続テストに合格しなかったため、このアカウントは振り分け対象外です。アカウント詳細で再試行してください。"
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "接続テストに合格しなかったため、このアカウントは振り分け対象外です。アカウント詳細で再試行してください。",
+    "Hosted account": "接続アカウント",
+    "Account information unavailable": "アカウント情報を取得できません",
+    "Account quota is exhausted": "アカウントの利用枠を使い切りました",
+    "No available subscription quota": "利用可能なサブスクリプション枠がありません",
+    "Wallet balance is insufficient": "ウォレット残高が不足しています",
+    "Account is not currently available for requests": "現在このアカウントはリクエストに利用できません",
+    "This resource does not support the requested model": "このリソースは要求されたモデルに対応していません",
+    "The current API key cannot use this group": "現在の API キーにはこのグループの利用権限がありません",
+    "This resource was skipped; the specific reason is unavailable": "このリソースはスキップされました。詳細な理由を取得できません",
+    "Unknown resource source": "リソースの提供元を確認できません"
   }
 }

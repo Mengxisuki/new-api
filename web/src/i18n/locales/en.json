@@ -7870,6 +7870,16 @@
     "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "After authorization, a short model test runs automatically and uses a small amount of provider quota.",
     "Testing account connection…": "Testing account connection…",
     "Connection verified. This account can now be used by your API keys.": "Connection verified. This account can now be used by your API keys.",
-    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Connection test did not pass. This account is excluded from routing. Retry in account details."
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Connection test did not pass. This account is excluded from routing. Retry in account details.",
+    "Hosted account": "Hosted account",
+    "Account information unavailable": "Account information unavailable",
+    "Account quota is exhausted": "Account quota is exhausted",
+    "No available subscription quota": "No available subscription quota",
+    "Wallet balance is insufficient": "Wallet balance is insufficient",
+    "Account is not currently available for requests": "Account is not currently available for requests",
+    "This resource does not support the requested model": "This resource does not support the requested model",
+    "The current API key cannot use this group": "The current API key cannot use this group",
+    "This resource was skipped; the specific reason is unavailable": "This resource was skipped; the specific reason is unavailable",
+    "Unknown resource source": "Unknown resource source"
   }
 }

@@ -7870,6 +7870,16 @@
     "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "После авторизации автоматически выполняется короткий тест модели с небольшим расходом квоты провайдера.",
     "Testing account connection…": "Проверка подключения аккаунта…",
     "Connection verified. This account can now be used by your API keys.": "Подключение проверено. Аккаунт теперь доступен для ваших API-ключей.",
-    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Тест подключения не пройден. Аккаунт исключён из маршрутизации. Повторите тест в сведениях об аккаунте."
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Тест подключения не пройден. Аккаунт исключён из маршрутизации. Повторите тест в сведениях об аккаунте.",
+    "Hosted account": "Подключённый аккаунт",
+    "Account information unavailable": "Информация об аккаунте недоступна",
+    "Account quota is exhausted": "Квота аккаунта исчерпана",
+    "No available subscription quota": "Нет доступной квоты подписки",
+    "Wallet balance is insufficient": "Недостаточно средств в кошельке",
+    "Account is not currently available for requests": "Аккаунт сейчас недоступен для запросов",
+    "This resource does not support the requested model": "Этот источник не поддерживает запрошенную модель",
+    "The current API key cannot use this group": "У текущего API-ключа нет доступа к этой группе",
+    "This resource was skipped; the specific reason is unavailable": "Этот источник пропущен; точная причина недоступна",
+    "Unknown resource source": "Источник ресурсов неизвестен"
   }
 }

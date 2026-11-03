@@ -275,3 +275,24 @@ describe('usage facts billing details', () => {
     expect(screen.getByText('Total Cost')).toBeInTheDocument()
   })
 })
+
+// 用量未知属于 Token 明细，不与来源身份或平台费用混为一谈。
+// 真实详情必须在零 token 时仍保留该分区，不把未知伪装成零用量。
+// 查询整个来源区，防止提示在两个区域重复出现。
+// 保留既有计费分区，未知原厂用量不能改变已确定的平台费用。
+test('未知原厂用量放在 Token 明细而不是来源区域', () => {
+  const client = renderDetails({
+    resource_source: 'hosting',
+    usage_status: 'unknown',
+  })
+  expect(screen.getByText('Token Breakdown')).toBeVisible()
+  expect(screen.getByText('Provider token usage is unknown')).toBeVisible()
+  expect(
+    within(
+      screen.getByRole('region', { name: 'Actual resource source' })
+    ).queryByText('Provider token usage is unknown')
+  ).toBeNull()
+  expect(screen.queryByText('Input Tokens')).toBeNull()
+  expect(screen.getByText('Billing Details')).toBeVisible()
+  client.clear()
+})

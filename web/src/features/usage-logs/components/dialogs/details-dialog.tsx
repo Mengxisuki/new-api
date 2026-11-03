@@ -52,7 +52,6 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { ResourceSourceDetails } from '../resource-source-details'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -94,6 +93,7 @@ import {
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
+import { ResourceSourceDetails } from '../resource-source-details'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -396,7 +396,17 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   const { log, other } = props
 
   // 未知用量不能经过旧逻辑的缺省零转换，也不能绘制虚假统计。
-  if (other.usage_status === 'unknown') return null
+  // 未知也保留相同分区，让用户在固定位置理解用量缺失。
+  // 不显示输入/输出零值，也不影响下方已经确定的平台费用。
+  if (other.usage_status === 'unknown') {
+    return (
+      <DetailSection label={t('Token Breakdown')}>
+        <p role='status' className='text-muted-foreground text-xs'>
+          {t('Provider token usage is unknown')}
+        </p>
+      </DetailSection>
+    )
+  }
   const promptTokens = log.prompt_tokens || 0
   const completionTokens = log.completion_tokens || 0
   const cacheRead = other.cache_tokens || 0

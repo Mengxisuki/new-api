@@ -7870,6 +7870,16 @@
     "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "授權完成後會自動執行一次簡短的模型測試，消耗少量原廠額度。",
     "Testing account connection…": "正在自動測試帳號連線…",
     "Connection verified. This account can now be used by your API keys.": "連線測試通過，帳號已可依 API Key 的資源順序使用。",
-    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "連線測試未通過，帳號暫不參與調度。請在帳號詳情中查看並重試。"
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "連線測試未通過，帳號暫不參與調度。請在帳號詳情中查看並重試。",
+    "Hosted account": "掛靠帳號",
+    "Account information unavailable": "帳號資訊無法取得",
+    "Account quota is exhausted": "帳號額度已用完",
+    "No available subscription quota": "沒有可用的訂閱額度",
+    "Wallet balance is insufficient": "錢包餘額不足",
+    "Account is not currently available for requests": "帳號目前無法用於呼叫",
+    "This resource does not support the requested model": "此來源不支援請求的模型",
+    "The current API key cannot use this group": "目前的 API 金鑰無權使用此分組",
+    "This resource was skipped; the specific reason is unavailable": "已略過此來源，暫時無法取得具體原因",
+    "Unknown resource source": "來源資訊無法取得"
   }
 }

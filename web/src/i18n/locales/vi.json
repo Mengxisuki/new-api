@@ -7870,6 +7870,16 @@
     "After authorization, a short model test runs automatically and uses a small amount of provider quota.": "Sau khi ủy quyền, một bài kiểm tra mô hình ngắn sẽ tự động chạy và dùng một ít hạn mức của nhà cung cấp.",
     "Testing account connection…": "Đang kiểm tra kết nối tài khoản…",
     "Connection verified. This account can now be used by your API keys.": "Kết nối đã được xác minh. Các khóa API của bạn hiện có thể sử dụng tài khoản này.",
-    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Kiểm tra kết nối chưa thành công. Tài khoản này không được đưa vào định tuyến. Hãy thử lại trong phần chi tiết tài khoản."
+    "Connection test did not pass. This account is excluded from routing. Retry in account details.": "Kiểm tra kết nối chưa thành công. Tài khoản này không được đưa vào định tuyến. Hãy thử lại trong phần chi tiết tài khoản.",
+    "Hosted account": "Tài khoản liên kết",
+    "Account information unavailable": "Không có thông tin tài khoản",
+    "Account quota is exhausted": "Hạn mức tài khoản đã hết",
+    "No available subscription quota": "Không còn hạn mức gói đăng ký khả dụng",
+    "Wallet balance is insufficient": "Số dư ví không đủ",
+    "Account is not currently available for requests": "Tài khoản hiện không thể xử lý yêu cầu",
+    "This resource does not support the requested model": "Nguồn này không hỗ trợ mô hình được yêu cầu",
+    "The current API key cannot use this group": "Khóa API hiện tại không có quyền sử dụng nhóm này",
+    "This resource was skipped; the specific reason is unavailable": "Nguồn này đã bị bỏ qua; chưa có lý do cụ thể",
+    "Unknown resource source": "Không xác định được nguồn tài nguyên"
   }
 }

@@ -250,6 +250,8 @@ export interface LogOtherData {
   // 账号编号只指向本人挂靠资源，不能包含上游管理标识。
   resource_source?: 'hosting' | 'subscription' | 'wallet'
   hosting_account_id?: number
+  // 日志读取时按所有者补充当前备注与脱敏邮箱，历史编号仅供关联。
+  hosting_accounts?: Record<string, { alias: string; email_mask: string }>
   resource_policy_revision?: string
   resource_skip_reasons?: string[]
   // 未取得原厂用量与请求执行结果分别记录，避免未知伪装为零。

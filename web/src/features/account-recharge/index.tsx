@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -32,6 +33,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { toIntlLocale } from '@/i18n/languages'
 import { hasPermission } from '@/lib/admin-permissions'
 import { formatNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getOrders, getProducts, type Product } from './api'
@@ -222,10 +224,23 @@ export function AccountRecharge(props: { operations?: boolean }) {
               {catalog.data && !catalog.data.configured && (
                 <p role='status'>
                   {t(
-                    'Account top-ups are not available yet. Please contact the administrator.'
+                    catalog.data.enabled
+                      ? 'Account top-ups are not available yet. Please contact the administrator.'
+                      : 'Account top-ups are paused'
                   )}
                 </p>
               )}
+              {catalog.data &&
+                !catalog.data.configured &&
+                user?.role === ROLE.SUPER_ADMIN && (
+                  <Link
+                    className='text-sm underline'
+                    to='/system-settings/billing/$section'
+                    params={{ section: 'recharge' }}
+                  >
+                    {t('Account top-up settings')}
+                  </Link>
+                )}
               {catalog.data?.items.length === 0 && (
                 <EmptyState title={t('No recharge products available')} />
               )}

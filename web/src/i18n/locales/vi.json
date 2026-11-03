@@ -7994,6 +7994,19 @@
     "Processing result": "Kết quả xử lý",
     "Purchase instructions": "Hướng dẫn mua",
     "Reason for additional information": "Lý do cần bổ sung thông tin",
-    "Service provider": "Nhà cung cấp"
+    "Service provider": "Nhà cung cấp",
+    "Account data encryption": "Mã hóa thông tin tài khoản",
+    "Account top-up settings": "Cài đặt nạp hộ tài khoản",
+    "Account top-ups are paused": "Đã tạm dừng nhận đơn nạp hộ",
+    "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.": "Hãy hoàn tất xác nhận tuân thủ tại Cổng thanh toán trước khi bật nạp hộ.",
+    "Configuration readiness": "Trạng thái cấu hình",
+    "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.": "Cấu hình kênh WeChat tại Cổng thanh toán. Chỉ sản phẩm cho phép mới có thể thanh toán bằng số dư nền tảng.",
+    "Confirmed": "Đã xác nhận",
+    "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.": "Tắt sẽ chặn đơn mới và thanh toán đơn chưa trả tiền. Đơn đã thanh toán và thông báo thanh toán vẫn được xử lý bình thường.",
+    "Enable account top-ups": "Bật nhận đơn nạp hộ",
+    "Not confirmed": "Chưa xác nhận",
+    "Payment compliance confirmation": "Xác nhận tuân thủ thanh toán",
+    "Recharge readiness status is read-only": "Trạng thái sẵn sàng nạp hộ chỉ có thể đọc",
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Đặt OAK_RECHARGE_DATA_KEY trong môi trường máy chủ New API thành khóa ngẫu nhiên 32 byte mã hóa Base64, rồi khởi động lại dịch vụ. Sao lưu khóa và không thay thế khi dữ liệu đơn hàng vẫn cần giải mã."
   }
 }

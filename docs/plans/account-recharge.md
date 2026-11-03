@@ -294,3 +294,21 @@ API 相对方案做了小幅收敛：报价单独使用 `POST /quote`，创建 `
 - `bun run test -- src/features/account-recharge` 七项通过，覆盖商品编辑与余额开关、字段清空、说明展开、结账、提交后清理、权限失败撤下入口、补资料反馈归属及长文案布局。`bunx tsgo -b`、定向 oxlint、`bun run build` 与后端 `go build` 通过。
 - 实际浏览器验证桌面 1440×900 双栏和 390×844 手机布局，弹窗保持在视口内；手机可滚动至邮箱、JSON 和提交按钮，无横向溢出。图标选择器搜索 OpenAI 后显示品牌图标，未读取或提交真实会话。
 - 升级本地后端前用 SQLite 在线备份保存 build/local-preview/preview-before-product-layout-*.db，独立环境配置与原用户数据保留。截图保存在该目录 screenshots/，不纳入版本控制。
+
+
+## 14. 接单开关与就绪状态
+
+更新时间：2026-11-03 07:48:22 +00:00。SSH 已恢复连接，仅只读核查线上：new-api 正常运行，但进程与 `/etc/new-api/new-api.env` 均未配置 OAK_RECHARGE_DATA_KEY。未修改线上环境、重启服务或发布本轮代码。
+
+本地已实现 `/system-settings/billing/recharge`，沿用 Root 系统设置入口，保存 `recharge_setting.enabled`。页面分别显示 RechargeEncryptionReady、RechargePaymentReady、RechargeWeChatReady；三个字段只读且不返回任何密钥。密钥或支付确认缺失时拒绝重新启用，但允许随时关闭。微信渠道与商品余额权限仍沿用原配置。
+
+默认 true 保留升级前行为。`configured` 是开关、加密和支付确认条件的交集，用户目录另返回 enabled 以区分主动暂停与部署未就绪。关闭后服务端拒绝新报价、新订单和待付款订单继续支付；同幂等键原单恢复、已付资料提交、办理、退款和支付通知继续。仅使用现有 options 表，无新增表或列；开关写入复用已有事务路径，持久化失败不会更新内存或返回成功。
+
+验证：
+
+- SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17 本地隔离实例，配置 TEST_MYSQL_DSN 与 TEST_POSTGRES_DSN 后执行 `go test ./controller -run '^TestRecharge' -count=1 -v`，全部通过且三库无跳过。新增 TestRechargeConfiguration 验证真假值持久化、重复迁移保留、只读标记不可写、非法值拒绝、密钥不回传、数据库失败不改变内存。HTTP 订单回归覆盖暂停后新购拒绝、原单恢复、合法支付完成和已付资料提交。
+- `go test ./controller ./model -run 'Test.*Option' -count=1` 通过，保护原设置行为。
+- `bun run test -- src/features/account-recharge src/features/system-settings/billing`：两个文件 11 项通过；`bunx tsgo -b`、定向 oxlint、`bun run build`、`go build` 通过。实际本地浏览器关闭并保存后，用户页显示暂停、购买按钮禁用、历史保留；重新开启保存成功，已恢复原状态。
+- 新入口复用 SettingsSection、SettingsForm、SettingsSwitchField 与页头保存按钮，未新增依赖。已有测试数据库和本地环境文件保持不变；本地只为验收保存了一次关闭和一次开启。
+
+上线准备：先核对线上当前版本和待处理资料，备份数据库及环境文件；确认首次配置密钥不会替换既有密文所需密钥后，生成并持久保存 32 字节随机密钥（Base64），与本轮前后端一同发布并重启 New API。实际生产写入与凭证配置需用户确认，不能只打开业务开关而忽略缺失密钥。

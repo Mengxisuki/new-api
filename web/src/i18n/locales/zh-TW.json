@@ -7994,6 +7994,19 @@
     "Processing result": "處理結果",
     "Purchase instructions": "購買說明",
     "Reason for additional information": "補充資料原因",
-    "Service provider": "服務商"
+    "Service provider": "服務商",
+    "Account data encryption": "帳戶資料加密",
+    "Account top-up settings": "代充值設定",
+    "Account top-ups are paused": "代充值已暫停接單",
+    "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.": "請先在「支付閘道」完成支付合規確認，再開啟代充值接單。",
+    "Configuration readiness": "設定就緒狀態",
+    "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.": "請在「支付閘道」設定微信渠道；僅允許餘額支付的商品可使用平台餘額購買。",
+    "Confirmed": "已確認",
+    "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.": "關閉後停止新下單與未付款訂單繼續支付；已付款訂單的辦理及支付回呼仍正常進行。",
+    "Enable account top-ups": "開啟代充值接單",
+    "Not confirmed": "未確認",
+    "Payment compliance confirmation": "支付合規確認",
+    "Recharge readiness status is read-only": "代充值就緒狀態為唯讀資訊",
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "請在 New API 伺服器環境中設定 OAK_RECHARGE_DATA_KEY，值為經過 Base64 編碼的 32 位元組隨機金鑰，然後重新啟動服務。請持久備份金鑰，訂單資料仍需解密時不要替換。"
   }
 }

@@ -7994,6 +7994,19 @@
     "Processing result": "Résultat du traitement",
     "Purchase instructions": "Conditions d’achat",
     "Reason for additional information": "Motif de la demande d’informations",
-    "Service provider": "Fournisseur"
+    "Service provider": "Fournisseur",
+    "Account data encryption": "Chiffrement des données du compte",
+    "Account top-up settings": "Paramètres de recharge de compte",
+    "Account top-ups are paused": "Les recharges de compte sont suspendues",
+    "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.": "Confirmez la conformité des paiements dans Passerelle de paiement avant d’activer les recharges.",
+    "Configuration readiness": "État de la configuration",
+    "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.": "Configurez un canal WeChat dans Passerelle de paiement. Le solde de la plateforme est utilisable uniquement pour les produits qui l’autorisent.",
+    "Confirmed": "Confirmé",
+    "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.": "La désactivation bloque les nouvelles commandes et le paiement des commandes impayées. Les commandes payées et les notifications de paiement restent traitées.",
+    "Enable account top-ups": "Activer les recharges de compte",
+    "Not confirmed": "Non confirmé",
+    "Payment compliance confirmation": "Confirmation de conformité des paiements",
+    "Recharge readiness status is read-only": "L’état de préparation des recharges est en lecture seule",
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Définissez OAK_RECHARGE_DATA_KEY dans l’environnement du serveur New API avec une clé aléatoire de 32 octets encodée en Base64, puis redémarrez le service. Sauvegardez cette clé et ne la remplacez pas tant que des données de commande doivent être déchiffrées."
   }
 }

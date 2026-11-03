@@ -149,6 +149,7 @@ test('checkout excludes disabled wallet payment and binds the confirmed quote', 
         items: [product],
         payment_methods: [{ id: 'epay:wxpay', name: 'WeChat Pay' }],
         configured: true,
+        enabled: true,
       }}
       onClose={vi.fn()}
       onCreated={created}
@@ -378,6 +379,7 @@ test('product editor persists the balance switch and version', async () => {
         items: [{ ...product, allow_wallet_payment: true }],
         payment_methods: [],
         configured: true,
+        enabled: true,
       },
     },
   })
@@ -459,7 +461,8 @@ test('choosing a product opens checkout inside the account recharge page', async
         ? {
             items: [product],
             payment_methods: [{ id: 'epay:wxpay', name: 'WeChat Pay' }],
-            configured: true, // 验证业务已启用时的可购买路径，不绕开部署门禁。
+            configured: true,
+            enabled: true, // 验证业务已启用时的可购买路径，不绕开部署门禁。
           }
         : { items: [], total: 0 }, // 本人订单正常为空，不能把查询失败伪装为空列表。
     },
@@ -533,4 +536,29 @@ test('returned orders separate purchase information, staff feedback and responsi
   expect(information).toHaveClass('lg:overflow-y-auto')
   expect(actions).toHaveClass('lg:overflow-y-auto')
   expect(screen.getByRole('dialog')).toHaveClass('sm:max-w-5xl')
+})
+
+// 暂停接单不能把已付历史隐藏，也不应该只剩一个无解释的灰按钮。
+// 目录开关来自服务端，普通用户不获得后台配置入口。
+// 沿用实际页面与目录解析，确保新增 enabled 字段进入交互。
+test('paused catalog disables purchase while preserving order history', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url.endsWith('/products')
+        ? {
+            items: [product],
+            configured: false,
+            enabled: false,
+            payment_methods: [],
+          }
+        : { items: [order], total: 1 },
+    },
+  }))
+  mount(<AccountRecharge />)
+  expect(await screen.findByText('Account top-ups are paused')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Choose plan' })).toBeDisabled()
+  expect(
+    await screen.findByRole('button', { name: 'View order' })
+  ).toBeVisible()
 })

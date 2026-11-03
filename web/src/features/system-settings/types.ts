@@ -282,6 +282,10 @@ export type ModelSettings = {
 }
 
 export type BillingSettings = {
+  'recharge_setting.enabled': boolean
+  RechargeEncryptionReady: boolean
+  RechargePaymentReady: boolean
+  RechargeWeChatReady: boolean
   'invoice_setting.default_rate': number
   'invoice_setting.group_rates': string
   QuotaForNewUser: number

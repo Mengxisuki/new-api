@@ -7994,6 +7994,19 @@
     "Processing result": "Processing result",
     "Purchase instructions": "Purchase instructions",
     "Reason for additional information": "Reason for additional information",
-    "Service provider": "Service provider"
+    "Service provider": "Service provider",
+    "Account data encryption": "Account data encryption",
+    "Account top-up settings": "Account top-up settings",
+    "Account top-ups are paused": "Account top-ups are paused",
+    "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.": "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.",
+    "Configuration readiness": "Configuration readiness",
+    "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.": "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.",
+    "Confirmed": "Confirmed",
+    "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.": "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.",
+    "Enable account top-ups": "Enable account top-ups",
+    "Not confirmed": "Not confirmed",
+    "Payment compliance confirmation": "Payment compliance confirmation",
+    "Recharge readiness status is read-only": "Recharge readiness status is read-only",
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption."
   }
 }

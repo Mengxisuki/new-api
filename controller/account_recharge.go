@@ -125,6 +125,20 @@ func GetRechargeProducts(c *gin.Context) {
 		rechargeError(c, err)
 		return
 	}
+	common.ApiSuccess(c, gin.H{
+		"items": products, "payment_methods": rechargePaymentMethods(),
+		"enabled":    operation_setting.GetRechargeSetting().Enabled,
+		"configured": operation_setting.GetRechargeSetting().Enabled && service.RechargeConfigured() && operation_setting.IsPaymentComplianceConfirmed(),
+	})
+}
+
+// 商品目录和设置诊断共用微信渠道判断，避免后台显示就绪却无法选购。
+// 返回的只有公开渠道编号与名称，不包含商户密钥。
+// 微信网关和官方渠道可以同时返回，由买家在结账时选择。
+// 渠道列表允许为空，不把余额方式伪装成一个微信渠道。
+// 逐商品余额开关另在报价时校验，这里不改变商品配置。
+// 支付确认未完成时没有可用渠道，余额购买也受原确认门禁保护。
+func rechargePaymentMethods() []gin.H {
 	methods := []gin.H{}
 	if operation_setting.IsPaymentComplianceConfirmed() {
 		if GetEpayClient() != nil && operation_setting.ContainsPayMethod("wxpay") {
@@ -136,7 +150,25 @@ func GetRechargeProducts(c *gin.Context) {
 			}
 		}
 	}
-	common.ApiSuccess(c, gin.H{"items": products, "payment_methods": methods, "configured": service.RechargeConfigured() && operation_setting.IsPaymentComplianceConfirmed()})
+	return methods
+}
+
+// 新报价、新订单和未付订单继续付款采用相同门禁。
+// 关闭开关不会删除订单，也不能阻止合法迟到回调或已付履约。
+// 配置错误明确返回原因，不能只依赖前端禁用按钮。
+// 开关优先返回暂停原因；管理员诊断仍单独显示环境缺失项。
+// 密钥失效时也停止未付订单收款，避免产生无法收资料的新付款。
+// 不将此检查挂到整个路由组，否则会阻断已付订单履约。
+func requireRechargeSales(c *gin.Context) bool {
+	if !operation_setting.GetRechargeSetting().Enabled {
+		common.ApiErrorT(c, "Account top-ups are paused")
+		return false
+	}
+	if !service.RechargeConfigured() {
+		common.ApiErrorT(c, "Recharge encryption is not configured")
+		return false
+	}
+	return requirePaymentCompliance(c)
 }
 
 // 商品更新只绑定允许配置的字段，
@@ -266,6 +298,9 @@ func rechargeQuote(c *gin.Context, req rechargePurchase) (*model.AccountRecharge
 // 报价失败使用明确提示，
 // 不能静默采用商品原价继续收款。
 func QuoteRechargeOrder(c *gin.Context) {
+	if !requireRechargeSales(c) {
+		return
+	}
 	var req rechargePurchase
 	if !rechargeBody(c, &req) {
 		return
@@ -303,13 +338,6 @@ func QuoteRechargeOrder(c *gin.Context) {
 // 超时后也能从本人列表继续。
 // 已创建订单不接受前端指定新的所有者或直接修改付款方式。
 func CreateRechargeOrder(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-	if !service.RechargeConfigured() {
-		common.ApiErrorT(c, "Recharge encryption is not configured")
-		return
-	}
 	var req rechargePurchase
 	if !rechargeBody(c, &req) {
 		return
@@ -339,6 +367,9 @@ func CreateRechargeOrder(c *gin.Context) {
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		rechargeError(c, err)
+		return
+	}
+	if !requireRechargeSales(c) {
 		return
 	}
 	order, invoice, err := rechargeQuote(c, req)
@@ -492,6 +523,10 @@ func PayRechargeOrder(c *gin.Context) {
 	}
 	o, ok := rechargeOrder(c, false)
 	if !ok {
+		return
+	}
+	// 已付请求保持幂等；暂停时拒绝生成或重发未付订单的支付入口。
+	if o.PaymentStatus == "pending" && !requireRechargeSales(c) {
 		return
 	}
 	LockOrder(o.TradeNo)

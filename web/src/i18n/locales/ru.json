@@ -7994,6 +7994,19 @@
     "Processing result": "Результат обработки",
     "Purchase instructions": "Условия покупки",
     "Reason for additional information": "Причина запроса дополнительных данных",
-    "Service provider": "Поставщик"
+    "Service provider": "Поставщик",
+    "Account data encryption": "Шифрование данных аккаунта",
+    "Account top-up settings": "Настройки пополнения аккаунтов",
+    "Account top-ups are paused": "Приём заказов на пополнение приостановлен",
+    "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.": "Перед включением пополнений подтвердите соответствие платежей в разделе «Платёжный шлюз».",
+    "Configuration readiness": "Готовность конфигурации",
+    "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.": "Настройте канал WeChat в разделе «Платёжный шлюз». Баланс платформы доступен только для товаров, разрешающих такую оплату.",
+    "Confirmed": "Подтверждено",
+    "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.": "Отключение блокирует новые заказы и оплату неоплаченных заказов. Оплаченные заказы и уведомления о платежах обрабатываются как обычно.",
+    "Enable account top-ups": "Принимать заказы на пополнение",
+    "Not confirmed": "Не подтверждено",
+    "Payment compliance confirmation": "Подтверждение соответствия платежей",
+    "Recharge readiness status is read-only": "Статус готовности пополнений доступен только для чтения",
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "Задайте OAK_RECHARGE_DATA_KEY в окружении сервера New API: случайный ключ из 32 байт в кодировке Base64. Затем перезапустите сервис. Сохраните резервную копию ключа и не заменяйте его, пока требуется расшифровка данных заказов."
   }
 }

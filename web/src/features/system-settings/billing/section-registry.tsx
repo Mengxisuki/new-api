@@ -25,6 +25,7 @@ import { PaymentSettingsSection } from '../integrations/payment-settings-section
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { RechargeSettingsSection } from './recharge-settings-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -189,6 +190,18 @@ const BILLING_SECTIONS = [
           confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
           confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
         }}
+      />
+    ),
+  },
+  {
+    id: 'recharge',
+    titleKey: 'Account top-up settings',
+    build: (settings: BillingSettings) => (
+      <RechargeSettingsSection
+        enabled={settings['recharge_setting.enabled']}
+        encryptionReady={settings.RechargeEncryptionReady}
+        paymentReady={settings.RechargePaymentReady}
+        wechatReady={settings.RechargeWeChatReady}
       />
     ),
   },

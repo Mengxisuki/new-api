@@ -567,6 +567,8 @@ func TestRechargeSensitivePermissions(t *testing.T) {
 // 不在测试中伪造成功结果。
 // 该用例补足 UI 只模拟 HTTP时无法覆盖的创建金额校验。
 func TestRechargeCheckoutAndGatewayForm(t *testing.T) {
+	// 初始化正式方言列名，单独运行也不依赖前面的矩阵测试。
+	modelManagementDB(t, "sqlite", "")
 	user, identity := setupSecurityEnrollmentTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.InvoiceProfile{}, &model.InvoiceRequest{}))
 	t.Setenv("OAK_RECHARGE_DATA_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32)))
@@ -631,6 +633,31 @@ func TestRechargeCheckoutAndGatewayForm(t *testing.T) {
 	result = request("GET", fmt.Sprintf("/api/account-recharge/orders/%d", envelope.Data.ID), nil)
 	assert.Contains(t, result.Body.String(), `"payment_status":"pending"`)
 	assert.NotContains(t, result.Body.String(), `"params"`)
+	// 暂停业务只阻止继续收新款；已签发的支付通知仍须兑现。
+	// 开关使用真实持久设置接口，不能只隐藏页面按钮。
+	// 旧订单通过原幂等键恢复，不能因暂停丢失已有订单。
+	previousEnabled := operation_setting.GetRechargeSetting().Enabled
+	t.Cleanup(func() { operation_setting.GetRechargeSetting().Enabled = previousEnabled })
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	require.NoError(t, model.UpdateOption("recharge_setting.enabled", "false"))
+	for _, path := range []string{"/quote", fmt.Sprintf("/orders/%d/pay", envelope.Data.ID)} {
+		paused := request("POST", "/api/account-recharge"+path, purchase)
+		assert.Contains(t, paused.Body.String(), "Account top-ups are paused")
+	}
+	assert.Contains(t, request("POST", "/api/account-recharge/orders", purchase).Body.String(), envelope.Data.TradeNo)
+	purchase.RequestID = "643bf922-3f9f-4da9-ad8d-35111c9458aa"
+	assert.Contains(t, request("POST", "/api/account-recharge/orders", purchase).Body.String(), "Account top-ups are paused")
+	// 模拟合法回调完成原微信订单；不向任何真实商户请求付款。
+	require.NoError(t, model.CompleteAccountRechargePayment(envelope.Data.TradeNo, model.PaymentProviderEpay, "wxpay", "paused-paid", decimal.NewFromInt(129)))
+	result = request("GET", fmt.Sprintf("/api/account-recharge/orders/%d", envelope.Data.ID), nil)
+	assert.Contains(t, result.Body.String(), `"payment_status":"paid"`)
+	// 已付订单暂停期间仍可提交资料，用户不应被锁在已付款阶段。
+	route.POST("/orders/:id/account-info", SubmitRechargeInfo)
+	paid, err := model.GetAccountRechargeOrder(envelope.Data.ID, user.Id)
+	require.NoError(t, err)
+	result = request("POST", fmt.Sprintf("/api/account-recharge/orders/%d/account-info", paid.ID), gin.H{"version": paid.Version, "email": "owner@example.com", "session": `{"user":{"email":"owner@example.com"},"accessToken":"fixture"}`})
+	assert.Contains(t, result.Body.String(), `"success":true`)
+
 }
 
 // 业务员授权沿用正式用户管理入口，不能仅测试权限常量。
@@ -719,4 +746,65 @@ func TestRechargeAccountInfoErrorMessages(t *testing.T) {
 	decoded, err := service.DecryptRechargeInfo(order.TradeNo, encrypted)
 	require.NoError(t, err)
 	assert.Equal(t, session, decoded.Session) // 仅规范邮箱，原始 JSON 不应被重写。
+}
+
+// 设置状态使用真实数据库及正式选项控制器，不模拟保存成功。
+// 每个方言验证开关落库、只读状态和坏配置拒绝。
+// 测试只使用固定虚构密钥，响应不得包含密钥正文。
+// 故障注入仅影响本用例隔离库，确保失败不会改变运行状态。
+func TestRechargeConfiguration(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
+			if dialect != "sqlite" && dsn == "" {
+				t.Skip("test database DSN is not configured")
+			}
+			db := modelManagementDB(t, dialect, dsn)
+			previousEnabled := operation_setting.GetRechargeSetting().Enabled
+			previousPayment := *operation_setting.GetPaymentSetting()
+			t.Cleanup(func() {
+				operation_setting.GetRechargeSetting().Enabled = previousEnabled
+				*operation_setting.GetPaymentSetting() = previousPayment
+			})
+			operation_setting.GetPaymentSetting().ComplianceConfirmed = true
+			operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+			t.Setenv("OAK_RECHARGE_DATA_KEY", "")
+			// 缺少密钥时拒绝启用，管理员得到明确原因。
+			response := modelManagementRequest(t, UpdateOption, "PUT", "/api/option/", gin.H{"key": "recharge_setting.enabled", "value": true}, nil)
+			assert.Contains(t, response.Body.String(), "Recharge encryption is not configured")
+			// 关闭无须密钥，保存 false 后再次读取数据库仍为 false。
+			response = modelManagementRequest(t, UpdateOption, "PUT", "/api/option/", gin.H{"key": "recharge_setting.enabled", "value": false}, nil)
+			assert.Contains(t, response.Body.String(), `"success":true`)
+			var saved model.Option
+			require.NoError(t, db.Where(&model.Option{Key: "recharge_setting.enabled"}).First(&saved).Error)
+			assert.Equal(t, "false", saved.Value)
+			assert.False(t, operation_setting.GetRechargeSetting().Enabled)
+			require.NoError(t, db.AutoMigrate(&model.Option{})) // 现有选项表无须新增列，重复迁移保留开关。
+			require.NoError(t, db.Where(&model.Option{Key: "recharge_setting.enabled"}).First(&saved).Error)
+			assert.Equal(t, "false", saved.Value)
+			// 正常运行时就绪信息由服务器计算，不接受浏览器伪造。
+			for _, key := range []string{"RechargeEncryptionReady", "RechargePaymentReady", "RechargeWeChatReady"} {
+				require.Error(t, model.UpdateOption(key, "true"))
+			}
+			require.Error(t, model.UpdateOption("recharge_setting.enabled", "yes"))
+			key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
+			t.Setenv("OAK_RECHARGE_DATA_KEY", key)
+			response = modelManagementRequest(t, UpdateOption, "PUT", "/api/option/", gin.H{"key": "recharge_setting.enabled", "value": true}, nil)
+			assert.Contains(t, response.Body.String(), `"success":true`)
+			assert.True(t, operation_setting.GetRechargeSetting().Enabled)
+			response = modelManagementRequest(t, GetOptions, "GET", "/api/option/", nil, nil)
+			assert.Contains(t, response.Body.String(), `"key":"RechargeEncryptionReady","value":"true"`)
+			assert.NotContains(t, response.Body.String(), key)
+			// 已有商品接口同步反映开关，不需要前端猜测服务是否暂停。
+			require.NoError(t, db.AutoMigrate(&model.AccountRechargeProduct{}))
+			require.NoError(t, model.UpdateOption("recharge_setting.enabled", "false"))
+			response = modelManagementRequest(t, GetRechargeProducts, "GET", "/api/account-recharge/products", nil, nil)
+			assert.Contains(t, response.Body.String(), `"enabled":false`)
+			assert.Contains(t, response.Body.String(), `"configured":false`)
+			// 数据库写入失败不能假装启用；复用批量选项事务的错误传播。
+			require.NoError(t, db.Migrator().DropTable(&model.Option{}))
+			require.Error(t, model.UpdateOption("recharge_setting.enabled", "true"))
+			assert.False(t, operation_setting.GetRechargeSetting().Enabled)
+		})
+	}
 }

@@ -89,6 +89,9 @@ func GetOptions(c *gin.Context) {
 	for k, v := range common.OptionMap {
 		// 图片编码通过专用图片接口读取，不放进通用配置 JSON。
 		// 保留当前分支既有隐藏键，避免影响其他设置。
+		if slices.Contains([]string{"RechargeEncryptionReady", "RechargePaymentReady", "RechargeWeChatReady"}, k) {
+			continue
+		}
 		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == procurementQRCodeDataOption || k == logoImageDataOption {
 			continue
 		}
@@ -117,6 +120,15 @@ func GetOptions(c *gin.Context) {
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
 	})
 	common.OptionMapRWMutex.Unlock()
+	// 管理页面仅显示就绪布尔值，密钥始终留在部署环境。
+	// 每次读取重新计算，后台配置刷新后不会沿用过期诊断。
+	for key, ready := range map[string]bool{
+		"RechargeEncryptionReady": service.RechargeConfigured(),
+		"RechargePaymentReady":    operation_setting.IsPaymentComplianceConfirmed(),
+		"RechargeWeChatReady":     len(rechargePaymentMethods()) > 0,
+	} {
+		options = append(options, &model.Option{Key: key, Value: strconv.FormatBool(ready)})
+	}
 	// Display the same effective expressions used by pricing and settlement,
 	// including built-in defaults absent from persisted administrator options.
 	for key, values := range map[string]map[string]string{
@@ -206,6 +218,17 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	// 启用前验证资料加密和支付前置条件；关闭随时允许以便暂停接单。
+	// 微信渠道是否可用独立展示，商品允许时仍可仅使用平台余额。
+	if option.Key == "recharge_setting.enabled" && option.Value == "true" {
+		if !service.RechargeConfigured() {
+			common.ApiErrorT(c, "Recharge encryption is not configured")
+			return
+		}
+		if !requirePaymentCompliance(c) {
+			return
+		}
 	}
 	// 徽标由图片专用入口管理，普通 JSON 设置不能绕过文件内容校验。
 	// 旧地址仍可读取和替换，但不能再通过配置接口写入任意 URL。

@@ -25,6 +25,10 @@ import {
 } from './section-registry.tsx'
 
 const defaultBillingSettings: BillingSettings = {
+  'recharge_setting.enabled': true,
+  RechargeEncryptionReady: false,
+  RechargePaymentReady: false,
+  RechargeWeChatReady: false,
   'invoice_setting.default_rate': 0,
   'invoice_setting.group_rates': '{}',
   QuotaForNewUser: 0,

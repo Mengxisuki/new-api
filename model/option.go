@@ -2,6 +2,7 @@ package model
 
 import (
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -237,6 +238,13 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	// 就绪标记只来自运行环境和渠道，不能通过保存选项伪造。
+	if slices.Contains([]string{"RechargeEncryptionReady", "RechargePaymentReady", "RechargeWeChatReady"}, key) {
+		return common.NewMessage("Recharge readiness status is read-only")
+	}
+	if key == "recharge_setting.enabled" && value != "true" && value != "false" {
+		return common.NewMessage("Invalid parameters")
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -280,6 +288,10 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	// 接单开关只有成功落库才更新内存；复用已检查数据库错误的写入路径。
+	if key == "recharge_setting.enabled" {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}

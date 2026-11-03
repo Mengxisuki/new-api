@@ -7994,6 +7994,19 @@
     "Processing result": "処理結果",
     "Purchase instructions": "購入案内",
     "Reason for additional information": "追加情報が必要な理由",
-    "Service provider": "提供元"
+    "Service provider": "提供元",
+    "Account data encryption": "アカウント情報の暗号化",
+    "Account top-up settings": "アカウントチャージ設定",
+    "Account top-ups are paused": "アカウントチャージの受付は停止中です",
+    "Complete payment compliance confirmation in Payment Gateway before enabling account top-ups.": "受付を有効にする前に、決済ゲートウェイで決済コンプライアンスを確認してください。",
+    "Configuration readiness": "設定の準備状況",
+    "Configure a WeChat channel in Payment Gateway. Platform balance is available only for products that explicitly allow it.": "決済ゲートウェイでWeChatチャネルを設定してください。プラットフォーム残高は、残高払いを許可した商品のみで利用できます。",
+    "Confirmed": "確認済み",
+    "Disabling stops new orders and unpaid order payments. Paid orders and payment notifications continue normally.": "無効にすると新規注文と未払い注文の決済が停止します。支払い済み注文の処理と決済通知の受信は継続します。",
+    "Enable account top-ups": "アカウントチャージの受付を有効化",
+    "Not confirmed": "未確認",
+    "Payment compliance confirmation": "決済コンプライアンスの確認",
+    "Recharge readiness status is read-only": "チャージの準備状況は読み取り専用です",
+    "Set OAK_RECHARGE_DATA_KEY in the New API server environment to a Base64-encoded 32-byte random key, then restart the service. Keep the key backed up and do not replace it while order data still needs decryption.": "New APIサーバーの環境変数OAK_RECHARGE_DATA_KEYに、Base64形式の32バイトのランダムキーを設定し、サービスを再起動してください。キーをバックアップし、注文情報の復号が必要な間は置き換えないでください。"
   }
 }

@@ -125,6 +125,7 @@ const catalogSchema = z.object({
   items: z.array(productSchema),
   payment_methods: z.array(z.object({ id: z.string(), name: z.string() })),
   configured: z.boolean(),
+  enabled: z.boolean(),
 })
 export type Catalog = z.infer<typeof catalogSchema>
 // 用户与管理员使用不同接口，

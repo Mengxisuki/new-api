@@ -68,6 +68,7 @@ export const getUserStatusOptions = (t: (key: string) => string) => [
 
 export const USER_ROLE = {
   USER: 1,
+  SALES: 3, // 独立业务角色，不满足管理员页面门槛。
   FINANCE: 5, // 角色排序不授予管理员入口，实际财务动作来自权限快照。
   ADMIN: 10,
   ROOT: 100,
@@ -79,6 +80,7 @@ export const USER_ROLES = {
     value: USER_ROLE.USER,
     icon: User,
   },
+  [USER_ROLE.SALES]: { labelKey: 'Sales', value: USER_ROLE.SALES, icon: User },
   [USER_ROLE.FINANCE]: {
     labelKey: 'Finance',
     value: USER_ROLE.FINANCE,
@@ -98,6 +100,7 @@ export const USER_ROLES = {
 
 export const getUserRoleOptions = (t: (key: string) => string) => [
   { label: t('User'), value: String(USER_ROLE.USER), icon: User },
+  { label: t('Sales'), value: String(USER_ROLE.SALES), icon: User },
   { label: t('Finance'), value: String(USER_ROLE.FINANCE), icon: ReceiptText },
   { label: t('Admin'), value: String(USER_ROLE.ADMIN), icon: Users },
   { label: t('Root'), value: String(USER_ROLE.ROOT), icon: Shield },

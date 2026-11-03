@@ -130,6 +130,7 @@ export interface UserFormData {
 
 export type ManageUserAction =
   | 'finance'
+  | 'sales'
   | 'promote'
   | 'demote'
   | 'enable'

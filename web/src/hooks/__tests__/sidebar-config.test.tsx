@@ -83,7 +83,7 @@ describe('security sidebar visibility', () => {
       result.current
         .find((group) => group.id === 'personal')
         ?.items.map((item) => item.title)
-    ).toEqual(['Wallet', 'Profile', 'Security & Access'])
+    ).toEqual(['Account top-ups', 'Wallet', 'Profile', 'Security & Access'])
     expect(
       result.current
         .flatMap((group) => group.items)
@@ -215,4 +215,31 @@ it('没有财务读取能力时不显示财务分类', () => {
   expect(
     result.result.current.navGroups.some((group) => group.id === 'finance')
   ).toBe(false)
+})
+
+// 业务员有独立工作区，不能因低于管理员等级而丢失入口。
+// 商品维护与退款不属于业务员默认能力，导航不能顺带展示管理入口。
+it('业务员只显示代充值订单管理入口', () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({
+      id: 3,
+      username: 'sales',
+      role: 3,
+      permissions: {
+        admin_permissions: {
+          recharge_orders: { read: true, write: true, reveal: true },
+        },
+      },
+    })
+  const { result } = renderHook(() => useSidebarData())
+  const group = result.current.navGroups.find(
+    (group) => group.id === 'recharge'
+  )
+  expect(group?.items).toEqual([
+    expect.objectContaining({ url: '/recharge-orders' }),
+  ])
+  expect(result.current.navGroups.some((group) => group.id === 'finance')).toBe(
+    false
+  )
 })

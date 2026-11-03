@@ -27,6 +27,7 @@ export type VerificationMethod =
 export type SecurityProofScope =
   // 账号挂靠复用同一证明机制，证明不能跨账号或消费操作使用。
   | 'hosting.manage'
+  | 'recharge.manage'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -57,8 +58,18 @@ export type AdminUserManageAction =
   | 'promote'
   | 'demote'
   | 'finance'
+  | 'sales'
 
 export type VerificationOperation =
+  // 绑定订单与版本，转派后旧证明不可复用。
+  | {
+      scope: 'recharge.manage'
+      context: {
+        order_id: number
+        version: number
+        action: 'reveal' | 'refund' | 'refund_confirm'
+      }
+    }
   | {
       // 连接不指定账号；重授权、删除与重置都必须绑定明确目标。
       scope: 'hosting.manage'
@@ -110,6 +121,7 @@ export type VerificationOperation =
       scope: Exclude<
         SecurityProofScope,
         | 'hosting.manage'
+        | 'recharge.manage'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

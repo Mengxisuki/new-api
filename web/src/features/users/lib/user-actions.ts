@@ -26,6 +26,7 @@ const ACTION_MESSAGES: Record<ManageUserAction, string> = {
   enable: 'User enabled successfully',
   disable: 'User disabled successfully',
   promote: 'User promoted to admin successfully',
+  sales: 'Sales role assigned successfully', // 仅验证并授权成功后展示。
   finance: 'Finance role assigned successfully',
   demote: 'User demoted to regular user successfully',
   delete: 'User deleted successfully',

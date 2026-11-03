@@ -37,14 +37,15 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 	// admin baseline is written as explicit policy rows.
 	var count int64
 	require.NoError(t, db.Model(&model.CasbinRule{}).Count(&count).Error)
-	assert.Equal(t, int64(len(PermissionsForRole(BuiltInRoleAdmin))+len(PermissionsForRole(BuiltInRoleFinance))), count)
+	assert.Equal(t, int64(len(PermissionsForRole(BuiltInRoleAdmin))+len(PermissionsForRole(BuiltInRoleFinance))+len(PermissionsForRole(BuiltInRoleSales))), count)
 
 	var roles []model.AuthzRole
 	require.NoError(t, db.Order("sort asc").Find(&roles).Error)
-	require.Len(t, roles, 3)
+	require.Len(t, roles, 4)
 	assert.Equal(t, BuiltInRoleRoot, roles[0].Key)
 	assert.Equal(t, BuiltInRoleAdmin, roles[1].Key)
 	assert.Equal(t, BuiltInRoleFinance, roles[2].Key)
+	assert.Equal(t, BuiltInRoleSales, roles[3].Key) // 业务员种子与策略都须幂等。
 
 	assert.True(t, Can(1, common.RoleRootUser, ChannelSensitiveWrite))
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelRead))
@@ -158,8 +159,10 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
-		ResourceAudit:   {ActionRead: false},
-		ResourceFinance: {ActionRead: true, ActionWrite: true},
+		ResourceAudit:            {ActionRead: false},
+		ResourceFinance:          {ActionRead: true, ActionWrite: true},
+		ResourceRechargeOrders:   {ActionRead: true, ActionWrite: true, "reveal": true, "assign": true, "refund": true},
+		ResourceRechargeProducts: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -191,8 +194,10 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
-		ResourceAudit:   {ActionRead: false},
-		ResourceFinance: {ActionRead: true, ActionWrite: true},
+		ResourceAudit:            {ActionRead: false},
+		ResourceFinance:          {ActionRead: true, ActionWrite: true},
+		ResourceRechargeOrders:   {ActionRead: true, ActionWrite: true, "reveal": true, "assign": true, "refund": true},
+		ResourceRechargeProducts: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
 }

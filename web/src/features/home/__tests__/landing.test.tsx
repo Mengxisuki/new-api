@@ -228,11 +228,15 @@ test('首页展示四类服务并将咨询入口定位到实际存在的采购�
   const consultations = within(services).getAllByRole('link', {
     name: /Discuss|Ask about/,
   })
-  expect(consultations).toHaveLength(2)
+  expect(consultations).toHaveLength(1) // 代充值已接入实际订单页，仅保留包月咨询。
   // 挂靠已有独立工作区，不再将用户送到采购咨询。
   expect(
     within(services).getByRole('link', { name: 'Connect Codex account' })
   ).toHaveAttribute('href', '/hosting')
+  // 外部账号代充值入口不得误接钱包充值或采购说明。
+  expect(
+    within(services).getByRole('link', { name: 'View recharge plans' })
+  ).toHaveAttribute('href', '/recharge')
   for (const link of consultations) {
     expect(link).toHaveAttribute('href', '#oak-procurement')
     expect(document.querySelector('#oak-procurement')).toBeVisible()
@@ -241,7 +245,7 @@ test('首页展示四类服务并将咨询入口定位到实际存在的采购�
     'Example allowance: CNY 150 per week. Actual limits and renewal rules depend on your plan.'
   )
   expect(services).toHaveTextContent(
-    'The credit goes to your provider account, separately from your Oak balance. Check the supported service and redemption instructions before buying.'
+    'Recharge your own provider account, separately from your Oak balance. Review the account requirements and processing time before purchase.'
   )
   // 阅读服务与导航链接不应触发下单或模型请求。
   expect(api.post).not.toHaveBeenCalled()

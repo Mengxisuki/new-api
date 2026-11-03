@@ -356,6 +356,9 @@ func migrateDB() error {
 		&TopUp{},
 		&InvoiceProfile{},
 		&InvoiceRequest{},
+		&AccountRechargeProduct{}, // 独立代充值商品，不复用平台订阅权益。
+		&AccountRechargeOrder{},   // 支付与人工办理状态分别保存。
+		&AccountRechargeEvent{},   // 订单动作与资金事件同事务持久化。
 		&QuotaData{},
 		&Task{},
 		&TaskPlugin{},

@@ -198,13 +198,14 @@ const (
 const (
 	RoleGuestUser   = 0
 	RoleCommonUser  = 1
+	RoleSalesUser   = 3 // 业务员只拥有代充值办理能力，不继承财务或管理员权限。
 	RoleFinanceUser = 5 // 财务只进入专用财务接口，等级低于普通管理员。
 	RoleAdminUser   = 10
 	RoleRootUser    = 100
 )
 
 func IsValidateRole(role int) bool {
-	return role == RoleGuestUser || role == RoleCommonUser || role == RoleFinanceUser || role == RoleAdminUser || role == RoleRootUser
+	return role == RoleGuestUser || role == RoleCommonUser || role == RoleSalesUser || role == RoleFinanceUser || role == RoleAdminUser || role == RoleRootUser
 }
 
 var (

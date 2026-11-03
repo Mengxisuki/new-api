@@ -86,7 +86,7 @@ func authHelper(c *gin.Context, minRole int) {
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
 	// handler 内手动埋点者会设置 ContextKeyAuditLogged，finishAdminAudit 据此跳过。
 	var auditWriter *auditResponseWriter
-	if minRole >= common.RoleFinanceUser {
+	if minRole >= common.RoleSalesUser { // 业务员写操作同样纳入既有脱敏审计。
 		auditWriter = beginAdminAudit(c)
 	}
 
@@ -133,6 +133,12 @@ func UserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleCommonUser)
 	}
+}
+
+// RechargeAuth 只提供基础角色门槛；路由仍需逐动作权限。
+// 财务虽然满足数字门槛，仍由权限解析器拒绝代充值资源。
+func RechargeAuth() func(c *gin.Context) {
+	return func(c *gin.Context) { authHelper(c, common.RoleSalesUser) }
 }
 
 // FinanceAuth 验证财务及以上身份，保留现有会话、PAT 和写审计链路。

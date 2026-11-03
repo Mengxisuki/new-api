@@ -3,6 +3,7 @@ package authz
 const (
 	BuiltInRoleRoot    = "root"
 	BuiltInRoleAdmin   = "admin"
+	BuiltInRoleSales   = "sales"   // 代充值业务员的独立权限基线。
 	BuiltInRoleFinance = "finance" // 独立基线仅包含财务资源，不继承管理员角色。
 )
 
@@ -42,6 +43,7 @@ var builtInRoles = []RoleSpec{
 		Superuser:   false, // 不能绕过 Can 的逐动作默认拒绝与用户撤销。
 		Sort:        20,    // 只影响角色目录顺序，不用于比较权限强弱。
 	},
+	{Key: BuiltInRoleSales, Name: "Sales", Description: "Recharge order operator", BuiltIn: true, Sort: 30}, // 目录顺序不参与权限比较。
 }
 
 // RoleDescriptor exposes a role together with its baseline grant matrix.

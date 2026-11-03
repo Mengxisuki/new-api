@@ -57,6 +57,7 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     personal: true,
     security: true,
   },
+  recharge: { enabled: true, orders: true, products: true }, // 入口仍由实时能力过滤。
   finance: {
     enabled: true,
     invoices: true,
@@ -112,6 +113,9 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/usage-logs/audit': { section: 'console', module: 'audit' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
   '/usage-logs/task': { section: 'console', module: 'task' },
+  '/recharge': { section: 'personal', module: 'topup' },
+  '/recharge-orders': { section: 'recharge', module: 'orders' },
+  '/recharge-products': { section: 'recharge', module: 'products' },
   '/wallet': { section: 'personal', module: 'topup' },
   '/profile': { section: 'personal', module: 'personal' },
   '/security': { section: 'personal', module: 'security' },

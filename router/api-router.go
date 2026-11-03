@@ -23,6 +23,7 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
 	// 挂靠业务仅复用用户认证，不对浏览器暴露执行层管理权限。
 	registerHostingRoutes(apiRouter)
+	registerRechargeRoutes(apiRouter) // 独立业务订单，不能复用钱包充值路由。
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	{
 		apiRouter.GET("/setup", controller.GetSetup)

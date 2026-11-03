@@ -50,7 +50,7 @@ const (
 
 // adminUserManageActions are the ManageUser actions that change a user's
 // status or role. Quota adjustments are not gated and deletion has its own scope.
-var adminUserManageActions = []string{"disable", "enable", "promote", "demote", "finance"}
+var adminUserManageActions = []string{"disable", "enable", "promote", "demote", "finance", "sales"}
 
 var (
 	ErrVerificationFailed         = errors.New("Verification failed. Please try again.")
@@ -163,6 +163,13 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeRecharge:
+		// 证明绑定动作和订单版本；转派或状态更新后旧证明不能继续使用。
+		var context RechargeVerificationContext
+		if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.OrderID <= 0 || context.Version <= 0 || (context.Action != "reveal" && context.Action != "refund" && context.Action != "refund_confirm") {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeHostingManage:
 		// 挂靠与原厂重置证明绑定具体动作，不能借渠道读密钥范围授权。
 		context, err := normalizeHostingVerification(operation.Context, fields) // 精确字段约束避免同一证明出现歧义。
@@ -229,7 +236,7 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		normalized = context
 	case VerificationScopeAdminUserCreate:
 		var context AdminUserCreateContext
-		if len(fields) != 1 || common.Unmarshal(fields["role"], &context.Role) != nil || context.Role < common.RoleFinanceUser || !common.IsValidateRole(context.Role) {
+		if len(fields) != 1 || common.Unmarshal(fields["role"], &context.Role) != nil || context.Role < common.RoleSalesUser || !common.IsValidateRole(context.Role) {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
@@ -331,7 +338,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
 		}
-	case VerificationScopeHostingManage, VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
+	case VerificationScopeRecharge, VerificationScopeHostingManage, VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
@@ -399,7 +406,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
-			case VerificationScopeHostingManage, VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+			case VerificationScopeRecharge, VerificationScopeHostingManage, VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:

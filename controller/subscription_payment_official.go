@@ -135,6 +135,10 @@ func SubscriptionRequestOfficialPay(c *gin.Context) {
 // 此函数不预读订单再改写，所有匹配和发放由模型事务原子完成。
 // 只传递上游交易引用作为审计信息，不持久化完整付款人资料。
 func completeOfficialPaymentCallback(c *gin.Context, channel operation_setting.OfficialPaymentChannel, callback *service.OfficialPaymentCallback, provider string) error {
+	// 代充值回调独立核对金额与渠道，不向平台余额或订阅发放权益。
+	if strings.HasPrefix(callback.TradeNo, "RCHUSR") {
+		return model.CompleteAccountRechargePayment(callback.TradeNo, provider, channel.ID, callback.ProviderRef, callback.Amount)
+	}
 	if strings.HasPrefix(callback.TradeNo, "SUBUSR") {
 		return model.CompleteOfficialSubscriptionOrder(callback.TradeNo, callback.ProviderRef, provider, channel.ID, callback.Amount)
 	}

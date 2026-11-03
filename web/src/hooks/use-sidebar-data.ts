@@ -121,6 +121,11 @@ export function useSidebarData(): SidebarData {
         title: t('Personal'),
         items: [
           {
+            title: t('Account top-ups'),
+            url: '/recharge',
+            icon: CreditCard,
+          },
+          {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
@@ -137,6 +142,36 @@ export function useSidebarData(): SidebarData {
           },
         ],
       },
+      // 运营入口独立于管理员区，按动作能力呈现。
+      ...(hasPermission(user, 'recharge_orders', 'read') ||
+      hasPermission(user, 'recharge_products', 'read')
+        ? [
+            {
+              id: 'recharge',
+              title: t('Recharge services'),
+              items: [
+                ...(hasPermission(user, 'recharge_orders', 'read')
+                  ? [
+                      {
+                        title: t('Recharge order management'),
+                        url: '/recharge-orders',
+                        icon: ClipboardList,
+                      },
+                    ]
+                  : []),
+                ...(hasPermission(user, 'recharge_products', 'read')
+                  ? [
+                      {
+                        title: t('Recharge product management'),
+                        url: '/recharge-products',
+                        icon: Box,
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          ]
+        : []),
       // 财务按真实权限单独成组，不能借管理员数字阈值扩大其他菜单权限。
       ...(canReadFinance
         ? [

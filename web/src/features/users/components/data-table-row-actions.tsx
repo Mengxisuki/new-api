@@ -69,6 +69,7 @@ const MANAGE_ACTION_TITLES: Record<AdminUserManageAction, string> = {
   disable: 'Verify to disable user',
   enable: 'Verify to enable user',
   promote: 'Verify to promote user',
+  sales: 'Verify to assign sales role',
   finance: 'Verify to assign finance role',
   demote: 'Verify to demote user',
 }
@@ -238,14 +239,17 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        {(isAdmin || isFinance) && !isRoot && (
-          <DropdownMenuItem onClick={() => handleManage('demote')}>
-            {t('Demote')}
-            <DropdownMenuShortcut>
-              <ArrowDown size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-        )}
+        {(isAdmin ||
+          isFinance ||
+          (user.role === USER_ROLE.SALES && viewerRole === USER_ROLE.ROOT)) &&
+          !isRoot && (
+            <DropdownMenuItem onClick={() => handleManage('demote')}>
+              {t('Demote')}
+              <DropdownMenuShortcut>
+                <ArrowDown size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
         {!isAdmin && (
           <DropdownMenuItem onClick={() => handleManage('promote')}>
@@ -256,6 +260,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
+        {/* 业务员授予走相同的单次验证，不能通过修改用户资料绕过。 */}
+        {viewerRole === USER_ROLE.ROOT &&
+          !isRoot &&
+          user.role !== USER_ROLE.SALES && (
+            <DropdownMenuItem onClick={() => handleManage('sales')}>
+              {t('Assign sales role')}
+            </DropdownMenuItem>
+          )}
         {/* 角色变更仍经共享验证流程与服务端 Root 校验，按钮不是授权依据。 */}
         {viewerRole === USER_ROLE.ROOT && !isRoot && !isFinance && (
           <DropdownMenuItem onClick={() => handleManage('finance')}>

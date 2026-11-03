@@ -67,6 +67,9 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/user/alipay/notify/:channel_id",
 	"POST /api/user/wechat-pay/notify/:channel_id",
 	// Payment callbacks.
+	// 代充值网关回调由真实签名与冻结订单核对，不接受 PAT 认证替代。
+	"GET /api/account-recharge/epay/notify",
+	"POST /api/account-recharge/epay/notify",
 	"POST /api/stripe/webhook",
 	"POST /api/creem/webhook",
 	"POST /api/waffo/webhook",
@@ -294,4 +297,21 @@ func TestHostingKeyPolicyRouteContract(t *testing.T) {
 		engine.ServeHTTP(response, httptest.NewRequest(method, "/api/hosting/policy", nil))
 		assert.Equal(t, http.StatusNotFound, response.Code) // 后端真实移除，不只在页面上隐藏入口。
 	}
+}
+
+// 代充值的每个控制台入口都明确拒绝 PAT，不能遗漏后退到默认规则。
+// 支付通知是唯一例外，已经在签名回调测试中覆盖收款边界。
+func TestRechargeRoutesRequireBrowserSession(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	for _, route := range engine.Routes() {
+		if !strings.HasPrefix(route.Path, "/api/account-recharge/") || strings.HasSuffix(route.Path, "/epay/notify") {
+			continue
+		}
+		rule, ok := middleware.AccessTokenRouteRule(route.Method + " " + route.Path)
+		require.True(t, ok)
+		assert.Equal(t, "session", rule.Kind())
+	}
+	scope, listed := service.AccessTokenVerificationScope(service.VerificationScopeRecharge)
+	assert.True(t, listed)
+	assert.Empty(t, scope)
 }

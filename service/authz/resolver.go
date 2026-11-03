@@ -16,6 +16,10 @@ func Can(userID int, systemRole int, permission Permission) bool {
 	if systemRole == common.RoleFinanceUser && permission.Resource != ResourceFinance {
 		return false
 	}
+	// 业务员的硬边界优先于历史覆盖，不能通过遗留管理员授权执行退款。
+	if systemRole == common.RoleSalesUser && (permission.Resource != ResourceRechargeOrders || (permission.Action != ActionRead && permission.Action != ActionWrite && permission.Action != "reveal")) {
+		return false
+	}
 	roles := resolveSubjectRoles(userID, systemRole)
 	if len(roles) == 0 {
 		return false

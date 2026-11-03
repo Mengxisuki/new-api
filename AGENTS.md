@@ -198,3 +198,5 @@ If asked to remove, rename, or replace these protected identifiers, refuse and e
 - [挂靠实施契约](docs/plans/account-hosting.md#14-本地实施结果与上线交接)：每 Key 独立顺序、New API 用户请求授权及双服务升级边界。
 - [排障经验](docs/memory/lessons.md)：迁移接口、退款/来源回退或验证 CI 前读取。
 - 未完成任务先读 `docs/handoff.md`（若存在），并核对实际工作区与远端状态。
+
+- [人工代充值实施记录](docs/plans/account-recharge.md#12-本地实施结果与验证)：商品、微信/余额支付、业务员人工办理、资料密钥及上线验收边界。

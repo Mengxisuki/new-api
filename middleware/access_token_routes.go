@@ -41,6 +41,22 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// 代充值只接受网页登录，PAT 不能读取账户凭据或执行资金动作。
+	"GET /api/account-recharge/products":                                   accessTokenSessionRule,
+	"POST /api/account-recharge/quote":                                     accessTokenSessionRule,
+	"POST /api/account-recharge/orders":                                    accessTokenSessionRule,
+	"GET /api/account-recharge/orders/self":                                accessTokenSessionRule,
+	"GET /api/account-recharge/orders/:id":                                 accessTokenSessionRule,
+	"POST /api/account-recharge/orders/:id/pay":                            accessTokenSessionRule,
+	"POST /api/account-recharge/orders/:id/account-info":                   accessTokenSessionRule,
+	"GET /api/account-recharge/operations/orders":                          accessTokenSessionRule,
+	"GET /api/account-recharge/operations/orders/:id":                      accessTokenSessionRule,
+	"POST /api/account-recharge/operations/orders/:id/action":              accessTokenSessionRule,
+	"POST /api/account-recharge/operations/orders/:id/reveal-account-info": accessTokenSessionRule,
+	"GET /api/account-recharge/admin/products":                             accessTokenSessionRule,
+	"PUT /api/account-recharge/admin/products":                             accessTokenSessionRule,
+	"POST /api/account-recharge/admin/orders/:id/refund":                   accessTokenSessionRule,
+
 	// 挂靠读取复用个人资料范围，账号变更与原厂重置要求安全写入范围。
 	"GET /api/hosting/status":                              accessTokenScopeRule("profile:read"), // 仅返回安全配置状态，不联网或暴露部署凭据。
 	"GET /api/hosting/accounts":                            accessTokenScopeRule("profile:read"),

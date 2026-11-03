@@ -1025,6 +1025,10 @@ func CreateUser(c *gin.Context) {
 	}
 	myRole := c.GetInt("role")
 	// 财务账号的创建也是授权操作，不能利用低于管理员的数字绕过 Root 限制。
+	if user.Role == common.RoleSalesUser && myRole != common.RoleRootUser {
+		common.ApiErrorT(c, "Only root can assign the sales role")
+		return
+	}
 	if user.Role == common.RoleFinanceUser && myRole != common.RoleRootUser {
 		common.ApiErrorT(c, "Only root can assign the finance role to non-root accounts")
 		return
@@ -1036,7 +1040,7 @@ func CreateUser(c *gin.Context) {
 	auditParams := map[string]any{"role": user.Role}
 	// Creating an administrator grants privilege just like promoting one.
 	// 新建财务账号同样授予敏感工作区权限，不能绕过管理员创建验证。
-	if user.Role >= common.RoleFinanceUser {
+	if user.Role >= common.RoleSalesUser { // 新建业务员同样需要单次敏感验证。
 		authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserCreate, service.AdminUserCreateContext{Role: user.Role})
 		if authorization == nil {
 			return
@@ -1179,6 +1183,13 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		user.Role = common.RoleAdminUser
+	case "sales":
+		// 仅 Root 能授予业务员，不能将 Root 降为业务员。
+		if myRole != common.RoleRootUser || user.Role == common.RoleRootUser {
+			common.ApiErrorT(c, "Only root can assign the sales role")
+			return
+		}
+		user.Role = common.RoleSalesUser
 	case "finance":
 		// 财务角色授权或降权都只能由 Root 经原有单次验证流程执行。
 		// 不允许把 Root 自身改为财务，保留现有最高权限保护。
@@ -1193,6 +1204,11 @@ func ManageUser(c *gin.Context) {
 		}
 		user.Role = common.RoleFinanceUser // 旧覆盖会随下方同一事务清理，不能只改显示角色。
 	case "demote":
+		// 撤销业务员也必须由 Root 执行，普通管理员不能替代授权所有者。
+		if user.Role == common.RoleSalesUser && myRole != common.RoleRootUser {
+			common.ApiErrorT(c, "Only root can assign the sales role")
+			return
+		}
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorT(c, "Cannot demote super administrator user")
 			return
@@ -1211,7 +1227,7 @@ func ManageUser(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	if req.Action == "demote" || req.Action == "finance" {
+	if req.Action == "demote" || req.Action == "finance" || req.Action == "sales" {
 		if err := model.DB.Transaction(func(tx *gorm.DB) error {
 			if err := user.UpdateWithTx(tx, false); err != nil {
 				return err
@@ -1230,6 +1246,9 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		revocationReason := "admin_demote"
+		if req.Action == "sales" {
+			revocationReason = "admin_sales_role" // 业务员授权变更独立记录，旧会话不能继续使用。
+		}
 		if req.Action == "finance" {
 			revocationReason = "admin_finance_role" // 原管理会话不能继续携带旧角色访问权限。
 		}

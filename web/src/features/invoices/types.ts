@@ -42,7 +42,7 @@ export interface InvoiceRequest {
   id: number
   user_id: number
   trade_no: string // 始终关联真实支付单，不能由用户替换后开票。
-  business_type: 'topup' | 'subscription'
+  business_type: 'topup' | 'subscription' | 'recharge' // 代充值收款独立开票，不增加平台权益。
   profile: InvoiceProfile // 申请时的抬头快照，修改常用配置不重写旧申请。
   base_amount: number // 原始实付基数已经包含普通充值优惠。
   fee_rate: number // 使用百分数，如六表示百分之六。

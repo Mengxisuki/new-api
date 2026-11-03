@@ -73,18 +73,18 @@ export function OakServices() {
       action: t('Connect Codex account'), // 登录后回到本人工作区，不开放技术管理后台。
     },
     {
-      id: 'top-ups', // 卡密适用范围以兑换说明为准，不接入平台余额兑换。
+      id: 'top-ups', // 外部账号代充值走独立购买和人工处理流程。
       title: t('Account top-ups'), // 外部账户充值与按量服务的余额充值独立。
       label: t('For your own provider balance'), // 先标明到账账户，用户无需到详情页才辨别服务。
-      // 卡密作为交付方式，首页不披露内部供货和充值链路。
+      // 首页说明用户实际购买流程，不展示内部办理记录。
       description: t(
-        'Buy a recharge card for your own provider account and follow the redemption guide to add credit. Keep using the account and tools you already know.'
+        'Choose a plan for your own provider account, pay with WeChat, and submit the account information for assisted processing.'
       ),
-      // 兑换说明在购买前确认，避免误购不适用的账号或服务卡密。
+      // 账户要求和处理时效在商品页确认。
       detail: t(
-        'The credit goes to your provider account, separately from your Oak balance. Check the supported service and redemption instructions before buying.'
+        'Recharge your own provider account, separately from your Oak balance. Review the account requirements and processing time before purchase.'
       ),
-      action: t('Ask about recharge cards'), // 卡密先核对适用范围，不调用平台钱包兑换。
+      action: t('View recharge plans'), // 引导到独立代充值入口。
     },
   ]
   return (
@@ -125,11 +125,21 @@ export function OakServices() {
             >
               {service.detail}
             </p>
-            {service.id === 'tokens' || service.id === 'hosting' ? (
-              // 两个入口已有真实路由；登录和返回位置由认证父路由处理。
+            {service.id === 'tokens' ||
+            service.id === 'hosting' ||
+            service.id === 'top-ups' ? (
+              // 三个入口已有真实路由；登录和返回位置由认证父路由处理。
               <Link
                 className='oak-text-link'
-                to={service.id === 'tokens' ? '/pricing' : '/hosting'}
+                to={
+                  (
+                    {
+                      tokens: '/pricing',
+                      hosting: '/hosting',
+                      'top-ups': '/recharge',
+                    } as const
+                  )[service.id as 'tokens' | 'hosting' | 'top-ups']
+                }
               >
                 {service.action}
                 {/* 装饰箭头不加入链接可访问名称，朗读保留服务动作。 */}

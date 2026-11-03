@@ -21,6 +21,7 @@ import { t } from 'i18next'
 export const ROLE = {
   GUEST: 0, // 后续如果需要用到这个角色那就再加，同语先留一下
   USER: 1,
+  SALES: 3, // 业务员只进入独立订单工作区。
   FINANCE: 5, // 独立财务角色低于管理员，不满足普通管理页的门槛。
   ADMIN: 10,
   SUPER_ADMIN: 100,
@@ -35,6 +36,7 @@ const ROLE_LABEL_KEYS: Record<RoleValue, string> = {
   [ROLE.ADMIN]: 'Admin',
   [ROLE.USER]: 'User',
   [ROLE.FINANCE]: 'Finance',
+  [ROLE.SALES]: 'Sales',
   [ROLE.GUEST]: 'Guest',
 }
 

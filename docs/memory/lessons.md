@@ -201,3 +201,11 @@
 现象二：候选配置以 root:caddy 0640 验证通过，但首次切换复制到原 root:root 文件时仅同步了模式，没有同步所属组，服务用户无法读取配置。自动回滚恢复旧服务，之后用 install 明确 root:caddy 0640 并先检查服务用户可读，再次切换成功。后续部署不能用 root 验证结果替代运行身份校验。
 
 验证：deploy/oak/tests/test_caddy_body_log.py 用真实候选二进制验证 6 类 HTTP 行为、SSE 首帧、日志过滤与文件权限；生产启动后 Oak 与访谈均 200，合成无效 Key 的请求 401 且正文与关联 ID 正确落盘。官方二进制版本、资产 SHA-256 和部署边界见 deploy/oak/README.md。只存合成测试数据到源码，实际请求正文始终留在服务器受限目录。
+
+## 2026-11-04 10:28:44 +00:00 — 搜索后端必须避免同名模型跨能力组分流
+
+现象：同样的 gpt-6-luna 搜索请求有时返回真实搜索，有时 400，提示 OpenCode 模型没有 hosted web_search。根因已由 GPT-Load request_logs 证实：模型同时存在 Codex 组和 OpenCode Go 组，成功请求落入 Codex，失败请求落入 Go。修复是选择仅路由到支持搜索上游的模型或专用别名；当前 gpt-6.1-sol 仅在 Codex 组，Kimi 和 GLM 均完成真实搜索及公开历史续轮。不能按 GPT 名称或单次成功推断所有候选渠道的搜索能力。配置提示已加入模型设置。
+
+同次真实验收发现 Codex 上游拒绝 `max_tool_calls`。编排不得默认注入这个选项；客户端显式要求时保留并报告不支持。`max_output_tokens` 也不能当作可靠的绝对成本上限。平台限制自动发起的 GPT 请求轮数，实际工具费用仍从既有用量累计器和上游事实结算。代码及边界见 `controller/search_bridge_loop.go` 和[方案](../plans/api-key-model-mapping.md)。
+
+搜索测试的无资源策略分支会运行原 Relay 的异步性能指标任务，若 fixture 紧接着恢复 Redis/DB 全局配置，会触发测试清理竞态。仅在搜索 fixture 关闭非验收范围内的性能聚合并恢复，不改生产指标逻辑；请求取消的子执行器必须先结束结算再释放外层请求。HTTP 在途取消与完整搜索回归通过 race。

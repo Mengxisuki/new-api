@@ -1209,6 +1209,27 @@ export function DetailsDialog(props: DetailsDialogProps) {
         */}
         {/* Key 改写与响应观测独立展示，不能被上游返回 model 字段隐藏。 */}
         {/* 计费目标保留平台名称，渠道上游名称仍由下方原有区域说明。 */}
+        {/* 搜索编排的每个模型调用独立计费，父请求 ID 用于核对费用。 */}
+        {/* 展示已持久化阶段，不能用当前配置重新推断历史费用归属。 */}
+        {/* 搜索 GPT 与目标模型各自保留原有模型、令牌及工具费用详情。 */}
+        {/* 这里只展示关联信息，不汇总或再次计算扣费。 */}
+        {/* 同一父请求可能有多笔消费，阶段名称说明本笔属于哪次执行。 */}
+        {/* 这些关联字段允许账单所有者查看，不仅管理员可见。 */}
+        {/* 字段不包含搜索词、网页正文、会话头或上游凭据。 */}
+        {other?.search_bridge && (
+          <DetailSection label={t('Web search bridge')}>
+            <DetailRow
+              label={t('Parent request ID')}
+              value={other.search_bridge.parent_request_id}
+              mono
+            />
+            <DetailRow
+              label={t('Execution stage')}
+              value={other.search_bridge.stage}
+              mono
+            />
+          </DetailSection>
+        )}
         {other?.token_model_mapping && (
           <DetailSection label={t('API Key Model Mapping')}>
             <DetailRow

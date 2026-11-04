@@ -8015,6 +8015,18 @@
     "Target Model": "目标模型",
     "Billing Model": "计费模型",
     "Invalid API key model mapping": "API Key 模型映射无效，请检查 JSON、重复来源、空名称或循环映射",
-    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "此 Key 将请求模型路由到目标模型。访问限制和费用按最终目标模型计算，之后仍会应用渠道映射。"
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "此 Key 将请求模型路由到目标模型。访问限制和费用按最终目标模型计算，之后仍会应用渠道映射。",
+    "Web search bridge": "联网搜索适配",
+    "GPT search model": "GPT 搜索执行模型",
+    "Enter an available GPT model; leave empty to disable this target.": "填写已有渠道可用的 GPT 模型；留空关闭该目标的搜索适配。",
+    "Enter a GPT model name without spaces, or leave empty to disable": "请填写不含空格的 GPT 模型名，或留空关闭",
+    "Invalid search bridge configuration": "搜索适配配置异常，请检查已保存的系统选项",
+    "The target model decides when to search. GPT executes web_search and returns cited evidence. Target tokens, GPT tokens and search calls are billed separately using existing prices.": "由目标模型决定何时搜索，GPT 执行 web_search 并返回带引用的资料。目标模型令牌、GPT 令牌和搜索调用分别按现有价格计费。",
+    "The API key must allow the GPT search model and a valid funding source. Search tool prices are configured in Billing settings. Responses are streamed by stage with keep-alive events.": "API Key 需允许使用搜索 GPT 模型并配置可用资金来源。搜索调用价格沿用计费设置中的工具价格。响应按阶段流式输出，等待时发送心跳。",
+    "Parent request ID": "父请求 ID",
+    "Execution stage": "执行阶段",
+    "Search bridge routes must be a JSON object": "搜索适配路由必须是 JSON 对象",
+    "Search bridge routes require kimi-k3 or glm-5.3 targets and a GPT search model": "搜索适配仅支持 kimi-k3 或 glm-5.3 目标，执行搜索须使用 GPT 模型",
+    "Choose a model routed exclusively to a search-capable upstream. A shared model name across Codex and OpenCode Go can route searches to an unsupported provider.": "请选择只路由到支持搜索上游的模型。同名模型若同时位于 Codex 和 OpenCode Go 组，搜索请求可能被分配到不支持的供应商。"
   }
 }

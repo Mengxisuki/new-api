@@ -137,6 +137,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	// 搜索编排会连续执行多个模型，不能重复使用信任余额快照绕过预扣。
+	// 每轮按实际模型走原子预留；原普通请求的信任策略保持不变。
+	// 此标记只来自私有子路由，客户端无法通过请求头设置。
+	if c.GetString("oak.search_bridge_parent") != "" {
+		relayInfo.ForcePreConsume = true
+	}
+
 	defer func() {
 		recovered := recover()
 		resultErr := newAPIError

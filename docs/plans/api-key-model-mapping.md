@@ -104,3 +104,48 @@ bun run build
 本地后端在 `build/local-preview/` 独立环境启动，预览库升级前备份为 `preview-before-key-model-mapping.db`。前端 `http://localhost:5173/keys` 已可查看。前后端需配套发布；本次未提交、推送或部署线上。
 
 前端验证：Key 编辑、共享映射编辑器、日志详情/徽标/移动卡等 12 文件共 326 项，325 项通过；原有 `task log prices use localized unit labels from pricing metadata` 在整文件/整组运行时出现 20 秒超时，单独运行通过，未将这项计为整组通过。本次新增的映射编辑与日志展示用例通过；没有为规避超时而删测试或改生产逻辑。所改文件 Lint、`tsgo -b` 和生产构建通过。
+
+## GPT 搜索编排（2026-11-04 10:20:19 +00:00，本地已实现）
+
+用户批准在目标模型需要联网时复用 GPT 的真实 `web_search`。本节更新前述“搜索尚未实现”的现状，保留之前排障记录；不承诺任意供应商私有状态迁移或已在途请求切换。
+
+### 配置及使用
+
+- 入口：**系统设置 → 模型设置 → 联网搜索适配**。分别给 Kimi K3、GLM 5.3 填写搜索执行模型，留空关闭。默认全关闭。
+- 系统选项：`WebSearchBridgeRoutes`，示例 `{"kimi-k3":"gpt-6.1-sol","glm-5.3":"gpt-6.1-sol"}`。模型名为平台模型，渠道映射仍照常执行；搜索模型不再次经过用户 Key 模型映射。
+- 搜索模型必须只路由到真正支持托管搜索的上游。现场 `gpt-6-luna` 同时存在 Codex/OpenCode Go 两个组，实际发生过随机落入 Go 返回 400；当前 `gpt-6.1-sol` 仅在 Codex 组，Kimi 合成链路已实际验证。不能仅凭 GPT 名称判断能力。
+- Key 需同时允许目标模型和搜索模型，沿用它的分组、资金来源、钱包/订阅额度与模型限流。没有钱包授权不追加钱包；权限不足明确失败，不隐含扩权。
+- 搜索调用单价继续由**计费设置 → 工具价格**中的 `web_search` / `web_search_preview` 配置，单位沿用现有 `$/1000 次`，模型覆盖规则按搜索执行模型生效；零价仍是显式免费。
+- OpenCode Go 仍需要会话头。当前线上 New API 渠道已有 header override `{"*":true}`；部署或新建渠道时需要保持必要会话头可传递。平台为搜索子请求生成独立会话，主任务会话保持原样。
+
+### 实际请求与账单
+
+1. 客户端请求 A，Key 映射到 B；只对配置目标且声明搜索工具的 HTTP `POST /v1/responses` 请求接管。
+2. B 收到内部普通函数并决定是否搜索。没有搜索需求只执行这一轮，不无条件调用 GPT。
+3. B 发起查询后，New API 用同一个用户 Key 重新走正常鉴权、路由、原子预扣与结算，以配置的 GPT 执行真实 `web_search`。仅传查询及搜索选项，不传整个用户会话。
+4. 必须获得真实完成的 `web_search_call`。资料摘要和引用作为工具结果交还 B；客户端看到真实搜索项及标注 `commentary` 的 GPT 资料摘要，最终由 B 回答。普通/custom/动态发现工具仍交给客户端执行。
+5. 同一轮同时出现搜索和客户端工具时，完成搜索后归还客户端；不替用户执行命令。下一请求从公开历史恢复资料，不依赖服务进程缓存。
+
+每次 B 调用按 B 收费，GPT Tokens 按 GPT 收费，真实搜索调用附加费只出现在 GPT 账单；外层编排不重复结算。使用日志详情新增父请求 ID 和执行阶段，目标阶段保留 A→B 映射标签，GPT 阶段不冒用该标签。HTTP 总响应 `usage` 为 B 各轮的标准令牌统计，`oak_search_usage` 单独列出各 GPT 用量；这些输出字段不再进入扣费链。真实工具计数仍由原有 Responses 累计器处理，避免终态和工具完成事件重复计费。
+
+### 输出与边界
+
+- 第一版采用**阶段缓冲 SSE**：每阶段完成后发送真实事件，等待期间每 10 秒发送心跳；不是逐 token 实时透传。外层响应 ID、输出索引和序号统一，只有一个终态。JSON 客户端获得同一份合并结果。
+- 公开事件隐藏内部函数。真实 item/call ID、普通工具参数、引用和输出内容保留；供应商只发终态时补齐协议封装，不编造工具成功。
+- 每个客户端请求最多自动发起 4 次 GPT 搜索请求；查询最多 8 KiB，子响应最多 8 MiB，内部历史最多 32 MiB。断连取消后续阶段。已执行用量仍由原链路结算；失败不伪装成未执行或全额退款。
+- 平台不能保证供应商内部搜索次数或 Tokens 的绝对上限。搜索请求携带 `max_output_tokens=2048`，但当前 Codex 上游可能忽略该参数；钱包及 Key 额度继续使用平台原有结算规则。
+- 不默认注入 `max_tool_calls`：现场 Codex 上游返回 `Unsupported parameter: max_tool_calls`。客户端明确传入时保留约束并按实际兼容性返回错误，不静默删除。
+- 保留域名过滤、用户位置、离线搜索等工具选项并交给 GPT；上游不支持时明确失败。
+- 同步显式历史为当前支持范围；`store=true`、`background=true`、`previous_response_id` 和复杂 `allowed_tools` 选择明确拒绝。WebSocket 不接入本次搜索编排。任意第三方工具、加密历史和跨供应商私有状态不在本轮保证范围。
+
+### 实现、验证与发布
+
+入口 `router/relay-router.go`；编排及私有子路由 `controller/search_bridge.go`；工具循环、历史与公开输出 `controller/search_bridge_loop.go`；配置校验 `setting/operation_setting/search_bridge.go`。复用原始 TokenAuth / ResourceRelay / Distribute / Relay；不新增数据库表、依赖或第二套价格计算。
+
+测试集中于 `controller/search_bridge_test.go`：真实 SQLite 钱包与 Key、无资源策略旧入口、权限/余额/空来源、假成功/供应商失败、循环上限、并行客户端工具、JSON/SSE、取消和索引合同。外部只以本地 HTTP 服务替代供应商。既有 Key 热更新、渠道映射和价格回归一起验证。
+
+真实验收通过临时仅回环代理，让本地 New API 测试数据库与 Key 调用线上 GPT-Load；只使用合成 Bun 版本查询，未重放用户任务。Kimi→GPT 搜索→Kimi 和公开历史下一轮通过，GPT 返回真实引用，正常子账单产生；GLM 改用固定 Codex 的 `gpt-6.1-sol` 后，同类链路与公开历史下一轮再次通过。生产配置和服务未替换，未提交或推送。真实 Codex 应用完整操作仍需发布后验收，不把合成链路当作客户端全功能保证。
+
+安全边界参考 OWASP [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)、[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)：每个子请求重验权限、默认不扩大来源、只记录非敏感关联身份；不改登录或会话认证机制，不作完整 ASVS 合规声明。Responses 搜索输出依据 [OpenAI 官方文档](https://platform.openai.com/docs/guides/tools-web-search)。
+
+最终本地验证（2026-11-04 10:28:44 +00:00）：映射/权限/缓存定向后端回归、搜索集成与取消场景的 race 检查、前端配置与日志 35 项回归、`bun x tsgo -b`、改动文件 oxlint、前端生产构建通过。Go 构建依赖 `web/dist`，必须先完成前端构建再构建后端；不能并行让前端清空嵌入目录。当前本机 Bun 1.3.14 没有 `bun check`，使用项目已安装的 tsgo，未升级工具链。数据库沿用 SQLite 3.50.4 实测，无新增表或查询语义修改，未重新执行 MySQL/PostgreSQL 矩阵。临时回环探测代理及 SSH 隧道已停止。

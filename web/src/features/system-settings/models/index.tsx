@@ -25,6 +25,7 @@ import {
 } from './section-registry.tsx'
 
 const defaultModelSettings: ModelSettings = {
+  WebSearchBridgeRoutes: '{}', // 默认关闭，管理员按目标显式启用。
   'global.pass_through_request_enabled': false,
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',

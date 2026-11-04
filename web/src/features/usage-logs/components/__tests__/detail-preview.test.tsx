@@ -556,3 +556,27 @@ test('shows key mapping and billing model alongside upstream response observatio
     within(screen.getByRole('dialog')).getByText('Billing Model')
   ).toBeVisible()
 })
+
+// 普通用户也能关联目标模型与搜索模型两类账单。
+// 使用日志快照，不依赖管理员权限或当前模型映射。
+// 页面只显示关联信息，费用沿用原有详情。
+// 非管理员必须能核对多模型账单，不能只在管理面板可见。
+// 父请求 ID 是关联入口，阶段名称解释这笔费用对应的执行动作。
+// 来源使用已保存字段，测试不会查询当前 Key 或配置。
+// 实际打开详情弹窗，防止仅在表格数据中新增字段而没有 UI 接入。
+// 普通模型账单不含该字段时继续沿用原有详情。
+test('shows the parent request and search stage to the owner', async () => {
+  const button = renderPreview(
+    {
+      search_bridge: {
+        parent_request_id: 'parent-search-request',
+        stage: 'search.1',
+      },
+    },
+    false
+  )
+  fireEvent.click(button)
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText('parent-search-request')).toBeVisible()
+  expect(within(dialog).getByText('search.1')).toBeVisible()
+})

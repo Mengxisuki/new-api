@@ -70,6 +70,12 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if ctx == nil || other == nil {
 		return
 	}
+	// 搜索子请求单独结算，公共关联字段让用户核对同一请求的所有费用。
+	// 标记仅由内部路由写入，不读取客户端同名请求头。
+	// 只记录模型阶段与父请求 ID，不保存查询正文或凭据。
+	if parent := ctx.GetString("oak.search_bridge_parent"); parent != "" {
+		other.SetPublic("search_bridge", map[string]string{"parent_request_id": parent, "stage": ctx.GetString("oak.search_bridge_stage")})
+	}
 	AppendResourceLogInfo(ctx, other)
 	other.SetAdmin("use_channel", ctx.GetStringSlice("use_channel"))
 	if relayInfo != nil {

@@ -8015,6 +8015,18 @@
     "Target Model": "対象モデル",
     "Billing Model": "課金モデル",
     "Invalid API key model mapping": "API キーのモデルマッピングが無効です。JSON、重複する元モデル、空の名前、循環を確認してください",
-    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "このキーは要求モデルを対象モデルに振り分けます。アクセス制限と課金には最終対象モデルを使用し、その後にチャネルのマッピングが適用されます。"
+    "This key routes the requested model to the target model. Access limits and billing use the final target model; channel mapping still applies afterward.": "このキーは要求モデルを対象モデルに振り分けます。アクセス制限と課金には最終対象モデルを使用し、その後にチャネルのマッピングが適用されます。",
+    "Web search bridge": "Web search bridge",
+    "GPT search model": "GPT search model",
+    "Enter an available GPT model; leave empty to disable this target.": "Enter an available GPT model; leave empty to disable this target.",
+    "Enter a GPT model name without spaces, or leave empty to disable": "Enter a GPT model name without spaces, or leave empty to disable",
+    "Invalid search bridge configuration": "Invalid search bridge configuration",
+    "The target model decides when to search. GPT executes web_search and returns cited evidence. Target tokens, GPT tokens and search calls are billed separately using existing prices.": "The target model decides when to search. GPT executes web_search and returns cited evidence. Target tokens, GPT tokens and search calls are billed separately using existing prices.",
+    "The API key must allow the GPT search model and a valid funding source. Search tool prices are configured in Billing settings. Responses are streamed by stage with keep-alive events.": "The API key must allow the GPT search model and a valid funding source. Search tool prices are configured in Billing settings. Responses are streamed by stage with keep-alive events.",
+    "Parent request ID": "Parent request ID",
+    "Execution stage": "Execution stage",
+    "Search bridge routes must be a JSON object": "Search bridge routes must be a JSON object",
+    "Search bridge routes require kimi-k3 or glm-5.3 targets and a GPT search model": "Search bridge routes require kimi-k3 or glm-5.3 targets and a GPT search model",
+    "Choose a model routed exclusively to a search-capable upstream. A shared model name across Codex and OpenCode Go can route searches to an unsupported provider.": "Choose a model routed exclusively to a search-capable upstream. A shared model name across Codex and OpenCode Go can route searches to an unsupported provider."
   }
 }

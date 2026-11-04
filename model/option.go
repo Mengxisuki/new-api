@@ -35,6 +35,9 @@ func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
 
+	// 搜索桥接默认关闭，由管理员按目标模型明确启用。
+	common.OptionMap[operation_setting.SearchBridgeRoutesOptionKey] = "{}"
+
 	// 添加原有的系统配置
 	common.OptionMap["FileUploadPermission"] = strconv.Itoa(common.FileUploadPermission)
 	common.OptionMap["FileDownloadPermission"] = strconv.Itoa(common.FileDownloadPermission)
@@ -271,6 +274,12 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "ResendKeyConfigured" {
 		return common.NewMessage("Resend key configuration status is read-only")
+	}
+	// 配置写入与请求执行使用同一验证器，避免后台直写绕过 UI。
+	// 无效目标或非 GPT 后端必须在持久化之前拒绝。
+	if key == operation_setting.SearchBridgeRoutesOptionKey {
+		_, err := operation_setting.ParseSearchBridgeRoutes(value)
+		return err
 	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)

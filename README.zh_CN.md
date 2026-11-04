@@ -445,3 +445,11 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 保存映射后对后续请求生效，客户端可保持原 model；已在途请求使用开始时冻结的目标。跨模型的参数差异由最终执行层处理，不能仅凭改名保证所有模型能力一致。配套 GPT-Load 本地已补齐 OpenCode Kimi K3 / GLM 5.3 的 `reasoning.context=all_turns` 兼容，发布该修复后才在线上生效；保留客户端工具和完整历史，不代表已解决联网搜索或任意跨供应商私有状态迁移。
 
 映射为空时保持原行为；链式规则可用，循环与重复来源拒绝。支持标准 HTTP、表单上传、Gemini 与 WebSocket 显式模型。特殊动作/历史任务边界、数据升级及验证命令见[实现说明](docs/plans/api-key-model-mapping.md)。
+
+### API Key 模型映射后的联网搜索
+
+本地实现支持为 Kimi K3 / GLM 5.3 配置 GPT 搜索后端，入口为**系统设置 → 模型设置 → 联网搜索适配**。填写当前仅路由到支持搜索上游的 GPT 模型（现场已验证 `gpt-6.1-sol`）；留空关闭。Key 必须同时拥有目标和搜索模型权限及可用资金来源。目标模型决定是否搜索，GPT 提供真实资料及引用，目标模型继续回答。
+
+目标模型 Tokens、GPT Tokens 和真实 `web_search` 调用分别沿用现有价格，工具价格仍在计费设置中调整。日志详情以父请求 ID 关联所有子账单。当前采用阶段缓冲 SSE，等待时发送心跳；同步 HTTP 显式历史可续轮，尚不支持搜索编排的 WebSocket、持久响应或后台任务。部署前还需发布 GPT-Load 已有的 Kimi/GLM `reasoning.context` 参数兼容改动。
+
+配置示例、限制、验证方法和相关模块见[模型映射实施说明：GPT 搜索编排](docs/plans/api-key-model-mapping.md#gpt-搜索编排2026-11-04-102019-0000本地已实现)。定向回归：`go test ./controller ./middleware ./model -run 'TestSearchBridge|TestTokenModelMapping|TestResourceRelayTokenModelMapping' -count=1`。前端配置与日志测试位于 `web/src/features/system-settings/models/__tests__/search-bridge-settings.test.tsx` 和 `web/src/features/usage-logs/components/__tests__/detail-preview.test.tsx`。本轮代码未发布。

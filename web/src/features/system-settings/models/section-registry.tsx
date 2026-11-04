@@ -23,6 +23,7 @@ import { ClaudeSettingsCard } from './claude-settings-card'
 import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
+import { SearchBridgeSettings } from './search-bridge-settings'
 
 function formatJsonForEditor(value: string, fallback: string) {
   const raw = (value ?? '').toString().trim()
@@ -35,6 +36,17 @@ function formatJsonForEditor(value: string, fallback: string) {
 }
 
 const MODELS_SECTIONS = [
+  // 此区域管理执行模型，费用继续由计费区域配置。
+  // 仅按已保存选项渲染，不在打开设置时自动发起模型请求。
+  // 搜索执行配置与工具价格分开，避免把定价误认为能力开关。
+  // 入口沿用系统设置权限；修改后只影响新请求。
+  {
+    id: 'web-search',
+    titleKey: 'Web search bridge',
+    build: (settings: ModelSettings) => (
+      <SearchBridgeSettings defaultValue={settings.WebSearchBridgeRoutes} />
+    ),
+  },
   {
     id: 'global',
     titleKey: 'Global Model Configuration',

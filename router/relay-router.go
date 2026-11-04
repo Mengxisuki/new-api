@@ -78,7 +78,7 @@ func SetRelayRouter(router *gin.Engine) {
 		relayV1Router.GET("/responses", controller.ResponsesWebSocket)
 	}
 	// 先改写再限流及选择资源，不能只在最后渠道分发阶段改名。
-	relayV1Router.Use(middleware.TokenModelMapping(), middleware.ModelRequestRateLimit(), controller.ResourceRelay())
+	relayV1Router.Use(middleware.TokenModelMapping(), controller.ResponsesSearchBridge(), middleware.ModelRequestRateLimit(), controller.ResourceRelay())
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")

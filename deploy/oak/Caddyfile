@@ -1,14 +1,61 @@
-# Caddy obtains and renews the public TLS certificate automatically.
+# 需要 Caddy 2.11.7；正文只在 Oak 模型 API 入口留存，管理和充值接口不采集。
 oak.qingshukeji.top {
-	# Compress ordinary responses; streaming responses flush immediately below.
 	encode zstd gzip
 
-	# Keep the gateway behind the local reverse proxy.
-	reverse_proxy 127.0.0.1:3000 {
-		# Preserve token streaming without proxy buffering.
-		flush_interval -1
+	# 已知长度的 JSON 才缓冲，单条最多 4 MiB；其余请求照常转发。
+	# 不读取压缩、分块未知长度或文件上传正文，避免日志扩大内存开销。
+	@modelAPI {
+		method POST
+		path /v1/* /v1beta/*
+	}
+	@recordBody {
+		method POST
+		path /v1/* /v1beta/*
+		header Content-Type application/json*
+		not header Content-Encoding *
+		expression `{http.request.header.Content-Length}.matches('^[0-9]{1,7}$') && int({http.request.header.Content-Length}) <= 4194304`
 	}
 
-	# Record proxy diagnostics in the systemd journal.
-	log
+	# 先读取并恢复请求体，再交给 New API；不缓冲或保存流式响应正文。
+	route {
+		log_append @modelAPI request_body_policy json_known_length_max_4MiB_uncompressed
+		# 显式 early 避免同一正文键在回程再次追加为空值。
+		log_append @recordBody <request_body {http.request.body}
+		# New API 响应头提供用户可见的请求 ID，便于定位原始请求。
+		log_append request_id {http.response.header.X-Oneapi-Request-Id}
+		log_append proxy_request_id {http.request.uuid}
+		reverse_proxy 127.0.0.1:3000 {
+			flush_interval -1
+		}
+	}
+
+	# 文件仅 Caddy 用户与 root 可读；每天或达到 20 MiB 轮转，归档自动压缩。
+	# 保留至多 7 天、20 个归档；容量先达到时会更早清理，不承诺完整审计归档。
+	log {
+		output file /var/log/caddy/oak-access.jsonl {
+			mode 0600
+			roll_size 20MiB
+			roll_interval 24h
+			roll_keep 20
+			roll_keep_for 168h
+		}
+		# 认证头和常见查询密钥不进入日志；JSON 正文本身按用户需求保留。
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Proxy-Authorization delete
+				request>headers>Cookie delete
+				request>headers>X-Api-Key delete
+				request>headers>Api-Key delete
+				request>headers>X-Goog-Api-Key delete
+				resp_headers>Set-Cookie delete
+				request>uri query {
+					delete key
+					delete api_key
+					delete access_token
+				}
+			}
+		}
+	}
 }

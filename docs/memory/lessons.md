@@ -192,3 +192,12 @@
 验证：新增回归在修复前复现规则丢失，修复后 `go test ./common ./model ./middleware ./controller -count=1` 全部通过。`model/token_auto_groups_cache_test.go` 覆盖热缓存往返、旧哈希回源补缺、额度不覆盖、编辑/清空在栅栏到期后的热缓存一致性；既有额度与映射请求链路测试一并通过。Redis 使用 miniredis，未向真实厂商重放任务，未修改生产配置、提交或部署。
 
 构建边界：实际 New API 主程序 `go build -o <临时目录>/new-api .` 通过。全目录 `go build ./...` 被本机未纳入 Git 的 `dujiao-next-main` 目录触发的 `gomonkey` 依赖校验缺失阻断；未为此修改依赖或删除该目录。
+
+
+## 2026-11-04 01:20:55 +00:00 — Caddy 正文采集需验证字段内容和服务用户权限
+
+现象一：Caddy 2.11.7 使用 `log_append request_body {http.request.body}` 后，上游收到完整请求，但 JSON 日志解析得到空正文。源码在特殊正文占位符时提前添加字段，又因 Early 未显式开启在回程添加同名空字段。修复显式使用 `<request_body`。隔离 HTTP 回归先失败后通过，说明配置通过和转发成功都不能替代正文落盘断言。
+
+现象二：候选配置以 root:caddy 0640 验证通过，但首次切换复制到原 root:root 文件时仅同步了模式，没有同步所属组，服务用户无法读取配置。自动回滚恢复旧服务，之后用 install 明确 root:caddy 0640 并先检查服务用户可读，再次切换成功。后续部署不能用 root 验证结果替代运行身份校验。
+
+验证：deploy/oak/tests/test_caddy_body_log.py 用真实候选二进制验证 6 类 HTTP 行为、SSE 首帧、日志过滤与文件权限；生产启动后 Oak 与访谈均 200，合成无效 Key 的请求 401 且正文与关联 ID 正确落盘。官方二进制版本、资产 SHA-256 和部署边界见 deploy/oak/README.md。只存合成测试数据到源码，实际请求正文始终留在服务器受限目录。

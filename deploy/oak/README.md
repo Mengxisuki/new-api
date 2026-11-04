@@ -25,9 +25,33 @@
 
 ## HTTPS
 
-Caddy 2.6.2 自动申请并续期 Let's Encrypt 证书，HTTP 自动返回 308 跳转至 HTTPS。本次证书有效期至 2027-01-26，由 Caddy 自动续期。用户提供的 TrustAsia 证书也有效至 2027-01-26，保留为备用，当前站点使用 Caddy 自动管理的证书。
+Caddy 自动申请并续期 Let's Encrypt 证书，HTTP 自动返回 308 跳转至 HTTPS。首次部署使用 2.6.2，2026-11-04 已升级至 2.11.7，部署方式见下节。首次证书有效期至 2027-01-26，由 Caddy 自动续期。用户提供的 TrustAsia 证书也有效至 2027-01-26，保留为备用，当前站点使用 Caddy 自动管理的证书。
 
 已配置 HTTPS Secure/HttpOnly/SameSite=Strict 刷新 Cookie、精确可信 Origin、随机且持久保存的 session/crypto 密钥。流式反向代理配置 `flush_interval -1`；实际模型流式请求需配置上游渠道后再验证。
+
+## Caddy 请求正文留存（2026-11-04 已上线）
+
+按用户授权，在 `ssh wdm` 的 Caddy 层保留进入 New API **之前**的请求正文，供模型映射与协议转换排障。采用官方 Caddy 2.11.7，发布包 SHA-256 为 `727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b`，与官方 GitHub 发布资产摘要一致。此能力不是完整审计归档；[官方 log_append 说明](https://caddyserver.com/docs/caddyfile/directives/log_append) 将正文缓冲用于调试，因此本配置限制入口和单条体积，不采集响应正文。
+
+- 配置模板：本目录 `Caddyfile` 只包含 Oak；生产文件另有访谈站点，更新时必须保留其他站点。
+- 采集范围：`POST /v1/*`、`POST /v1beta/*`，`Content-Type: application/json*`，有数字 `Content-Length` 且不超过 4 MiB，无 `Content-Encoding`。压缩、未知长度、超限、非 JSON 及管理/充值请求照常转发，不记录正文。
+- 日志：`/var/log/caddy/oak-access.jsonl`，目录 `0700`、文件 `0600`，所有者 `caddy:caddy`。请求结束后写访问日志；长流未结束时暂时查不到该条记录。
+- 字段：`request_body` 保存原始 JSON 字符串；`request_id` 为 New API 的 `X-Oneapi-Request-Id`；`proxy_request_id` 为 Caddy UUID。模型 API 带 `request_body_policy`，有策略字段但无正文字段代表未满足采集条件。
+- 轮转：每天或达到 20 MiB 轮转并压缩，至多保留 7 天、20 个归档，容量先达到时更早清理。活动文件与归档都在上述目录。
+- 认证头、Cookie、常见 API Key 头和 URL 查询密钥被日志编码器删除；JSON 正文本身按原样保留，包含提示词与工具输入。文件不通过网站提供下载。
+
+官方二进制位于 `/opt/caddy/2.11.7/caddy`，`/opt/caddy/current` 指向该目录；`/usr/local/bin/caddy` 供运维 CLI 使用。systemd 的 `/etc/systemd/system/caddy.service.d/10-oak-binary.conf` 明确使用该版本启动与 reload；发行版 `/usr/bin/caddy` 2.6.2 未覆盖，后续不能用旧二进制验证含 `log_append` 的配置。
+
+升级前完整备份在 `/root/oak-caddy-upgrade-2.11.7/backup-20261104T011505Z/`；成功切换前的配置备份在同目录下的 `backup-20261104T011832Z/`。恢复旧二进制时必须一起恢复旧 Caddyfile，并移除本次 systemd drop-in、CLI 链接与 current 链接，再 daemon-reload/restart；不可让 2.6.2 读取新版日志指令。证书存储目录和两个后端应用未变更。
+
+查阅单条正文（仅在服务器本地、受控终端执行）：
+
+```sh
+ssh wdm
+jq --arg id '替换为请求ID' 'select(.request_id == $id) | {request_id, status, request_body}' /var/log/caddy/oak-access.jsonl
+```
+
+隔离验收：`CADDY_TEST_BINARY=/绝对路径/caddy python3 deploy/oak/tests/test_caddy_body_log.py -v`。实际在服务器用候选 2.11.7 运行，覆盖正文原样落盘、关联 ID、敏感头/查询剔除、充值接口排除、超限/编码/chunked 请求完整转发、SSE 首帧及时到达和 `0600` 权限。两站上线后健康检查均为 200；另用无效合成 Key 发出 401 请求，确认真实 Caddy→New API 链路仍能记录正文且不会调用模型商。无法补回启用前未留存的历史正文。
 
 ## 日常运维
 

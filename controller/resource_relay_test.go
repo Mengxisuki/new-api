@@ -795,3 +795,101 @@ func TestResourceRelayTokenModelMapping(t *testing.T) {
 		})
 	}
 }
+
+// TestTokenModelMappingResponsesHotUpdate 验证同一 Key 的后续请求读取新映射。
+// 两次客户端正文完全相同，不能靠修改客户端 model 伪造热更新。
+// 真实鉴权、资源选择、渠道映射、钱包结算与日志都经过现有入口。
+// 上游 HTTP 只替代供应商，返回完整 Responses 流和明确用量。
+// A 为客户端模型，B 为平台目标，C 为渠道上游名，三者保持独立。
+// 工具及 context 在 New API 保留，由最终执行层负责供应商参数兼容。
+// 测试不声称完整 Codex 应用或真实搜索已验证。
+// 客户端源名不在渠道模型目录内，必须先应用 Key 映射再选择渠道。
+// 两个目标都有权限，但价格不同，以识别旧报价快照被错误复用。
+// 渠道再次映射为供应商名称，不能把该名称当作平台计费身份。
+// 每轮都重新经过鉴权中间件，已有在途请求的冻结目标不在本测试范围。
+// 流式响应读完后才检查账单，避免用预扣状态冒充最终结算。
+// 同一账号独立钱包用于观察两次费用之和，不依赖预置生产数据。
+// 此用例使用 SQLite 夹具，Redis 热缓存失效由既有缓存回归单独覆盖。
+func TestTokenModelMappingResponsesHotUpdate(t *testing.T) {
+	// 该夹具不执行 main 的默认配置初始化，流式超时需显式设置。
+	// 测试结束恢复全局值，避免影响同包其他流式失败用例。
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	f := newResourceFixture(t)
+	beforeLog := common.LogConsumeEnabled
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() { common.LogConsumeEnabled = beforeLog })
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"kimi-k3":0.02,"glm-5.3":0.03}`))
+	require.NoError(t, model.DB.Model(f.user).Update("quota", 1_000_000).Error)
+	f.token.RemainQuota = 1_000_000
+	f.token.ModelLimitsEnabled, f.token.ModelLimits = true, "kimi-k3,glm-5.3"
+	_, err := f.token.UpdateWithResourcePolicy(nil)
+	require.NoError(t, err)
+	f.setPolicy(t, model.ResourceSource{Kind: "wallet", Enabled: true})
+	// 每个请求记录实际网络边界收到的正文，避免只断言数据库配置。
+	// 顺序请求在返回后读取捕获值，不在 handler 内修改测试全局状态。
+	var received []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/responses", r.URL.Path)
+		require.Equal(t, "Bearer platform-only", r.Header.Get("Authorization"))
+		var body map[string]any
+		require.NoError(t, common.DecodeJson(r.Body, &body))
+		received = append(received, body)
+		// 返回终态快照而非只有 delta；用量必须参与真实结算。
+		// 不构造搜索结果或工具执行成功，模型仅返回合成文本。
+		response := map[string]any{"id": "resp_synthetic", "object": "response", "status": "completed", "model": body["model"], "output": []any{map[string]any{"type": "message", "id": "msg_synthetic", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "OK", "annotations": []any{}}}}}, "usage": map[string]int{"input_tokens": 2, "output_tokens": 1, "total_tokens": 3}}
+		event, err := common.Marshal(map[string]any{"type": "response.completed", "response": response})
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "event: response.completed\ndata: "+string(event)+"\n\n")
+	}))
+	defer server.Close()
+	// 使用同一个平台渠道，排除切换渠道凭据造成的伪热更新。
+	// 两个供应商别名都由本地服务接受，不请求任何真实收费模型。
+	var channel model.Channel
+	require.NoError(t, model.DB.First(&channel).Error)
+	channel.Models, channel.BaseURL = "kimi-k3,glm-5.3", &server.URL
+	channel.ModelMapping = common.GetPointer(`{"kimi-k3":"supplier-kimi","glm-5.3":"supplier-glm"}`)
+	require.NoError(t, channel.Update())
+	// 上游应收到完全相同的工具与历史，只有模型身份按配置变化。
+	// 源名不在价格表或权限列表内，以暴露误用源名报价和授权的缺陷。
+	const body = `{"model":"gpt-6.1-terra","stream":true,"store":false,"reasoning":{"context":"all_turns","effort":"high"},"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"exec","format":{"type":"text"}}]},{"role":"user","content":"synthetic"}]}`
+	var source map[string]any
+	require.NoError(t, common.Unmarshal([]byte(body), &source))
+	total := 0
+	for index, target := range []string{"kimi-k3", "glm-5.3"} {
+		// 使用真实 Token 更新接口对应的持久化方法，触发既有缓存失效。
+		// 不重新创建 Key、不重启服务，也不修改客户端请求正文。
+		f.token.ModelMapping = fmt.Sprintf(`{"gpt-6.1-terra":%q}`, target)
+		_, err := f.token.UpdateWithResourcePolicy(nil)
+		require.NoError(t, err)
+		result := f.request(t, "POST", "/v1/responses", body)
+		require.Equal(t, 200, result.Code, result.Body.String())
+		require.Contains(t, result.Body.String(), `"type":"response.completed"`)
+		require.Len(t, received, index+1)
+		require.Equal(t, []string{"supplier-kimi", "supplier-glm"}[index], received[index]["model"])
+		// New API 不能提前按模型猜测工具能力或删掉推理历史。
+		// 供应商参数兼容必须留在最终执行目标已确定的位置。
+		for _, key := range []string{"reasoning", "input", "store", "stream"} {
+			require.Equal(t, source[key], received[index][key], key)
+		}
+		// 请求名和目标名的快照来自实际消费日志，不从当前 Key 配置拼出。
+		// 修改 Key 后旧日志不能随新规则改变；本轮只检查新生成的记录。
+		var log model.Log
+		require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Last(&log).Error)
+		require.Equal(t, target, log.ModelName)
+		require.Contains(t, log.Other, `"requested_model":"gpt-6.1-terra"`)
+		require.Contains(t, log.Other, `"target_model":"`+target+`"`)
+		// 每轮按平台 B 的不同价格扣费，不能沿用第一轮或渠道 C 的报价。
+		// 钱包余额与消费日志同时断言，避免只改日志展示却未真实结算。
+		quota := common.QuotaFromFloat([]float64{0.02, 0.03}[index] * common.QuotaPerUnit)
+		require.Equal(t, quota, log.Quota)
+		// 余额读取关闭缓存，直接验证数据库中已经完成的累计扣款。
+		// 第二轮费用不等于第一轮，可发现固定价格被错误沿用。
+		total += quota
+		balance, err := model.GetUserQuota(f.user.Id, false)
+		require.NoError(t, err)
+		require.Equal(t, 1_000_000-total, balance)
+	}
+}

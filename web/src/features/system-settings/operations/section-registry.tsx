@@ -1,3 +1,5 @@
+import { EventHubSection } from '@/features/event-hub'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -82,6 +84,12 @@ const OPERATIONS_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    // 事件投递有独立消费者和凭据，不混入邮件发送配置。
+    id: 'events',
+    titleKey: 'Event delivery',
+    build: () => <EventHubSection />,
   },
   {
     id: 'worker',

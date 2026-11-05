@@ -110,7 +110,7 @@ func CompleteOfficialTopUp(tradeNo string, expectedProvider string, expectedPaym
 			return err
 		}
 		// 共享原子条件更新同时保护钱包上限和并发到账。
-		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+		if err := creditHubTopUpQuota(tx, &topUp, quotaToAdd, nil); err != nil {
 			return err
 		}
 		if topUp.InvoiceRequired {

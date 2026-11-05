@@ -24,6 +24,13 @@ import (
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
+	// 立即完成的任务已通过提交结算，日志开关不应影响最终观察。
+	// 未完成任务保留待定状态，由真正终态收尾确认。
+	if model.HubCaptureEnabled() && task.Status == model.TaskStatusSuccess {
+		if _, err := settleHubTaskFunding(task, task.Quota, model.HubChargeFinal); err != nil {
+			logger.LogError(c, fmt.Sprintf("event hub immediate task finalization failed task=%s: %v", task.TaskID, err))
+		}
+	}
 	tokenName := c.GetString("token_name")
 	logContent := []*common.Message{common.NewMessage("Action {{action}}", map[string]any{"action": info.Action})}
 	// 支持任务仅按次计费
@@ -262,16 +269,35 @@ func taskModelName(task *model.Task) string {
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，退还资金与令牌额度，并回减用户和渠道用量。
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
+// 捕获开启时资金、任务总额与退款观察在同事务清零。
+// 缓存确认未知不会重复执行退款，原观察保留对账标记。
+// 同一任务重复调用直接命中已退款事实，不再给Key退第二份预算。
+// 退款不是负费用样本，后续中位数查询会排除这笔任务。
+// 原有用户与渠道累计用量仍只回减一次，请求次数保持原合同。
+// 不撤回已送达的历史告警，告警表示当时已确认的费用快照。
+// 旧独立测试未启动捕获时继续验证原账务路径。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
 	quota := task.Quota
-	if quota == 0 {
+	if model.HubCaptureEnabled() {
+		applied, err := settleHubTaskFunding(task, 0, model.HubChargeRefunded)
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("event hub task refund failed task=%s: %v", task.TaskID, err))
+			return false
+		}
+		if !applied || quota == 0 {
+			task.Quota = 0
+			return true
+		}
+	} else if quota == 0 {
 		return true
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
-		logger.LogWarn(ctx, common.LogText("failed to refund the funding source, task %s: %s", task.TaskID, err.Error()))
-		return false
+	if !model.HubCaptureEnabled() {
+		if err := taskAdjustFunding(task, -quota); err != nil {
+			logger.LogWarn(ctx, common.LogText("failed to refund the funding source, task %s: %s", task.TaskID, err.Error()))
+			return false
+		}
 	}
 
 	// 2. 退还令牌额度
@@ -299,8 +325,11 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	// 5. 资金退款完成后再清除持久化标记。
 	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
 	task.Quota = 0
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, common.LogText("refund succeeded but clearing the task quota failed, task %s: %s", task.TaskID, err.Error()))
+	// 捕获开启时任务费用已在资金事务里清零；旧路径仍保留原回写。
+	if !model.HubCaptureEnabled() {
+		if err := task.UpdateQuota(); err != nil {
+			logger.LogError(ctx, common.LogText("refund succeeded but clearing the task quota failed, task %s: %s", task.TaskID, err.Error()))
+		}
 	}
 	return true
 }
@@ -309,6 +338,25 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
 // reason 写入日志内容（例如按 token 重算或 adaptor 调整）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
+// 本函数接收整笔最终额度，不能把quotaDelta当成异常检测样本。
+// 提交阶段已经预扣，正差额补扣、负差额退还均沿用冻结资金来源。
+// 捕获开启后在同一事务保存任务总额，进程退出不会遗失已确认费用。
+// 零差额仍有最终结算事实，不能从检测与基线中消失。
+// 幂等观察认领失败意味着费用已提交，不再重复调整令牌和统计。
+// 同任务后续修订只更新一个样本，不能将补扣日志当成第二笔请求。
+// 资金失败时观察也回滚，保留原任务费用供排障。
+// 缓存未知结果单独持久标记，后续调用不能伪装成尚未扣款。
+// 不重新选择钱包或订阅，不读取用户刚修改的来源偏好。
+// 退款回到原来源，历史跨周期规则仍由原订阅结算函数约束。
+// Key预算调整不包含用户余额，避免账本层次混淆。
+// 任务请求次数在提交阶段只累计一次，完成阶段只修正用量。
+// 正差额记录消费日志，负差额记录退款日志，日志不会驱动通知。
+// 日志开关关闭时本事务依然持久化可恢复的最终观察。
+// 费用已完成的旧测试仍保留原路径，测试须显式启动捕获验证新合同。
+// 原上游饱和标记继续写入管理员日志，不进入面向消费者的敏感原文。
+// 任务公开编号作为幂等身份，上游私有编号不参与通知协议。
+// 返回值保持原接口，调用方不能依据日志是否存在判断结算成功。
+// 已处理观察保留至少七天，供后续同模型费用比较。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason *common.Message, clamps ...*common.QuotaClamp) {
 	if actualQuota < 0 {
 		return
@@ -316,6 +364,19 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
 
+	// 最终观察在资金调整前认领；零差额同样必须落库。
+	// 幂等重复不再调整 Key 和统计，避免重复消费样本与预算。
+	if model.HubCaptureEnabled() {
+		applied, err := settleHubTaskFunding(task, actualQuota, model.HubChargeFinal)
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("event hub task settlement failed task=%s: %v", task.TaskID, err))
+			return
+		}
+		if !applied {
+			task.Quota = actualQuota
+			return
+		}
+	}
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, common.LogText("task %s pre-consumed quota matches the actual quota (%s, %s)",
 			task.TaskID, logger.LogQuota(actualQuota), reason.Error()))
@@ -331,17 +392,22 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	))
 
 	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
-		logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
-		return
+	if !model.HubCaptureEnabled() {
+		if err := taskAdjustFunding(task, quotaDelta); err != nil {
+			logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
+			return
+		}
 	}
 
 	// 调整令牌额度
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
 
 	task.Quota = actualQuota
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, common.LogText("failed to write back the settled task quota, task %s: %s", task.TaskID, err.Error()))
+	// 新链路在资金事务中已保存任务总额，禁止提交后再造写回窗口。
+	if !model.HubCaptureEnabled() {
+		if err := task.UpdateQuota(); err != nil {
+			logger.LogError(ctx, common.LogText("failed to write back the settled task quota, task %s: %s", task.TaskID, err.Error()))
+		}
 	}
 
 	// 提交阶段已经累计过一次请求；结算阶段只调整最终用量。

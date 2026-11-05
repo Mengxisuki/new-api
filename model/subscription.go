@@ -1605,17 +1605,29 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 		return nil
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
-		var sub UserSubscription
-		if err := lockForUpdate(tx).
-			Where("id = ?", userSubscriptionId).
-			First(&sub).Error; err != nil {
-			return err
-		}
-		newUsed := max(sub.AmountUsed+delta, 0)
-		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
-			return fmt.Errorf("%w, used=%d total=%d", ErrSubscriptionLimitExceeded, newUsed, sub.AmountTotal)
-		}
-		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
+		return postConsumeUserSubscriptionDeltaTx(tx, userSubscriptionId, delta)
 	})
+}
+
+// postConsumeUserSubscriptionDeltaTx 是订阅差额规则的唯一事务实现。
+// 事件结算复用同一规则，让用量和观察记录原子提交。
+// 上层已校验订阅编号；本层仍在行锁内读取真实已用量。
+// 零差额无需改写订阅，但调用方仍可保存最终结算事实。
+// 本函数不提交独立事务，调用者决定与哪些业务记录原子保存。
+func postConsumeUserSubscriptionDeltaTx(tx *gorm.DB, userSubscriptionId int, delta int64) error {
+	if delta == 0 {
+		return nil
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+		return err
+	}
+	// 退款最低归零，正差额仍受原订阅上限保护。
+	// 不把通知规则变成允许透支订阅的新分支。
+	newUsed := max(sub.AmountUsed+delta, 0)
+	if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
+		return fmt.Errorf("%w, used=%d total=%d", ErrSubscriptionLimitExceeded, newUsed, sub.AmountTotal)
+	}
+	sub.AmountUsed = newUsed
+	return tx.Save(&sub).Error
 }

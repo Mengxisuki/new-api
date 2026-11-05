@@ -25,6 +25,8 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  // 接入凭据只允许指定消费者及主题，不能复用为个人管理令牌证明。
+  | 'event_hub.token'
   // 账号挂靠复用同一证明机制，证明不能跨账号或消费操作使用。
   | 'hosting.manage'
   | 'recharge.manage'
@@ -61,6 +63,11 @@ export type AdminUserManageAction =
   | 'sales'
 
 export type VerificationOperation =
+  | {
+      // 签发前固定消费者与授权；排序由调用端和服务端共同规范化。
+      scope: 'event_hub.token'
+      context: { consumer_id: number; topics: string[]; expires_at: number }
+    }
   // 绑定订单与版本，转派后旧证明不可复用。
   | {
       scope: 'recharge.manage'
@@ -121,6 +128,7 @@ export type VerificationOperation =
       scope: Exclude<
         SecurityProofScope,
         | 'hosting.manage'
+        | 'event_hub.token'
         | 'recharge.manage'
         | 'channel.key.read'
         | 'account.binding.bind'

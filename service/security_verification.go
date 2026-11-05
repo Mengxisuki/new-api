@@ -163,6 +163,18 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeHubToken:
+		// 验证严格绑定消费者、主题与到期时间，不接受额外授权字段。
+		var context HubTokenVerificationContext
+		if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.ConsumerID <= 0 || context.ExpiresAt <= 0 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		topics, err := model.HubTopics(context.Topics)
+		if err != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context.Topics = topics
+		normalized = context
 	case VerificationScopeRecharge:
 		// 证明绑定动作和订单版本；转派或状态更新后旧证明不能继续使用。
 		var context RechargeVerificationContext
@@ -338,7 +350,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		if !state.HasTwoFA {
 			return nil, model.ErrTwoFANotEnabled
 		}
-	case VerificationScopeRecharge, VerificationScopeHostingManage, VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
+	case VerificationScopeHubToken, VerificationScopeRecharge, VerificationScopeHostingManage, VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
@@ -389,7 +401,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if state.Status != common.UserStatusEnabled || state.AuthVersion != identity.UserAuthVersion {
 		return nil, ErrAuthTokenInvalid
 	}
-	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
+	if (scope == VerificationScopeChannelKeyRead || scope == VerificationScopeHubToken) && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
 	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {
@@ -406,7 +418,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
-			case VerificationScopeRecharge, VerificationScopeHostingManage, VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+			case VerificationScopeHubToken, VerificationScopeRecharge, VerificationScopeHostingManage, VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:

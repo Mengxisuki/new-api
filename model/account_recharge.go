@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -302,6 +303,11 @@ func SubmitAccountRechargeInfo(id, userID, version int, secret, mask string) err
 		if o.Version != version || o.PaymentStatus != "paid" || (o.Status != "awaiting_info" && o.Status != "action_required") {
 			return ErrRechargeConflict
 		}
+		// 在覆盖状态前区分首次交资料与要求补交，不把原文放进事件。
+		submission := "initial"
+		if o.Status == "action_required" {
+			submission = "resubmitted"
+		}
 		o.Secret = secret
 		o.EmailMask = mask
 		o.InfoSubmittedAt = common.GetTimestamp()
@@ -310,7 +316,18 @@ func SubmitAccountRechargeInfo(id, userID, version int, secret, mask string) err
 		if o.AssigneeID > 0 {
 			o.Status = "processing"
 		}
-		return saveRechargeEvent(tx, &o, userID, "submit_info", "")
+		if err := saveRechargeEvent(tx, &o, userID, "submit_info", ""); err != nil {
+			return err
+		}
+		// 订单版本由既有业务函数递增，通知引用同一已保存版本。
+		// 事件失败必须与资料保存一并回滚，不能只记日志继续成功。
+		if HubCaptureEnabled() {
+			return AppendHubEventTx(tx, fmt.Sprintf("recharge:%d:info:%d", o.ID, o.Version), HubTopicRecharge, userID, map[string]any{
+				"order_id": o.ID, "order_version": o.Version, "status": o.Status,
+				"submission": submission, "assignee_id": o.AssigneeID,
+			})
+		}
+		return nil
 	})
 }
 

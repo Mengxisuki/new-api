@@ -133,6 +133,29 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 	return ErrTopUpQuotaLimitExceeded
 }
 
+// creditHubTopUpQuota 在实际入账事务中同时写安全到账事件。
+// 只供钱包充值调用；订阅生成的账单不会经过这里。
+// 各网关仍保留自己的验签、冻结额度和幂等状态检查。
+// 发票保存失败会回滚本事件，不能提前向消费者宣告到账。
+func creditHubTopUpQuota(tx *gorm.DB, topUp *TopUp, quota int, updates map[string]any) error {
+	if err := creditTopUpQuota(tx, topUp.UserId, quota, updates); err != nil {
+		return err
+	}
+	// 未启动事件服务的独立模型工具保留原入账合同。
+	// 正式启动只有迁移完成后才允许开启捕获。
+	if !HubCaptureEnabled() {
+		return nil
+	}
+	// 白名单不包含邮箱、支付原始通知或任何商户凭据。
+	// 实付金额使用十进制文本，跨币种不猜测人民币含义。
+	return AppendHubEventTx(tx, fmt.Sprintf("topup:%d", topUp.Id), HubTopicTopup, topUp.UserId, map[string]any{
+		"user_id": topUp.UserId, "trade_no": topUp.TradeNo,
+		"paid_amount":    decimal.NewFromFloat(topUp.Money).StringFixed(2),
+		"credited_quota": quota, "payment_provider": topUp.PaymentProvider,
+		"payment_method": topUp.PaymentMethod,
+	})
+}
+
 func (topUp *TopUp) Update() error {
 	var err error
 	err = DB.Save(topUp).Error
@@ -244,7 +267,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+		if err := creditHubTopUpQuota(tx, topUp, quotaToAdd, nil); err != nil {
 			return err
 		}
 		if topUp.InvoiceRequired {
@@ -308,7 +331,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quota, map[string]any{
+		return creditHubTopUpQuota(tx, topUp, quota, map[string]any{
 			"stripe_customer": customerId,
 		})
 	})
@@ -551,7 +574,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		}
 
 		// 增加用户额度（立即写库，保持一致性）
-		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+		if err := creditHubTopUpQuota(tx, topUp, quotaToAdd, nil); err != nil {
 			return err
 		}
 		if topUp.InvoiceRequired {
@@ -633,7 +656,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		return creditHubTopUpQuota(tx, topUp, quota, updateFields)
 	})
 
 	if err != nil {
@@ -691,7 +714,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditHubTopUpQuota(tx, topUp, quotaToAdd, nil)
 	})
 
 	if err != nil {
@@ -751,7 +774,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditHubTopUpQuota(tx, topUp, quotaToAdd, nil)
 	})
 
 	if err != nil {

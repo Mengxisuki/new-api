@@ -390,6 +390,10 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	// 事件主表及观察账本必须先就绪；失败时不能启动后静默丢通知。
+	if err := MigrateEventHub(DB); err != nil {
+		return err
+	}
 	// 在启动对外服务前固化旧默认顺序，避免新运行时取消继承后改变现存 Key。
 	// 必须等待策略表和 Token 表建好，复制失败则中止启动而非改变计费合同。
 	// 迁移自身幂等，不依赖管理员手动标记某一部署已经升级。

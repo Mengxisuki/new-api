@@ -45,6 +45,14 @@ type BillingSession struct {
 // Settle 根据实际消耗额度进行结算。
 // 资金来源和令牌额度分两步提交：若资金来源已提交但令牌调整失败，
 // 会标记 fundingSettled 防止 Refund 对已提交的资金来源执行退款。
+// 事件观察记录整笔总额，资金来源方法仍按补扣或退还差额执行。
+// 生产钱包与订阅由主库原子提交，通知功能不能使两者变成双重扣费。
+// 零差额也有最终事实，必须覆盖预扣恰好匹配实际费用的正常请求。
+// 跨会话幂等命中跳过Key二次扣减，不能只保护用户余额。
+// 缓存确认失败时数据库可能已完成，因此冻结后续自动退款与重试。
+// 同步资金成功后Key更新失败保留既有错误，不把实际消费误退回用户。
+// 自定义资金来源不假设其实现使用本地主库，继续遵循原接口合同。
+// 异步任务观察仅在完成后晋级，提交阶段不会拿估价告警。
 func (s *BillingSession) Settle(actualQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -56,21 +64,44 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		return errors.New("billing session already refunded")
 	}
 	delta := actualQuota - s.preConsumedQuota
-	if delta == 0 {
+	// 事件捕获需要保存零差额的最终事实，不能提前返回漏掉整笔样本。
+	// 捕获关闭时保留原有轻量路径，独立测试工具无需事件表。
+	if delta == 0 && !model.HubCaptureEnabled() {
 		s.settled = true
 		return nil
 	}
 	// 1) 调整资金来源（仅在尚未提交时执行，防止重复调用）
 	if !s.fundingSettled {
-		if err := s.funding.Settle(delta); err != nil {
+		var fundingErr error
+		fundingApplied := true
+		// 生产计费在资金事务中保存观察，避免提交后进程退出漏告警。
+		// 自定义 FundingSource 仍遵循原接口合同，不能猜测其数据库实现。
+		switch s.funding.(type) {
+		case *WalletFunding, *SubscriptionFunding:
+			if model.HubCaptureEnabled() {
+				fundingApplied, fundingErr = settleHubBillingFunding(s.relayInfo, actualQuota, delta)
+			} else {
+				fundingErr = s.funding.Settle(delta)
+			}
+		default:
+			fundingErr = s.funding.Settle(delta)
+		}
+		if fundingErr != nil {
+			err := fundingErr
 			// 同步会话的数据库或缓存确认失败可能发生在提交之后。
 			// 禁止随后再次退款或结算，把该请求留给对账而非猜测资金状态。
-			if s.durable {
+			if s.durable || model.HubCaptureEnabled() {
 				s.refunded, s.refundErr = true, err
 			}
 			return err
 		}
 		s.fundingSettled = true
+		// 跨进程重投已由资金观察认领，不能在这里再次扣 Key 预算。
+		// 同实例已完成调用仍由函数最前面的 settled 标志处理。
+		if !fundingApplied {
+			s.settled = true
+			return nil
+		}
 	}
 	// 2) 调整令牌额度
 	var tokenErr error

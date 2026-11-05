@@ -643,6 +643,14 @@ func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task 
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	// 固定价任务可能没有差额函数，仍需在实际终态收尾后确认整笔费用。
+	// 不能让后台仅凭SUCCESS状态猜测上一步估算已经完成最终结算。
+	// 失败退款由RefundTaskQuota写refunded，未确认退款不能成为正向样本。
+	if model.HubCaptureEnabled() && task.Status == model.TaskStatusSuccess && !billingSettled {
+		if _, err := settleHubTaskFunding(task, task.Quota, model.HubChargeFinal); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("event hub task finalization failed task=%s: %v", task.TaskID, err))
+		}
+	}
 }
 
 func redactVideoResponseBody(body []byte) []byte {

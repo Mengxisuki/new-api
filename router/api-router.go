@@ -15,6 +15,8 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	// SSE消费组独立注册，避免API统一gzip缓存心跳。
+	registerEventHubRoutes(router)
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))

@@ -63,6 +63,12 @@ func main() {
 		return
 	}
 
+	// 所有运行节点在监听之前检查共享事件schema，测试只开数据库不触发捕获。
+	if err := model.InitializeHubCapture(); err != nil {
+		common.FatalLog(err.Error())
+		return
+	}
+
 	common.SysLog(common.LogText("New API %s started", common.Version))
 	if os.Getenv("GIN_MODE") != "debug" {
 		gin.SetMode(gin.ReleaseMode)
@@ -106,6 +112,10 @@ func main() {
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
 	wsmanager.StartSubscriber(context.Background())
+	// 持久事件恢复与HTTP监听共用进程生命周期，退出时停止扫描。
+	hubContext, stopHub := context.WithCancel(context.Background())
+	defer stopHub()
+	go service.RunEventHub(hubContext)
 
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.

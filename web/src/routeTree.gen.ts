@@ -60,6 +60,7 @@ import { Route as AuthenticatedUsageLogsAuditRouteImport } from './routes/_authe
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
+import { Route as AuthenticatedFinanceCreditIndexRouteImport } from './routes/_authenticated/finance/credit/index'
 import { Route as AuthenticatedFinanceInvoicesIndexRouteImport } from './routes/_authenticated/finance/invoices/index'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedSystemSettingsAuthSectionRouteImport } from './routes/_authenticated/system-settings/auth/$section'
@@ -354,6 +355,12 @@ const PricingModelIdIndexRoute = PricingModelIdIndexRouteImport.update({
   path: '/pricing/$modelId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedFinanceCreditIndexRoute =
+  AuthenticatedFinanceCreditIndexRouteImport.update({
+    id: '/finance/credit/',
+    path: '/finance/credit/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedFinanceInvoicesIndexRoute =
   AuthenticatedFinanceInvoicesIndexRouteImport.update({
     id: '/finance/invoices/',
@@ -515,6 +522,7 @@ export interface FileRoutesByFullPath {
   '/system-settings/request-policies/$section': typeof AuthenticatedSystemSettingsRequestPoliciesSectionRoute
   '/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/finance/credit/': typeof AuthenticatedFinanceCreditIndexRoute
   '/finance/invoices/': typeof AuthenticatedFinanceInvoicesIndexRoute
   '/system-settings/auth/': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/system-settings/billing/': typeof AuthenticatedSystemSettingsBillingIndexRoute
@@ -582,6 +590,7 @@ export interface FileRoutesByTo {
   '/system-settings/request-policies/$section': typeof AuthenticatedSystemSettingsRequestPoliciesSectionRoute
   '/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/finance/credit': typeof AuthenticatedFinanceCreditIndexRoute
   '/finance/invoices': typeof AuthenticatedFinanceInvoicesIndexRoute
   '/system-settings/auth': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/system-settings/billing': typeof AuthenticatedSystemSettingsBillingIndexRoute
@@ -653,6 +662,7 @@ export interface FileRoutesById {
   '/_authenticated/system-settings/request-policies/$section': typeof AuthenticatedSystemSettingsRequestPoliciesSectionRoute
   '/_authenticated/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/_authenticated/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/_authenticated/finance/credit/': typeof AuthenticatedFinanceCreditIndexRoute
   '/_authenticated/finance/invoices/': typeof AuthenticatedFinanceInvoicesIndexRoute
   '/_authenticated/system-settings/auth/': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/_authenticated/system-settings/billing/': typeof AuthenticatedSystemSettingsBillingIndexRoute
@@ -723,6 +733,7 @@ export interface FileRouteTypes {
     | '/system-settings/request-policies/$section'
     | '/system-settings/security/$section'
     | '/system-settings/site/$section'
+    | '/finance/credit/'
     | '/finance/invoices/'
     | '/system-settings/auth/'
     | '/system-settings/billing/'
@@ -790,6 +801,7 @@ export interface FileRouteTypes {
     | '/system-settings/request-policies/$section'
     | '/system-settings/security/$section'
     | '/system-settings/site/$section'
+    | '/finance/credit'
     | '/finance/invoices'
     | '/system-settings/auth'
     | '/system-settings/billing'
@@ -860,6 +872,7 @@ export interface FileRouteTypes {
     | '/_authenticated/system-settings/request-policies/$section'
     | '/_authenticated/system-settings/security/$section'
     | '/_authenticated/system-settings/site/$section'
+    | '/_authenticated/finance/credit/'
     | '/_authenticated/finance/invoices/'
     | '/_authenticated/system-settings/auth/'
     | '/_authenticated/system-settings/billing/'
@@ -1249,6 +1262,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricingModelIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/finance/credit/': {
+      id: '/_authenticated/finance/credit/'
+      path: '/finance/credit'
+      fullPath: '/finance/credit/'
+      preLoaderRoute: typeof AuthenticatedFinanceCreditIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/finance/invoices/': {
       id: '/_authenticated/finance/invoices/'
       path: '/finance/invoices'
@@ -1487,6 +1507,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
+  AuthenticatedFinanceCreditIndexRoute: typeof AuthenticatedFinanceCreditIndexRoute
   AuthenticatedFinanceInvoicesIndexRoute: typeof AuthenticatedFinanceInvoicesIndexRoute
 }
 
@@ -1520,6 +1541,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
+  AuthenticatedFinanceCreditIndexRoute: AuthenticatedFinanceCreditIndexRoute,
   AuthenticatedFinanceInvoicesIndexRoute:
     AuthenticatedFinanceInvoicesIndexRoute,
 }

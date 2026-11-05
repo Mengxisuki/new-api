@@ -1013,3 +1013,20 @@ export const STATIC_I18N_KEYS = [
   'WeChat payment uses the configured payment gateway or official WeChat channel. Balance payment is optional for each product.',
   'You cannot process this recharge order',
 ] as const
+
+// 挂帐状态与服务端业务错误通过动态映射展示，显式登记避免提取遗漏。
+export const creditStaticKeys = [
+  'View invoices and credit',
+  'Manage invoices and credit',
+  'View invoices, credit balances and settlement records.',
+  'Process invoices and confirm full credit settlements.',
+
+  'On account',
+  'Outstanding credit',
+  'Credit settled',
+  'Credit cancelled',
+  'Invalid credit account request',
+  'On-account payment is not enabled for this user and module',
+  'Insufficient available credit',
+  'Credit record changed. Refresh and try again.',
+] as const

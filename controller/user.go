@@ -609,7 +609,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 	}
 	// 财务区与管理员区独立；角色不授予后端尚未授权的动作。
 	if userRole >= common.RoleFinanceUser {
-		defaultConfig["finance"] = map[string]any{"enabled": true, "invoices": true}
+		defaultConfig["finance"] = map[string]any{"enabled": true, "invoices": true, "credit": true}
 	}
 	// 普通用户不包含admin区域
 

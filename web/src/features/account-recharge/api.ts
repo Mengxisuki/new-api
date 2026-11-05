@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { creditAccountSchema } from '@/features/credit/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -123,6 +124,7 @@ const root = '/api/account-recharge'
 // 不把cookie、session或证明写入本地存储。
 const once: ApiRequestConfig = { singleUseAuthorization: true }
 const catalogSchema = z.object({
+  credit: creditAccountSchema.nullable().optional(), // 本人可用额度，历史响应可不含此新增字段。
   items: z.array(productSchema),
   payment_methods: z.array(z.object({ id: z.string(), name: z.string() })),
   configured: z.boolean(),
@@ -301,6 +303,9 @@ export async function getOrder(id: number, operations: boolean) {
   return z
     .object({
       order: orderSchema,
+      credit_status: z
+        .enum(['outstanding', 'settled', 'cancelled', 'refunded'])
+        .optional(), // 原单精确关联的债务状态。
       invoice: orderInvoiceSchema.nullable().optional(), // 运营响应不含本人税务资料。
       internal_note: z.string().optional(),
       events: z

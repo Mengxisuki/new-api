@@ -724,3 +724,104 @@ test.each([false, true])(
     ).not.toBeInTheDocument()
   }
 )
+
+// 授权后的挂帐选项来自服务器目录；选择后不能申请现有现金付款发票。
+// 报价和创建共用同一支付标识，避免只加按钮但后端仍收到微信付款。
+// 该方式不创建发票资料查询，避免仍然要求现金收款抬头。
+// 请求参数断言覆盖创建入口，不能只验证下拉项存在。
+test('挂帐结账展示额度且不发送开票请求', async () => {
+  const user = userEvent.setup() // 使用真实选择和点击行为，不直接构造内部状态。
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+    data: {
+      success: true, // 正常业务响应才能解锁后续确认。
+      data: String(url).endsWith('/quote')
+        ? { money_cents: 15000, base_cents: 15000, wallet_quota: 0 }
+        : {
+            ...order, // 沿用完整既有订单合同，避免漏字段测试绕过解析。
+            payment_method: 'credit', // 创建结果必须冻结挂帐方式。
+            payment_provider: 'credit', // 挂帐不是外部微信网关。
+            payment_status: 'pending', // 创建成功尚未实际占用额度。
+          },
+    },
+  }))
+  mount(
+    <RechargeCheckout
+      product={product}
+      catalog={{
+        items: [product], // 商品来自真实目录结构。
+        configured: true, // 原接单与支付门禁满足后才允许结账。
+        enabled: true, // 本例显式授予挂帐权限。
+        payment_methods: [{ id: 'credit', name: 'On account' }], // 只展示服务端授权的挂帐方式。
+        credit: {
+          user_id: 8, // 额度摘要只能属于当前登录买家。
+          enabled: true,
+          limit_cents: 20000, // 总授信为二百元。
+          used_cents: 1000, // 十元已占用，因此应显示一百九十元可用。
+          recharge_enabled: true, // 代充值模块明确授权。
+          topup_enabled: false, // 钱包充值未开放挂帐。
+          subscription_enabled: false, // 订阅也未提前开放。
+          version: 1, // 目录摘要具有明确配置版本。
+        },
+      }}
+      onClose={() => {}}
+      onCreated={() => {}}
+    />
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/account-recharge/quote',
+      expect.objectContaining({
+        payment_method: 'credit',
+        invoice_required: false, // 挂帐不能沿用现金付款开票选择。
+      })
+    )
+  )
+  expect(screen.getByText(/Available credit \(CNY\): 190/)).toBeVisible()
+  expect(screen.queryByText('Need an invoice')).toBeNull() // 付款方式不支持时应直接移除开票交互。
+  await user.click(
+    screen.getByRole('button', { name: 'Create order and continue' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/account-recharge/orders',
+      expect.objectContaining({
+        payment_method: 'credit',
+        invoice_required: false,
+        quoted_cents: 15000, // 确认过的商品总价必须进入创建请求。
+      }),
+      { singleUseAuthorization: true } // 认证恢复不能自动重放结账写入。
+    )
+  )
+})
+
+// 父页面的商品支付说明和历史订单应同时识别挂帐。
+// 仅在结账弹窗添加选项不足以保证用户实际看到的订单来源正确。
+// 全页测试保留真实商品卡片与订单表格，以捕获遗漏的旧微信默认值。
+test('挂帐在商品卡片和历史订单中显示真实支付方式', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url.endsWith('/products')
+        ? {
+            items: [product],
+            enabled: true,
+            configured: true,
+            payment_methods: [{ id: 'credit', name: 'On account' }],
+          }
+        : {
+            items: [
+              {
+                ...order,
+                payment_provider: 'credit',
+                payment_method: 'credit',
+              },
+            ],
+            total: 1,
+          },
+    },
+  }))
+  mount(<AccountRecharge />) // 从实际父页面验证表格接线。
+  // 卡片和订单行均应出现挂帐，不能仅靠弹窗内选项通过。
+  await waitFor(() => expect(screen.getAllByText('On account')).toHaveLength(2))
+  expect(screen.queryByText('WeChat Pay')).toBeNull() // 挂帐历史不能误显示现金支付渠道。
+})

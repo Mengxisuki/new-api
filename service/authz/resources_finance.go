@@ -4,11 +4,11 @@ package authz
 // 开票资料和附件均受同一资源约束，用户自己的发票另由归属校验保护。
 const ResourceFinance = "finance"
 
-// FinanceRead 允许查看财务订单、开票申请及受保护附件。
+// FinanceRead 允许查看财务订单、开票申请、挂帐记录及受保护附件。
 // 该能力不允许改价、补余额或管理用户。
 var FinanceRead = Permission{Resource: ResourceFinance, Action: ActionRead} // 标签相同不代表与其它管理资源共享授权。
 
-// FinanceWrite 允许处理开票申请和上传已开票文件。
+// FinanceWrite 允许处理开票申请、上传文件和登记挂帐整笔结清。
 // 后端处理器仍须验证付款状态及申请生命周期。
 var FinanceWrite = Permission{Resource: ResourceFinance, Action: ActionWrite}
 
@@ -22,14 +22,14 @@ func init() {
 		Actions: []ActionDefinition{
 			{
 				Action:         ActionRead,
-				LabelKey:       "View invoice requests",
-				DescriptionKey: "View paid orders, invoice requests and protected invoice files.",
+				LabelKey:       "View invoices and credit",
+				DescriptionKey: "View invoices, credit balances and settlement records.",
 				DefaultRoles:   []string{BuiltInRoleAdmin, BuiltInRoleFinance}, // 列表和文件下载都由读权限约束。
 			},
 			{
 				Action:         ActionWrite,
-				LabelKey:       "Process invoice requests",
-				DescriptionKey: "Review invoice requests and upload issued invoice files.",
+				LabelKey:       "Manage invoices and credit",
+				DescriptionKey: "Process invoices and confirm full credit settlements.",
 				DefaultRoles:   []string{BuiltInRoleAdmin, BuiltInRoleFinance},
 			},
 		},

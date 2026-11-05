@@ -144,6 +144,10 @@ export function SidebarModulesSection({
       },
     },
     finance: {
+      credit: {
+        title: t('On-account management'),
+        description: t('View credit records'),
+      },
       invoices: {
         title: t('Invoice management'),
         description: t('Process invoice requests'),

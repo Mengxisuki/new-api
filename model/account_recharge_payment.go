@@ -100,7 +100,7 @@ func CompleteAccountRechargePayment(tradeNo, provider, method, ref string, amoun
 		if err := lockForUpdate(tx).Where("trade_no = ?", tradeNo).First(&o).Error; err != nil {
 			return err
 		}
-		if provider == "wallet" || o.PaymentProvider != provider || o.PaymentMethod != method || !amount.Equal(decimal.NewFromInt(o.MoneyCents).Div(decimal.NewFromInt(100))) {
+		if provider == "wallet" || provider == "credit" || o.PaymentProvider != provider || o.PaymentMethod != method || !amount.Equal(decimal.NewFromInt(o.MoneyCents).Div(decimal.NewFromInt(100))) {
 			return ErrRechargeInvalid
 		}
 		if o.PaymentStatus == "paid" || o.PaymentStatus == "refunding" || o.PaymentStatus == "refunded" {
@@ -377,6 +377,11 @@ func RefundAccountRecharge(id, actor, version int, confirm bool, note, ref strin
 			}
 			if result.RowsAffected != 1 {
 				return ErrRechargeConflict
+			}
+		} else if order.PaymentProvider == "credit" {
+			// 未收款撤销欠款，已结清则必须确认实际退款凭证。
+			if err := refundRechargeCreditTx(tx, &order, actor, ref); err != nil {
+				return err
 			}
 		} else if strings.TrimSpace(ref) == "" {
 			return ErrRechargeInvalid

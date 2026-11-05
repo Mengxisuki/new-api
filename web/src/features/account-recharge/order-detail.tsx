@@ -33,6 +33,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { CREDIT_STATUS } from '@/features/credit/api'
 import { OfficialPaymentQrDialog } from '@/features/wallet/components/dialogs/official-payment-qr-dialog'
 import { submitPaymentForm } from '@/features/wallet/lib/payment'
 import { toIntlLocale } from '@/i18n/languages'
@@ -51,7 +52,11 @@ import {
 } from './api'
 import { RechargeOrderInvoice } from './order-invoice'
 import { RechargeProductInfo } from './product-info'
-import { orderStatus, rechargeActionLabels } from './status'
+import {
+  orderStatus,
+  rechargeActionLabels,
+  rechargePaymentLabel,
+} from './status'
 
 // 用户与运营详情共用安全摘要，
 // 权限来自服务端能力快照。
@@ -439,13 +444,7 @@ export function RechargeOrderDetail(props: {
                     <dt className='text-muted-foreground text-xs'>
                       {t('Payment method')}
                     </dt>
-                    <dd className='mt-1'>
-                      {t(
-                        order.payment_method === 'wallet'
-                          ? 'Platform balance'
-                          : 'WeChat Pay'
-                      )}
-                    </dd>
+                    <dd className='mt-1'>{t(rechargePaymentLabel(order))}</dd>
                   </div>
                   <div className='col-span-2'>
                     <dt className='text-muted-foreground text-xs'>
@@ -546,9 +545,19 @@ export function RechargeOrderDetail(props: {
                     )}
                   </p>
                 )}
+              {detail.data?.credit_status && (
+                <p role='status'>
+                  {t('On account')}:{' '}
+                  {t(CREDIT_STATUS[detail.data.credit_status])}
+                </p>
+              )}
               {!props.operations && order.payment_status === 'pending' && (
                 <Button onClick={() => void pay()} disabled={busy}>
-                  {t('Continue payment')}
+                  {t(
+                    order.payment_provider === 'credit'
+                      ? 'Confirm on-account payment'
+                      : 'Continue payment'
+                  )}
                 </Button>
               )}
               {!props.operations &&
@@ -739,12 +748,21 @@ export function RechargeOrderDetail(props: {
                       order.wallet_sync_pending) && (
                       <div className='space-y-3 rounded-lg border p-3'>
                         <p className='text-sm'>
+                          {order.payment_provider === 'credit' && (
+                            <span>
+                              {t(
+                                'Unsettled credit is cancelled on refund. Settled credit requires an actual refund reference.'
+                              )}
+                            </span>
+                          )}
                           {t(
                             'Approve a refund only after confirming that external processing has stopped. For WeChat, complete the original-channel refund in the gateway before recording confirmation.'
                           )}
                         </p>
                         {order.payment_status === 'refunding' &&
-                          order.payment_provider !== 'wallet' && (
+                          order.payment_provider !== 'wallet' &&
+                          (order.payment_provider !== 'credit' ||
+                            detail.data?.credit_status === 'settled') && (
                             <Field>
                               <FieldLabel htmlFor='recharge-refund-ref'>
                                 {t('Gateway refund reference')}
@@ -766,6 +784,8 @@ export function RechargeOrderDetail(props: {
                             !note.trim() ||
                             (order.payment_status === 'refunding' &&
                               order.payment_provider !== 'wallet' &&
+                              (order.payment_provider !== 'credit' ||
+                                detail.data?.credit_status === 'settled') &&
                               !reference.trim())
                           }
                           onClick={() =>

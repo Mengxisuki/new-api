@@ -46,6 +46,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { CreditAccounts } from '@/features/credit/accounts'
 import { getPaymentErrorTranslation } from '@/features/wallet/lib/payment'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
@@ -955,9 +956,10 @@ export function PaymentSettingsSection({
           />
           <Tabs defaultValue='general' className='min-w-0'>
             <div className='overflow-x-auto pb-1'>
-              <TabsList className='grid min-w-[56rem] grid-cols-8'>
+              <TabsList className='grid min-w-[63rem] grid-cols-9'>
                 <TabsTrigger value='general'>{t('General')}</TabsTrigger>
                 <TabsTrigger value='epay'>Epay</TabsTrigger>
+                <TabsTrigger value='credit'>{t('On account')}</TabsTrigger>
                 <TabsTrigger value='invoicing'>{t('Invoicing')}</TabsTrigger>
                 <TabsTrigger value='official'>{t('Official')}</TabsTrigger>
                 <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
@@ -966,6 +968,11 @@ export function PaymentSettingsSection({
                 <TabsTrigger value='waffo'>Waffo</TabsTrigger>
               </TabsList>
             </div>
+
+            {/* 挂帐采用独立授权接口保存，不随网关整页草稿覆盖。 */}
+            <TabsContent value='credit' className={paymentTabContentClassName}>
+              <CreditAccounts admin />
+            </TabsContent>
 
             <TabsContent value='general' className={paymentTabContentClassName}>
               <div className='space-y-4'>

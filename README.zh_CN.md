@@ -491,3 +491,21 @@ Token 以 `evt_` 开头，仅可读事件和 ACK，不能调用管理、模型�
 前端验证：在 `web/` 执行 `bun x tsgo -b`、`bun run test src/features/event-hub/__tests__/event-hub.test.tsx` 及相关文件 oxlint，9 项交互测试通过；先 `bun run build` 再在仓库根执行 `go build`，避免清理前端产物时破坏 Go embed。隔离编译实例已实际完成消费者创建/编辑、Token 二次验证签发/撤销、SSE 首帧/合成事件接收及持久 ACK；页面刷新不重复详情。本轮未部署，也未进行真实支付或上游模型调用。
 
 鉴权复核参考 ASVS 5.0.0 的 7.2.1（后端验证）与 7.4.1（会话终止后失效），以及 [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) 与 [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)，落实高熵凭据、限权与到期、敏感操作再验证、服务器端失效检查及凭据不入审计。定向测试覆盖证明绑定/重用拒绝、消费者与主题越权、凭据撤销和会话失效；这些验证不等同于全站 ASVS 认证。
+
+### 挂帐支付与财务结清
+
+支付网关增加「挂帐」页签，由现有支付设置权限（超级管理员）添加用户、设置人民币授信额度，并分别控制总开关和代充值模块授权。未配置用户不能选择挂帐；关闭授权保留历史欠款。额度按未结清欠款占用，所有未来开放模块共用总额度。本期仅实际接入代充值，充值与订阅保留字段和未开放说明，服务端拒绝提前启用。
+
+用户在代充值结账选择「挂帐」，确认订单后点击「确认挂帐」才实际占额，之后提交账号资料并沿用人工办理流程。报价、下单与付款入口均受原接单与支付配置门禁保护；付款再次验证当前授权及额度。挂帐不增减钱包余额，不向商户发起收款，本期不支持该支付方式申请发票。
+
+财务分类的「挂帐管理」提供用户授信摘要及逐笔挂帐记录，可按用户、订单号和状态筛选，并查看筛选范围金额。具有 `finance:write` 能力的用户核实线下收到整笔款项后，填写收款凭证登记结清；恢复额度与结清记录同事务提交。没有部分结清、自动扣款或无凭证清零功能。授信配置与结清均保留操作者，个人访问令牌不能调用新增挂帐接口。
+
+未结清订单退款时撤销债务并恢复额度；已结清订单退款必须登记实际退款凭证，不再次恢复额度。退款仍沿用代充值现有管理员审批、确认与单次验证流程。已经完成履约的订单仍遵守原不可直接退款规则。
+
+实现导航：`model/credit_account.go` 管理授信和结清，`model/credit_recharge.go` 处理挂帐付款与退款事务，`model/credit_query.go` 提供分页对账；`controller/credit_account.go` 提供受保护接口，`web/src/features/credit/` 提供配置和财务界面。迁移新增 `credit_accounts`、`credit_entries`，不回填历史订单为挂帐。金额以人民币整数分保存，界面显示元；订单内部 `paid` 仅用于沿用履约资格，挂帐时 `PaidAt` 为零，实际收款以挂帐流水的 `settled_at` 为准。
+
+验证：`go test ./controller ./model ./middleware ./router ./service/authz ./setting/operation_setting`；三库定向执行 `go test ./controller -run 'TestCredit|TestRecharge' -count=1 -v`，设置回环专用 `TEST_MYSQL_DSN` / `TEST_POSTGRES_DSN`，测试创建独立数据库。前端在 `web/` 使用 `bun x tsgo -b`、受影响文件的 `bun x oxlint -c .oxlintrc.json ...`、`bun run test -- src/features/credit src/features/account-recharge src/hooks/__tests__/sidebar-config.test.tsx src/features/system-settings/integrations/__tests__ src/features/invoices/__tests__` 和 `bun run build`，最后在根目录执行 `go build`。
+
+本地验证使用 SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17，覆盖空库、含原代充值结构和现金订单的升级、重复迁移、并发限额、失败回滚、幂等结清和两类退款。没有生产部署或真实收退款。现有通用审计把财务角色 5 记为未知角色（仅 Root 可见），属于既有问题；本功能的挂帐流水独立保存真实结清人、凭证与时间，未改动全局审计规则。
+
+安全检查参考 OWASP 的 [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)、[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) 与 [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)：采用默认拒绝、逐请求能力检查、订单所有者约束及原有会话校验，不新增登录或会话机制。测试验证普通用户拒绝财务入口、财务可结清但不可授信、PAT 即使有财务范围仍被拒绝；不宣称完成整套 ASVS 合规认证。

@@ -180,6 +180,11 @@ export function useSidebarData(): SidebarData {
               title: t('Finance'),
               items: [
                 {
+                  title: t('On-account management'),
+                  url: '/finance/credit',
+                  icon: FileText,
+                },
+                {
                   title: t('Invoice management'),
                   url: '/finance/invoices',
                   icon: FileText,

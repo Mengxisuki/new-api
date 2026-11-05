@@ -64,6 +64,7 @@ export function orderStatus(order: Order, operations = false): string {
 // 便于定位而不是伪造已完成描述。
 export const rechargeActionLabels: Record<string, string> = {
   payment: 'Payment',
+  credit_charge: 'On account', // 授信放行不能显示成已收到现金。
   submit_info: 'Submit account information',
   claim: 'Claim order',
   assign: 'Assign order',
@@ -76,4 +77,15 @@ export const rechargeActionLabels: Record<string, string> = {
   note: 'Save internal note',
   refund_approve: 'Approve refund',
   refund: 'Confirm refund',
+}
+
+// 列表与详情共用付款来源名称，挂帐不能沿用旧的微信兜底文案。
+// 返回翻译键，由调用组件按当前界面语言渲染。
+// 官方及网关渠道仍保持现有微信付款描述。
+export function rechargePaymentLabel(
+  order: Pick<Order, 'payment_provider'>
+): string {
+  if (order.payment_provider === 'credit') return 'On account'
+  if (order.payment_provider === 'wallet') return 'Platform balance'
+  return 'WeChat Pay'
 }

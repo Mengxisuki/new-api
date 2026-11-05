@@ -197,6 +197,7 @@ it('财务账号具有读取能力时获得独立财务分类及开票入口', (
     (group) => group.id === 'finance'
   )
   expect(finance?.items).toEqual([
+    expect.objectContaining({ url: '/finance/credit' }),
     expect.objectContaining({ url: '/finance/invoices' }),
   ])
 })

@@ -143,6 +143,11 @@ export function SidebarModulesCard() {
       description: t('Invoice management'),
       modules: [
         {
+          key: 'credit',
+          title: t('On-account management'),
+          description: t('View credit records'),
+        },
+        {
           key: 'invoices',
           title: t('Invoice management'),
           description: t('View invoice requests'),

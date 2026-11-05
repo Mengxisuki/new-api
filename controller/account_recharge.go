@@ -44,11 +44,11 @@ func rechargeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		code, message = 404, "Recharge order or product not found"
-	case errors.Is(err, model.ErrRechargeConflict):
+	case errors.Is(err, model.ErrCreditConflict), errors.Is(err, model.ErrRechargeConflict):
 		code, message = 409, err.Error()
 	case errors.Is(err, model.ErrRechargeForbidden):
 		code, message = 403, err.Error()
-	case errors.Is(err, model.ErrRechargeInvalid), errors.Is(err, model.ErrRechargeUnavailable), errors.Is(err, model.ErrRechargeBalance):
+	case errors.Is(err, model.ErrCreditInvalid), errors.Is(err, model.ErrCreditUnavailable), errors.Is(err, model.ErrCreditLimit), errors.Is(err, model.ErrRechargeInvalid), errors.Is(err, model.ErrRechargeUnavailable), errors.Is(err, model.ErrRechargeBalance):
 		code, message = 400, err.Error()
 	case errors.Is(err, model.ErrRechargeCache):
 		code, message = 503, err.Error()
@@ -125,8 +125,19 @@ func GetRechargeProducts(c *gin.Context) {
 		rechargeError(c, err)
 		return
 	}
+	// 目录按登录用户返回挂帐方式，未授权不暴露入口；读取失败不能当成未配置。
+	credit, err := model.GetCreditAccount(c.GetInt("id"))
+	if err != nil {
+		rechargeError(c, err)
+		return
+	}
+	methods := rechargePaymentMethods()
+	if operation_setting.IsPaymentComplianceConfirmed() && model.CheckCreditAvailable(credit, model.CreditModuleRecharge, 0) == nil {
+		methods = append(methods, gin.H{"id": "credit", "name": "On account"})
+	}
 	common.ApiSuccess(c, gin.H{
-		"items": products, "payment_methods": rechargePaymentMethods(),
+		"credit": credit,
+		"items":  products, "payment_methods": methods,
 		"enabled":    operation_setting.GetRechargeSetting().Enabled,
 		"configured": operation_setting.GetRechargeSetting().Enabled && service.RechargeConfigured() && operation_setting.IsPaymentComplianceConfirmed(),
 	})
@@ -247,6 +258,19 @@ func rechargeQuote(c *gin.Context, req rechargePurchase) (*model.AccountRecharge
 	}
 	o := &model.AccountRechargeOrder{UserID: c.GetInt("id"), ProductID: p.ID, Title: p.Title, Description: p.Description, BaseCents: p.PriceCents, MoneyCents: p.PriceCents, RequestID: req.RequestID, InvoiceRequired: req.InvoiceRequired}
 	switch {
+	case req.PaymentMethod == "credit":
+		// 挂帐未收到现金，本期不进入现有付款开票链路。
+		if req.InvoiceRequired {
+			return nil, nil, model.ErrCreditInvalid
+		}
+		account, err := model.GetCreditAccount(o.UserID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := model.CheckCreditAvailable(account, model.CreditModuleRecharge, p.PriceCents); err != nil {
+			return nil, nil, err
+		}
+		o.PaymentProvider, o.PaymentMethod = "credit", "credit"
 	case req.PaymentMethod == "wallet":
 		if !p.AllowWalletPayment || req.InvoiceRequired {
 			return nil, nil, model.ErrRechargeUnavailable
@@ -307,7 +331,11 @@ func QuoteRechargeOrder(c *gin.Context) {
 	}
 	o, invoice, err := rechargeQuote(c, req)
 	if err != nil {
-		common.ApiErrorT(c, "Recharge quote is unavailable. Check the product, payment method and invoice profile.")
+		if errors.Is(err, model.ErrCreditUnavailable) || errors.Is(err, model.ErrCreditLimit) || errors.Is(err, model.ErrCreditInvalid) {
+			rechargeError(c, err)
+		} else {
+			common.ApiErrorT(c, "Recharge quote is unavailable. Check the product, payment method and invoice profile.")
+		}
 		return
 	}
 	common.ApiSuccess(c, gin.H{"money_cents": o.MoneyCents, "base_cents": o.BaseCents, "wallet_quota": o.WalletQuota, "invoice": invoice})
@@ -480,6 +508,15 @@ func GetRechargeOrder(c *gin.Context) {
 		return
 	}
 	result := gin.H{"order": o}
+	// 只返回当前订单的欠款状态，不扩散财务收款凭证或其他用户授信。
+	if o.PaymentProvider == "credit" && o.PaymentStatus != "pending" {
+		var entry model.CreditEntry
+		if err := model.DB.Where("module = ? AND trade_no = ?", model.CreditModuleRecharge, o.TradeNo).First(&entry).Error; err != nil {
+			rechargeError(c, err)
+			return
+		}
+		result["credit_status"] = entry.Status
+	}
 	// 发票属于买家的税务资料，运营读单权限不扩大为财务权限。
 	// 仅本人详情返回摘要；业务员仍从原财务流程协作开票。
 	if !operations {
@@ -562,6 +599,15 @@ func PayRechargeOrder(c *gin.Context) {
 	}
 	LockOrder(o.TradeNo)
 	defer UnlockOrder(o.TradeNo)
+	if o.PaymentProvider == "credit" {
+		// 实际占用额度在后端完成；接口重试只恢复同一订单。
+		if err := model.PayAccountRechargeCredit(o.ID, c.GetInt("id")); err != nil {
+			rechargeError(c, err)
+			return
+		}
+		common.ApiSuccess(c, gin.H{"payment_kind": "paid"})
+		return
+	}
 	if o.PaymentProvider == "wallet" {
 		if err := model.PayAccountRechargeWallet(o.ID, c.GetInt("id")); err != nil {
 			rechargeError(c, err)

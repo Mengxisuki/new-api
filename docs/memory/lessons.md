@@ -221,3 +221,17 @@
 现象：事件页面签发 Token 后，后台刷新使同一消费者详情累积多份旧 DOM，单独组件测试未发现。根因：ConsumerDetails、TokenEditor 和 ConsumerEditor 同属一个父节点，用同一消费者 ID 当 key，异步渲染发生键冲突。
 
 修复：按组件角色加 key 前缀，保留切换消费者时的重挂载语义。真实父页面签发、关闭、刷新回归先失败（应一份、实际两份），修复后通过；编译页面再次签发及编辑后 DOM 详情计数均为一。测试见 `web/src/features/event-hub/__tests__/event-hub.test.tsx`；所有同级异构组件共享业务 ID 时都需检查此约束。
+
+## 2026-11-05 17:09:56 +00:00 — 订阅候选预扣失败需结合最终请求与本期余额判断
+
+现象：订阅优先的请求反复打印 `resource billing preparation failed`，但同一请求随后从钱包预扣、结算并返回 HTTP 200。线上只读核对 journal、消费日志及订阅实例，确认订阅仍有效，但本期只剩不足以支付预扣金额的零头。
+
+根因：`model/subscription.go` 的 `PreConsumeUserSubscription` 要求单个订阅实例的本期剩余额度足够支付整个预扣；有效期和正数余额不能单独证明可以承接请求。`controller/resource_relay.go` 的 `relayPlatformResource` 在返回可回退的 `quota_exhausted` 前也会打印 ERR，因此该行不能单独认定整笔请求失败。
+
+排查方式：先确认实际 Key 的 `resource_policies.sources_json`，显式策略优先于历史用户 `billing_preference`；再比较 `user_subscriptions.amount_total - amount_used` 与日志中的预扣金额，核对 `next_reset_time`，最后按同一 request_id 检查最终资金来源、结算和响应状态。额度与重置以用户订阅实例为准，不能用当前套餐模板替代。仅完成诊断，未修改生产数据、配置或日志级别。
+
+## 2026-11-05 17:52:08 +00:00 — GORM 联表查询在聚合与分页之间隔离会话
+
+现象：挂帐财务列表先执行 Count、SUM，再 Scan 当前页，三种数据库都报重复联表或歧义字段。根因：同一个携带 Joins 的 GORM 查询对象被终结操作继续修改，后续 Scan 累积相同关联。
+
+修复：保留公共过滤条件，各次 Count、聚合和分页 Select 使用 `Session(&gorm.Session{})` 独立查询状态；不改写 SQL 或吞掉错误。`model/credit_query.go` 已应用，`controller/credit_account_test.go` 的真实 SQLite、MySQL、PostgreSQL 列表及金额断言验证。适用于同一个联表查询被多次聚合、投影或分页复用的路径。

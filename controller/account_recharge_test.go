@@ -156,7 +156,7 @@ func TestRechargeDatabaseMatrix(t *testing.T) {
 					require.NoError(t, db.Create(&legacyAccountRechargeOrder{ID: 900, UserID: 999, RequestID: "legacy", Title: "Legacy plan", Description: "Legacy purchase terms", MoneyCents: 100, TradeNo: "RCHUSR-legacy", Version: 1}).Error)
 					require.NoError(t, db.Create(&model.TopUp{UserId: 999, TradeNo: "legacy-recharge-upgrade", Money: 12, CreditedQuota: 700, Status: common.TopUpStatusSuccess}).Error)
 				}
-				tables := []any{&model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}}
+				tables := []any{&model.CreditAccount{}, &model.CreditEntry{}, &model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}}
 				for range 2 {
 					require.NoError(t, db.AutoMigrate(tables...))
 				}
@@ -392,7 +392,7 @@ func TestRechargeDatabaseMatrix(t *testing.T) {
 // 微信通道另有签名与回调测试。
 func TestRechargeWalletCacheAndRefund(t *testing.T) {
 	db := modelManagementDB(t, "sqlite", "")
-	require.NoError(t, db.AutoMigrate(&model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}))
+	require.NoError(t, db.AutoMigrate(&model.CreditAccount{}, &model.CreditEntry{}, &model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}))
 	server := miniredis.RunT(t)
 	oldRedis, oldClient := common.RedisEnabled, common.RDB
 	common.RedisEnabled = true
@@ -475,7 +475,7 @@ func TestRechargeWalletCacheAndRefund(t *testing.T) {
 // 证明消费的有效期及其他认证方式继续由既有安全回归覆盖。
 func TestRechargeSensitivePermissions(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CasbinRule{}, &model.AuthzRole{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.CreditAccount{}, &model.CreditEntry{}, &model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CasbinRule{}, &model.AuthzRole{}))
 	oldMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = oldMaster })
@@ -570,7 +570,7 @@ func TestRechargeCheckoutAndGatewayForm(t *testing.T) {
 	// 初始化正式方言列名，单独运行也不依赖前面的矩阵测试。
 	modelManagementDB(t, "sqlite", "")
 	user, identity := setupSecurityEnrollmentTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.InvoiceProfile{}, &model.InvoiceRequest{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.CreditAccount{}, &model.CreditEntry{}, &model.AccountRechargeProduct{}, &model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.InvoiceProfile{}, &model.InvoiceRequest{}))
 	t.Setenv("OAK_RECHARGE_DATA_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32)))
 	previousSetting := *operation_setting.GetPaymentSetting()
 	previousAddress, previousID, previousKey := operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey
@@ -796,7 +796,7 @@ func TestRechargeConfiguration(t *testing.T) {
 			assert.Contains(t, response.Body.String(), `"key":"RechargeEncryptionReady","value":"true"`)
 			assert.NotContains(t, response.Body.String(), key)
 			// 已有商品接口同步反映开关，不需要前端猜测服务是否暂停。
-			require.NoError(t, db.AutoMigrate(&model.AccountRechargeProduct{}))
+			require.NoError(t, db.AutoMigrate(&model.CreditAccount{}, &model.CreditEntry{}, &model.AccountRechargeProduct{}))
 			require.NoError(t, model.UpdateOption("recharge_setting.enabled", "false"))
 			response = modelManagementRequest(t, GetRechargeProducts, "GET", "/api/account-recharge/products", nil, nil)
 			assert.Contains(t, response.Body.String(), `"enabled":false`)

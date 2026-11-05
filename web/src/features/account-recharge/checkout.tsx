@@ -133,7 +133,7 @@ export function RechargeCheckout(props: {
   const invoiceProfile = useQuery({
     queryKey: INVOICE_PROFILE_QUERY_KEY,
     queryFn: getInvoiceProfile,
-    enabled: invoice && method !== 'wallet',
+    enabled: invoice && method !== 'wallet' && method !== 'credit',
   })
   // 选择变更自动使用独立报价键，
   // 不复用上一支付方式的价格。
@@ -141,7 +141,7 @@ export function RechargeCheckout(props: {
     product_id: props.product.id,
     product_version: props.product.version,
     payment_method: method,
-    invoice_required: invoice && method !== 'wallet',
+    invoice_required: invoice && method !== 'wallet' && method !== 'credit',
     request_id: '',
   }
   const quote = useQuery({
@@ -217,13 +217,29 @@ export function RechargeCheckout(props: {
             )}
           </NativeSelect>
         </Field>
-        {method === 'wallet' ? (
+        {method === 'credit' && (
+          <p className='text-muted-foreground text-sm'>
+            {t('Available credit (CNY)')}:{' '}
+            {formatNumber(
+              ((props.catalog.credit?.limit_cents ?? 0) -
+                (props.catalog.credit?.used_cents ?? 0)) /
+                100,
+              locale
+            )}
+            .{' '}
+            {t(
+              'On-account orders do not collect payment now. Invoicing is not available for this payment method.'
+            )}
+          </p>
+        )}
+        {method === 'wallet' && (
           <p className='text-muted-foreground text-sm'>
             {t(
               'Balance payments produce a spending record and do not issue another invoice.'
             )}
           </p>
-        ) : (
+        )}
+        {method !== 'wallet' && method !== 'credit' && (
           <InvoiceSelection
             required={invoice}
             onRequiredChange={(value) => {

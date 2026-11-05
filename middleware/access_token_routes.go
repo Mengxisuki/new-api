@@ -53,6 +53,14 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/event-hub/consumers/:id/tokens":             accessTokenSessionRule,
 	"DELETE /api/event-hub/consumers/:id/tokens/:token_id": accessTokenSessionRule,
 	"POST /api/event-hub/consumers/:id/replay":             accessTokenSessionRule,
+	// 挂帐授权与线下收款确认限网页登录；既有 PAT scope 不能隐式获得此能力。
+	"GET /api/option/credit/accounts": accessTokenSessionRule,
+	"PUT /api/option/credit/accounts": accessTokenSessionRule,
+	"GET /api/option/credit/users":    accessTokenSessionRule,
+	// 财务读取与写入另由真实路由分别校验能力。
+	"GET /api/finance/credit/accounts":            accessTokenSessionRule,
+	"GET /api/finance/credit/entries":             accessTokenSessionRule,
+	"POST /api/finance/credit/entries/:id/settle": accessTokenSessionRule,
 	// 代充值只接受网页登录，PAT 不能读取账户凭据或执行资金动作。
 	"GET /api/account-recharge/products":                                   accessTokenSessionRule,
 	"POST /api/account-recharge/quote":                                     accessTokenSessionRule,

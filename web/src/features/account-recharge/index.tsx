@@ -40,7 +40,7 @@ import { getOrders, getProducts, type Product } from './api'
 import { RechargeCheckout } from './checkout'
 import { RechargeOrderDetail } from './order-detail'
 import { RechargeProductInfo } from './product-info'
-import { orderStatus } from './status'
+import { orderStatus, rechargePaymentLabel } from './status'
 
 // 商品与本人历史放在同一页面，
 // 付款后无需到其他模块寻找订单。
@@ -263,11 +263,15 @@ export function AccountRecharge(props: { operations?: boolean }) {
                           {formatNumber(item.price_cents / 100, locale)}
                         </p>
                         <p className='text-muted-foreground text-xs'>
-                          {t(
-                            item.allow_wallet_payment
-                              ? 'WeChat or platform balance'
-                              : 'WeChat Pay'
-                          )}
+                          {/* 按当前用户实际可用渠道展示，不再固定声称只有微信。 */}
+                          {[
+                            ...(catalog.data?.payment_methods ?? []).map(
+                              (method) => t(method.name)
+                            ),
+                            ...(item.allow_wallet_payment
+                              ? [t('Platform balance')]
+                              : []),
+                          ].join(' / ')}
                         </p>
                       </div>
                       <Button
@@ -373,12 +377,7 @@ export function AccountRecharge(props: { operations?: boolean }) {
                 {
                   id: 'payment',
                   header: t('Payment method'),
-                  cell: (order) =>
-                    t(
-                      order.payment_provider === 'wallet'
-                        ? 'Platform balance'
-                        : 'WeChat Pay'
-                    ),
+                  cell: (order) => t(rechargePaymentLabel(order)), // 同一挂帐来源在列表和详情保持一致。
                 },
                 {
                   id: 'status',

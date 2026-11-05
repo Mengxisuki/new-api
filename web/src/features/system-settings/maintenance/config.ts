@@ -74,7 +74,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     personal: true,
     security: true,
   },
-  finance: { enabled: true, invoices: true },
+  finance: { enabled: true, invoices: true, credit: true },
   admin: {
     enabled: true,
     channel: true,

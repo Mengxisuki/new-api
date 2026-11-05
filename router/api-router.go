@@ -199,6 +199,10 @@ func SetApiRouter(router *gin.Engine) {
 		financeRoute := apiRouter.Group("/finance")
 		financeRoute.Use(middleware.FinanceAuth())
 		{
+			// 挂帐财务只允许已登录会话；个人令牌不能替代收款确认。
+			financeRoute.GET("/credit/accounts", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceRead), controller.GetCreditAccounts)
+			financeRoute.GET("/credit/entries", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceRead), controller.GetCreditEntries)
+			financeRoute.POST("/credit/entries/:id/settle", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), middleware.UserCriticalRateLimit("credit-settle"), controller.SettleCreditEntry)
 			financeRoute.GET("/invoices", middleware.RequirePermission(authz.FinanceRead), controller.GetFinanceInvoices)
 			financeRoute.PUT("/invoices/:id/status", middleware.RequirePermission(authz.FinanceWrite), controller.UpdateInvoiceStatus)
 			financeRoute.POST("/invoices/:id/file", middleware.RequirePermission(authz.FinanceWrite), controller.UploadInvoiceFile)
@@ -245,6 +249,10 @@ func SetApiRouter(router *gin.Engine) {
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{
+			// 授信属于支付网关配置，沿用现有超级管理员权限。
+			optionRoute.GET("/credit/accounts", controller.RechargeSessionOnly, controller.GetCreditAccounts)
+			optionRoute.PUT("/credit/accounts", controller.RechargeSessionOnly, controller.SaveCreditAccount)
+			optionRoute.GET("/credit/users", controller.RechargeSessionOnly, controller.SearchCreditUsers)
 			optionRoute.GET("/", controller.GetOptions)
 			optionRoute.GET("/request_policy", controller.GetRequestPolicy)
 			optionRoute.PATCH("/request_policy", controller.UpdateRequestPolicy)

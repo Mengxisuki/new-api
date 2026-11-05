@@ -47,6 +47,11 @@ func hubTestFixture(t *testing.T, dialect string) (*model.User, service.AuthIden
 	// 概览统计未决任务，测试也迁移真实任务表而非伪造零值。
 	// 模型 Key 表支持任务关联，但不授予事件凭据模型执行权限。
 	require.NoError(t, model.DB.AutoMigrate(&model.Task{}, &model.Token{}))
+	// 事件名称必须来自真实业务用户，显示昵称故意与账号名不同。
+	// 这些账号只属于隔离夹具，覆盖充值主体和关注用户过滤。
+	for _, id := range []int{7, 42, 43} {
+		require.NoError(t, model.DB.Create(&model.User{Id: id, Username: fmt.Sprintf("hub-user-%d", id), DisplayName: "测试昵称", AffCode: fmt.Sprintf("evt%d", id)}).Error)
+	}
 	previousCapture := model.HubCaptureEnabled()
 	require.NoError(t, model.MigrateEventHub(model.DB))
 	settings, err := model.GetHubSettings()
@@ -347,6 +352,76 @@ func TestEventHubDatabaseMatrix(t *testing.T) {
 			settings, err := model.GetHubSettings()
 			require.NoError(t, err)
 			assert.False(t, settings.Enabled)
+
+		})
+	}
+}
+
+// TestEventHubUserNameSnapshot 验证名称字段的跨库历史与幂等合同。
+// 消费者发行者与业务用户分离，防止取错身份仍碰巧通过。
+// 账号名和显示昵称使用不同值，断言明确要求账号名。
+// 同键重复生产与管理员补发都不得改写已交付快照。
+// 改名后的新事件必须获得新值，排除缓存造成的旧名泄漏。
+// 旧格式直接存入现有事件表，不要求额外迁移或回填。
+// 已删除账号的账务仍需通知，但不存在的用户不能伪造姓名。
+// 复用真实数据库夹具和生产方法，不替换用户名查询。
+// 各方言独立创建数据，避免与最大编号发现用例共享手工主键。
+// 无需运行后台轮询，事务提交和补发操作均由测试明确触发。
+func TestEventHubUserNameSnapshot(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("external test database is not configured")
+			}
+			user, _, _ := hubTestFixture(t, dialect)
+			db := model.DB
+			consumer, err := model.CreateHubConsumer(user.Id, "名称快照客户端", []string{model.HubTopicTopup}, nil)
+			require.NoError(t, err)
+			// 名称在事件创建时冻结，账号改名不能改变旧消息或破坏幂等。
+			// 新事件应读取新名称；历史无名称的消息保持原样，不伪造快照。
+			hubTestEvent(t, "wallet:name", model.HubTopicTopup, 42)
+			var original model.HubEvent
+			require.NoError(t, db.Where("event_key = ?", "wallet:name").First(&original).Error)
+			assert.Contains(t, original.Payload, `"user_name":"hub-user-42"`)
+			require.NoError(t, db.Model(&model.User{}).Where("id = ?", 42).Update("username", "hub-user-renamed").Error)
+			hubTestEvent(t, "wallet:name", model.HubTopicTopup, 42)
+			require.NoError(t, model.ReplayHubEvent(consumer.ID, original.ID))
+			var unchanged model.HubEvent
+			require.NoError(t, db.First(&unchanged, original.ID).Error)
+			assert.Equal(t, original.Payload, unchanged.Payload)
+			// 名称只是快照元数据，不放宽真实业务载荷的冲突检查。
+			// 改动状态模拟业务键错误复用，必须明确报冲突而非覆盖旧记录。
+			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+				return model.AppendHubEventTx(tx, "wallet:name", model.HubTopicTopup, 42, map[string]any{"order_id": 42, "status": "changed"})
+			}), model.ErrHubConflict)
+			hubTestEvent(t, "wallet:renamed", model.HubTopicTopup, 42)
+			var renamed model.HubEvent
+			require.NoError(t, db.Where("event_key = ?", "wallet:renamed").First(&renamed).Error)
+			assert.Contains(t, renamed.Payload, `"user_name":"hub-user-renamed"`)
+			// 软删除不抹掉历史主体名称，延迟生成的异常通知仍可持久化。
+			// 用户读取沿用同一事务，不依赖账号缓存中的旧副本。
+			require.NoError(t, db.Delete(&model.User{}, 42).Error)
+			hubTestEvent(t, "wallet:deleted", model.HubTopicTopup, 42)
+			var deleted model.HubEvent
+			require.NoError(t, db.Where("event_key = ?", "wallet:deleted").First(&deleted).Error)
+			assert.Contains(t, deleted.Payload, `"user_name":"hub-user-renamed"`)
+			// 历史事件缺字段不在重投时补成当前名字，客户端需允许字段缺省。
+			// 直接保存旧格式作为升级输入，不通过新生产函数构造历史。
+			legacy := model.HubEvent{Key: "wallet:legacy", Topic: model.HubTopicTopup, UserID: 43, Payload: `{"order_id":43,"status":"paid"}`, CreatedAt: common.GetTimestamp()}
+			require.NoError(t, db.Create(&legacy).Error)
+			hubTestEvent(t, "wallet:legacy", model.HubTopicTopup, 43)
+			var preserved model.HubEvent
+			require.NoError(t, db.First(&preserved, legacy.ID).Error)
+			// 完整载荷对比也检查旧字段及其类型，防止升级重投顺带重写摘要。
+			assert.Equal(t, legacy.Payload, preserved.Payload)
+			// 用户读取失败必须显式失败，不能持久化空名称假装补齐成功。
+			// 同时检查事件未落库，避免只返回错误却留下半笔状态。
+			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+				return model.AppendHubEventTx(tx, "wallet:missing-user", model.HubTopicTopup, 99999, map[string]any{"status": "paid"})
+			}), gorm.ErrRecordNotFound)
+			var count int64
+			require.NoError(t, db.Model(&model.HubEvent{}).Where("event_key = ?", "wallet:missing-user").Count(&count).Error)
+			assert.Zero(t, count)
 		})
 	}
 }
@@ -423,6 +498,8 @@ func TestEventHubClientAuthorizationAndReplay(t *testing.T) {
 	assert.Equal(t, firstFrame.EventID, replayedFrame.EventID)
 	assert.Equal(t, firstFrame.ID, replayedFrame.ID)
 	assert.Equal(t, firstFrame.Payload, replayedFrame.Payload)
+	// 真实网络帧携带业务用户账号名，不误取发行者或显示昵称。
+	assert.Equal(t, "hub-user-7", firstFrame.Payload["user_name"])
 	cancel()
 	require.NoError(t, response.Body.Close())
 	// 另一消费者即使持有有效 Token，也不能确认当前消费者的投递。

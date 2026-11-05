@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -44,7 +45,7 @@ type HubSettings struct {
 	AnomalyColdQuota  int     `json:"anomaly_cold_quota" gorm:"type:bigint"` // 冷启动独立高额阈值。
 }
 
-// HubEvent 只保存白名单业务摘要，绝不保存账户凭据或完整邮箱。
+// HubEvent 只保存白名单业务摘要，不保存账户凭据或代充值资料中的邮箱。
 // 事件键标识真实业务动作，数据库唯一约束保障跨进程幂等。
 // 自增编号仅用于标识；晚提交事件不能因编号较小而被游标跳过。
 type HubEvent struct {
@@ -205,16 +206,33 @@ func UpdateHubSettings(s HubSettings) error {
 // 重复通知不会重写原始发生时间，也不会延长保留期。
 // 本函数不触发网络投递，慢客户端不进入资金事务。
 // 主键由数据库生成，不把原厂交易号直接当公开事件编号。
-func AppendHubEventTx(tx *gorm.DB, key, topic string, userID int, payload any) error {
+// 三类事件统一附带业务所属用户的账号名，避免生产者各自定义不同语义。
+// user_name 对应 User.Username，不使用昵称、操作者或消费者发行者名称。
+// 名称在创建事件时冻结；异步检测取检测创建事件时可见的账号名。
+// 只读取用户名列，不把整份用户对象序列化到对外载荷。
+// 查询复用业务事务，不经缓存或全局 DB 开启另一条连接。
+// 软删除账号仍有历史账务，延迟事件可以读取其保留的账号名。
+// 读取失败继续传播，不能用空名称掩盖数据库故障或错误用户关联。
+// 快照复用现有 JSON 存储，不改变事件表或公共信封结构。
+// 复制传入载荷，避免补字段改变调用者后续使用的业务对象。
+// 用户名称不能作为权限或幂等依据，身份仍由 userID 和业务键约束。
+// 缺省名称只属于升级前的旧记录，新生成事件统一携带此字段。
+func AppendHubEventTx(tx *gorm.DB, key, topic string, userID int, payload map[string]any) error {
 	if !HubCaptureEnabled() {
 		return nil
 	}
-	if key == "" || len(key) > 160 || userID <= 0 {
+	if key == "" || len(key) > 160 || userID <= 0 || payload == nil {
 		return ErrHubInvalid
 	}
 	if _, err := HubTopics([]string{topic}); err != nil {
 		return err
 	}
+	var user User
+	if err := tx.Unscoped().Select("username").First(&user, userID).Error; err != nil {
+		return err
+	}
+	payload = maps.Clone(payload)
+	payload["user_name"] = user.Username
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		return err
@@ -231,7 +249,27 @@ func AppendHubEventTx(tx *gorm.DB, key, topic string, userID int, payload any) e
 	if err := tx.Where("event_key = ?", key).First(&existing).Error; err != nil {
 		return err
 	}
-	if existing.Topic != topic || existing.UserID != userID || existing.Payload != e.Payload {
+	if existing.Topic != topic || existing.UserID != userID {
+		return ErrHubConflict
+	}
+	// 重投只比较业务内容，用户名变化不应让同一付款变成冲突。
+	// 保留首次名称，不能覆盖已经向客户端交付的历史快照。
+	var original map[string]any
+	if err := common.UnmarshalJsonStr(existing.Payload, &original); err != nil {
+		return err
+	}
+	if name, ok := original["user_name"]; ok {
+		payload["user_name"] = name
+	} else {
+		// 升级前的事件没有此字段，不用当前名称倒填历史。
+		delete(payload, "user_name")
+	}
+	encoded, err = common.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	// 仍逐字节检查其余摘要，金额或状态变化不能借新增字段绕过幂等。
+	if existing.Payload != string(encoded) {
 		return ErrHubConflict
 	}
 	return nil

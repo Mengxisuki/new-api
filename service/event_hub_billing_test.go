@@ -152,6 +152,8 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 			assert.Equal(t, float64(600), payload["actual_quota"])
 			assert.Equal(t, float64(100), payload["baseline_quota"])
 			assert.Equal(t, "historical_multiple", payload["reason"])
+			// 告警主体名称随真实结算生成，不能取模型 Key 或管理员名称。
+			assert.Equal(t, "hub-billing-user", payload["user_name"])
 			// 资金查询使用数据库原值，不经过可能延迟的展示缓存。
 			// 两笔一百和一笔六百的总费用应当是八百额度。
 			var user model.User
@@ -218,7 +220,15 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 			}
 			require.NoError(t, db.Model(&model.HubEvent{}).Where("topic = ?", model.HubTopicTopup).Count(&count).Error)
 			assert.EqualValues(t, 1, count)
-			// 资料提交只传状态摘要，不能把secret或完整邮箱写入事件。
+			// 到账事件读取钱包所有者的账号名，与支付渠道字段独立。
+			var topupEvent model.HubEvent
+			require.NoError(t, db.Where("topic = ?", model.HubTopicTopup).First(&topupEvent).Error)
+			var topupPayload map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(topupEvent.Payload, &topupPayload))
+			// 充值载荷新增名称，原订单实付与额度字段仍由业务生产者决定。
+			assert.Equal(t, "hub-billing-user", topupPayload["user_name"])
+			// 资料事件的名称指买家，即使补交时已有业务员也不变。
+			// 资料提交只传状态摘要，不能把 secret 或资料邮箱写入事件。
 			// 第二次以新版本要求补交，通知仍保留同一处理人。
 			// 初始状态必须为已付款且待资料，不绕过业务状态机。
 			// 补交通过action_required恢复，明确保留此前领取的业务员。
@@ -247,6 +257,11 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 			require.Len(t, infoEvents, 2)
 			assert.Contains(t, infoEvents[0].Payload, `"submission":"initial"`)
 			assert.Contains(t, infoEvents[1].Payload, `"submission":"resubmitted"`)
+			for _, event := range infoEvents {
+				var infoPayload map[string]any
+				require.NoError(t, common.UnmarshalJsonStr(event.Payload, &infoPayload))
+				assert.Equal(t, "hub-billing-user", infoPayload["user_name"])
+			}
 			assert.NotContains(t, infoEvents[1].Payload, "secret")
 			assert.NotContains(t, infoEvents[1].Payload, "example.com")
 			// 任务以最终总额比较，预扣五十后补到三百只产生一个样本。

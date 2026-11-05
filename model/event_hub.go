@@ -268,6 +268,12 @@ func CreateHubConsumer(ownerID int, name string, topics []string, userIDs []int)
 	}
 	c := HubConsumer{OwnerID: ownerID, Name: name, Topics: string(topicJSON), UserIDs: string(idsJSON), Enabled: true, CreatedAt: common.GetTimestamp()}
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		// 全平台数量上限必须跨发行者串行，多个Root不能各自突破一百个。
+		// 锁顺序与过期维护保持设置在前，避免同消费者操作形成逆序等待。
+		var settings HubSettings
+		if err := lockForUpdate(tx).First(&settings, 1).Error; err != nil {
+			return err
+		}
 		var owner User
 		if err := lockForUpdate(tx).Select("id", "role", "status", "auth_version").First(&owner, ownerID).Error; err != nil {
 			return err

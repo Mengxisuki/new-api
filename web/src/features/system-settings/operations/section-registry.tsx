@@ -1,5 +1,3 @@
-import { EventHubSection } from '@/features/event-hub'
-
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -18,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { EventHubSection } from '@/features/event-hub'
+
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'

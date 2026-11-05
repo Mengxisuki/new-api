@@ -133,8 +133,8 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 				key   string
 				quota int
 			}{{"small-a", 100}, {"small-b", 100}, {"large", 600}} {
-				// 预扣金额先落库，随后零差额结算不能再执行钱包扣减。
-				// 观察总额仍保存八十，不能因为无需补扣而变成零。
+				// 本组没有预扣，最终结算一次提交完整费用与观察。
+				// 重复调用应由已完成状态保护，不能再次执行钱包扣减。
 				info := &relaycommon.RelayInfo{UserId: 9201, RequestId: tc.key, OriginModelName: "model-a", BillingSource: BillingSourceWallet, IsPlayground: true}
 				session := &BillingSession{relayInfo: info, funding: &WalletFunding{userId: 9201}}
 				require.NoError(t, session.Settle(tc.quota))
@@ -197,6 +197,22 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 			// 支付金额文本与内部到账额度不混为同一货币单位。
 			order := model.TopUp{UserId: 9201, Money: 12, CreditedQuota: 120, TradeNo: "hub-topup", PaymentProvider: model.PaymentProviderWechat, PaymentMethod: "wechat-main", Status: common.TopUpStatusPending}
 			require.NoError(t, db.Create(&order).Error)
+			// 通知表故障必须回滚已保存的成功状态和刚增加的钱包余额。
+			// 故障移除后仍用原订单重试，验证失败没有破坏后续幂等认领。
+			// 检查订单与用户真实行，不能仅用事件数量推断资金已回滚。
+			injectedEvent := errors.New("event write unavailable")
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("hub-event-fail", func(tx *gorm.DB) {
+				if tx.Statement.Table == "hub_billing_hub_events" {
+					tx.AddError(injectedEvent)
+				}
+			}))
+			err = model.CompleteOfficialTopUp(order.TradeNo, order.PaymentProvider, order.PaymentMethod, decimal.NewFromInt(12), "127.0.0.1")
+			require.ErrorIs(t, err, injectedEvent)
+			require.NoError(t, db.Callback().Create().Remove("hub-event-fail"))
+			require.NoError(t, db.First(&order, order.Id).Error)
+			assert.Equal(t, common.TopUpStatusPending, order.Status)
+			require.NoError(t, db.First(&user, 9201).Error)
+			assert.Equal(t, 8520, user.Quota)
 			for range 2 {
 				require.NoError(t, model.CompleteOfficialTopUp(order.TradeNo, order.PaymentProvider, order.PaymentMethod, decimal.NewFromInt(12), "127.0.0.1"))
 			}
@@ -209,6 +225,20 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 			// 安全检查针对持久事件原文，不能仅检查DTO没有对应字段。
 			recharge := model.AccountRechargeOrder{UserID: 9201, PaymentStatus: "paid", Status: "awaiting_info", Version: 1, TradeNo: "hub-recharge", RequestID: "request-info"}
 			require.NoError(t, db.Create(&recharge).Error)
+			// 资料事件故障也不能留下已提交资料却没有通知的半笔状态。
+			// 同时核对版本与secret回滚，避免重试被旧版本拒绝。
+			// 同一故障只隔离事件Create，不替换真实订单状态机实现。
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("hub-event-fail", func(tx *gorm.DB) {
+				if tx.Statement.Table == "hub_billing_hub_events" {
+					tx.AddError(injectedEvent)
+				}
+			}))
+			require.ErrorIs(t, model.SubmitAccountRechargeInfo(recharge.ID, 9201, 1, "failed-secret", "o***@example.com"), injectedEvent)
+			require.NoError(t, db.Callback().Create().Remove("hub-event-fail"))
+			require.NoError(t, db.First(&recharge, recharge.ID).Error)
+			assert.Equal(t, "awaiting_info", recharge.Status)
+			assert.Equal(t, 1, recharge.Version)
+			assert.Empty(t, recharge.Secret)
 			require.NoError(t, model.SubmitAccountRechargeInfo(recharge.ID, 9201, 1, "private-secret", "o***@example.com"))
 			require.NoError(t, db.Model(&recharge).Updates(map[string]any{"status": "action_required", "assignee_id": 7}).Error)
 			require.NoError(t, model.SubmitAccountRechargeInfo(recharge.ID, 9201, 2, "replacement-secret", "o***@example.com"))
@@ -280,6 +310,16 @@ func TestHubBillingAtomicAndAnomaly(t *testing.T) {
 			require.ErrorIs(t, err, model.ErrSubscriptionLimitExceeded)
 			require.NoError(t, db.Model(&model.HubChargeObservation{}).Where("request_key = ?", "subscription-too-large").Count(&count).Error)
 			assert.Zero(t, count)
+			// 无会话旧入口仍须维护订阅日志差额，不能只更改数据库额度。
+			// 零总额代表退还预扣一百，重复调用不得再次退还或累加上下文。
+			// 通过公共SettleBilling入口验证，不直接调用私有观察构造函数。
+			// 不发起真实提醒或网络请求，零总额按原合同跳过余额通知。
+			fallback := &relaycommon.RelayInfo{UserId: 9201, RequestId: "subscription-fallback", OriginModelName: "model-a", BillingSource: BillingSourceSubscription, SubscriptionId: sub.Id, FinalPreConsumedQuota: 100, IsPlayground: true}
+			require.NoError(t, SettleBilling(nil, fallback, 0))
+			require.NoError(t, SettleBilling(nil, fallback, 0))
+			require.NoError(t, db.First(&sub, sub.Id).Error)
+			assert.EqualValues(t, 100, sub.AmountUsed)
+			assert.EqualValues(t, -100, fallback.SubscriptionPostDelta)
 			// 低样本时独立高额阈值的载荷明确标记absolute_limit。
 			// 第一笔新模型六百未告警，第二笔一千五百仍不足两份历史样本。
 			// 第二次处理工作器不可重复产生同一异常事件。

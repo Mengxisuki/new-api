@@ -103,6 +103,7 @@ func hubConsumerView(consumer model.HubConsumer) (gin.H, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 三类统计分别来自投递、凭据和租约表，避免把最近活动时间当作在线证据。
 	var backlog, tokens, connections int64
 	if err := model.DB.Model(&model.HubDelivery{}).Where("consumer_id = ? AND acked_at = 0", consumer.ID).Count(&backlog).Error; err != nil {
 		return nil, err
@@ -160,6 +161,7 @@ func HubOverview(c *gin.Context) {
 		hubError(c, err)
 		return
 	}
+	// 消费者在控制面注册，消费请求本身不能隐式创建新的订阅用途。
 	var consumers []model.HubConsumer
 	if err := model.DB.Order("id DESC").Find(&consumers).Error; err != nil {
 		hubError(c, err)
@@ -180,6 +182,7 @@ func HubOverview(c *gin.Context) {
 		return
 	}
 	// 未决跨系统状态保持可见，禁止用重新扣费按钮掩盖未知提交结果。
+	// 未决资金观察与缓存恢复分别统计，不合并为含义不明的统一失败数。
 	var unresolved, syncPending int64
 	terminal := model.DB.Model(&model.Task{}).Select("task_id").Where("status IN ?", []string{model.TaskStatusSuccess, model.TaskStatusFailure})
 	if err := model.DB.Model(&model.HubChargeObservation{}).Where("state = ? AND task_id <> ? AND task_id IN (?)", model.HubChargePending, "", terminal).Count(&unresolved).Error; err != nil {
@@ -219,7 +222,7 @@ func HubUpdateSettings(c *gin.Context) {
 // 空关注用户集合表示所有已授权用户；非空集合只能缩小接收范围。
 // 消费主题必须来自服务端固定目录，不能借名称注册任意生产入口。
 // 创建时冻结发行者认证版本，之后密码重置等事件会撤销旧委托。
-// 模型持锁检查数量，避免同一发行者的并发请求绕过服务消费者上限。
+// 模型锁定共享设置行检查数量，多个发行者并发也不能绕过平台上限。
 // 新建消费者还没有凭据，生成可用 Token 必须再通过单次安全证明。
 // 响应摘要包含独立消费状态，名称本身不参与鉴权或幂等判断。
 func HubCreateConsumer(c *gin.Context) {
@@ -231,6 +234,7 @@ func HubCreateConsumer(c *gin.Context) {
 	if !hubBody(c, &req) {
 		return
 	}
+	// 新建记录与发行者认证版本在模型事务内绑定，响应无法替换这个归属。
 	consumer, err := model.CreateHubConsumer(c.GetInt("id"), req.Name, req.Topics, req.UserIDs)
 	if err != nil {
 		hubError(c, err)
@@ -269,6 +273,7 @@ func HubUpdateConsumer(c *gin.Context) {
 	if !hubBody(c, &req) {
 		return
 	}
+	// 只替换显式订阅配置，旧确认账本和凭据仍属于原消费者。
 	if err := model.UpdateHubConsumer(id, req.Name, req.Topics, req.UserIDs, req.Enabled); err != nil {
 		hubError(c, err)
 		return
@@ -303,6 +308,7 @@ func HubConsumerDetail(c *gin.Context) {
 		hubError(c, err)
 		return
 	}
+	// 撤销历史保留在列表中，不能通过隐藏记录让管理员误以为未曾授权。
 	var tokens []model.HubToken
 	if err := model.DB.Where("consumer_id = ?", id).Order("id DESC").Find(&tokens).Error; err != nil {
 		hubError(c, err)
@@ -371,6 +377,7 @@ func HubCreateToken(c *gin.Context) {
 		hubError(c, err)
 		return
 	}
+	// 先读取服务端当前订阅上界，随后再消费会话绑定的安全证明。
 	own, err := model.HubTopicList(consumer.Topics)
 	if err != nil {
 		hubError(c, err)
@@ -386,6 +393,7 @@ func HubCreateToken(c *gin.Context) {
 		hubError(c, model.ErrHubInvalid)
 		return
 	}
+	// 证明上下文由服务器重建，不能直接信任客户端传来的序列化授权说明。
 	binding, err := common.Marshal(service.HubTokenVerificationContext{ConsumerID: id, Topics: topics, ExpiresAt: req.ExpiresAt})
 	if err != nil {
 		hubError(c, err)
@@ -394,11 +402,13 @@ func HubCreateToken(c *gin.Context) {
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeHubToken, Context: binding}) == nil {
 		return
 	}
+	// 随机凭据创建错误不重试，避免不确定结果下生成无法追溯的第二枚秘密。
 	raw, token, err := model.CreateHubToken(id, req.Name, topics, req.ExpiresAt)
 	if err != nil {
 		hubError(c, err)
 		return
 	}
+	// 只有这一响应把一次性原文与不可认证的管理摘要一并返回。
 	item, err := hubTokenView(*token)
 	if err != nil {
 		hubError(c, err)
@@ -429,6 +439,7 @@ func HubRevokeToken(c *gin.Context) {
 		hubError(c, model.ErrHubInvalid)
 		return
 	}
+	// 模型按消费者和凭据复合定位，重复撤销不会删除其他凭据。
 	if err := model.RevokeHubToken(id, tokenID); err != nil {
 		hubError(c, err)
 		return
@@ -462,6 +473,7 @@ func HubListEvents(c *gin.Context) {
 		hubError(c, err)
 		return
 	}
+	// 逐条解析已保存的摘要，任何坏记录都应让管理读取明确失败。
 	items := make([]gin.H, 0, len(events))
 	for _, event := range events {
 		var payload map[string]any
@@ -499,6 +511,7 @@ func HubReplayEvent(c *gin.Context) {
 		hubError(c, model.ErrHubInvalid)
 		return
 	}
+	// 恢复只改投递状态，原始支付与结算调用链不会被重新执行。
 	if err := model.ReplayHubEvent(id, req.EventID); err != nil {
 		hubError(c, err)
 		return
@@ -530,6 +543,7 @@ func HubReplayEvent(c *gin.Context) {
 // 初次握手统一隐藏拒绝细节，已有连接只收到固定错误码而非驱动原文。
 // 此函数不注入平台管理角色，消费确认与后台管理继续使用独立信任边界。
 func hubClientIdentity(c *gin.Context) (*model.HubConsumer, *model.HubToken, []string, error) {
+	// Authorization 是唯一凭据承载位置，URL 仅允许非敏感的消费者定位参数。
 	header := c.GetHeader("Authorization")
 	raw, ok := strings.CutPrefix(header, "Bearer ")
 	if !ok || raw == "" || c.Query("token") != "" || c.Query("access_token") != "" {
@@ -545,6 +559,7 @@ func hubClientIdentity(c *gin.Context) (*model.HubConsumer, *model.HubToken, []s
 		}
 		return consumer, token, topics, nil
 	}
+	// 没有专用前缀时只尝试控制台登录令牌，不尝试模型 Key 或历史个人令牌。
 	identity, err := service.ParseAccessToken(raw)
 	if err != nil {
 		return nil, nil, nil, model.ErrHubForbidden
@@ -632,6 +647,7 @@ func HubAck(c *gin.Context) {
 		hubError(c, model.ErrHubInvalid)
 		return
 	}
+	// 这份确认账本在主库，不能从可关闭或独立部署的消费日志推断其状态。
 	var delivery model.HubDelivery
 	if err := model.DB.Where("id = ? AND consumer_id = ?", req.DeliveryID, consumer.ID).First(&delivery).Error; err != nil {
 		hubError(c, err)
@@ -642,6 +658,7 @@ func HubAck(c *gin.Context) {
 		hubError(c, err)
 		return
 	}
+	// 确认前应用同一范围规则，使读取主题和消费进度不会出现授权分叉。
 	allowed, err := model.HubEventAllowed(consumer, &event, topics)
 	if err != nil {
 		hubError(c, err)
@@ -705,6 +722,7 @@ func HubStream(c *gin.Context) {
 	if token != nil {
 		tokenID = token.ID
 	}
+	// 先占用受限连接租约再发 SSE 头，配额冲突仍能返回正常 HTTP 错误。
 	connectionID, err := model.OpenHubConnection(consumer.ID, tokenID)
 	if err != nil {
 		hubError(c, err)
@@ -718,6 +736,7 @@ func HubStream(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache, no-store")
 	c.Header("X-Accel-Buffering", "no")
+	// 通过包装器的 Unwrap 设置底层期限，真实网络写入与刷新共用同一失败处理。
 	controller := http.NewResponseController(c.Writer)
 	write := func(frame string) bool {
 		if err := controller.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
@@ -731,12 +750,14 @@ func HubStream(c *gin.Context) {
 		}
 		return true
 	}
+	// 首帧不携带事件编号，客户端不能把连接成功误当作处理了某条业务通知。
 	if !write(": connected\nretry: 3000\n\n") {
 		return
 	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	heartbeat := time.Now()
+	// 每条连接单独记住已报告的累计缺口，不修改服务器持久对账事实。
 	var reportedGap int64 = -1
 	for {
 		consumer, token, topics, err := hubClientIdentity(c)
@@ -774,18 +795,21 @@ func HubStream(c *gin.Context) {
 			write("event: error\ndata: {\"code\":\"storage_unavailable\"}\n\n")
 			return
 		}
+		// 仅读取尚未确认且达到重投间隔的记录，避免正常在线时持续重复轰炸。
 		deliveries, err := model.ListHubDeliveries(consumer, topics, true)
 		if err != nil {
 			write("event: error\ndata: {\"code\":\"storage_unavailable\"}\n\n")
 			return
 		}
 		for _, delivery := range deliveries {
+			// 响应中的尝试信息与本次写入一致，但它不是客户端业务完成凭证。
 			delivery.LastSentAt = common.GetTimestamp()
 			delivery.Attempts++
 			data, err := common.Marshal(delivery)
 			if err != nil {
 				return
 			}
+			// 发送尝试持久化失败时关闭流，让下次连接从真实账本重新恢复。
 			if err := model.MarkHubDeliverySent(consumer.ID, delivery.ID); err != nil {
 				write("event: error\ndata: {\"code\":\"storage_unavailable\"}\n\n")
 				return

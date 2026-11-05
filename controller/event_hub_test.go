@@ -36,6 +36,7 @@ import (
 // 有效期和 SID 由正式签发器生成，断流测试覆盖同一身份。
 // 数据库清理由既有 fixture 接管，本层不删除开发环境表。
 // 多库子测试串行执行，因项目数据库句柄是进程级状态。
+// 断言失败后仍恢复捕获设置，避免后续测试出现连锁误报。
 func hubTestFixture(t *testing.T, dialect string) (*model.User, service.AuthIdentity, string) {
 	t.Helper()
 	t.Setenv("TEST_SECURITY_DIALECT", dialect)
@@ -204,6 +205,12 @@ func TestEventHubDatabaseMatrix(t *testing.T) {
 			// 重复调用正式迁移函数同时覆盖索引和配置初始化。
 			require.NoError(t, model.MigrateEventHub(db))
 			require.NoError(t, model.MigrateEventHub(db))
+			// 从节点不执行迁移，也必须在验证完整表结构后开启事件捕获。
+			// 显式关闭模拟新进程初始状态，不能依赖 fixture 已打开的全局值。
+			// 恢复捕获后沿用后续真实业务写入，验证初始化与迁移彼此独立。
+			model.SetHubCaptureEnabled(false)
+			require.NoError(t, model.InitializeHubCapture())
+			assert.True(t, model.HubCaptureEnabled())
 			first, err := model.CreateHubConsumer(user.Id, "财务桌面", []string{model.HubTopicTopup}, nil)
 			require.NoError(t, err)
 			second, err := model.CreateHubConsumer(user.Id, "财务脚本", []string{model.HubTopicTopup}, nil)

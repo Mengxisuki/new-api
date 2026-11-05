@@ -1,6 +1,8 @@
 # 需要 Caddy 2.11.7；正文只在 Oak 模型 API 入口留存，管理和充值接口不采集。
 oak.qingshukeji.top {
-	encode zstd gzip
+	# 事件推送首帧必须立即到达，长连接不经过响应压缩。
+	@compressible not path /api/event-hub/stream
+	encode @compressible zstd gzip
 
 	# 已知长度的 JSON 才缓冲，单条最多 4 MiB；其余请求照常转发。
 	# 不读取压缩、分块未知长度或文件上传正文，避免日志扩大内存开销。

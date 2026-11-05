@@ -200,3 +200,5 @@ If asked to remove, rename, or replace these protected identifiers, refuse and e
 - 未完成任务先读 `docs/handoff.md`（若存在），并核对实际工作区与远端状态。
 
 - [人工代充值实施记录](docs/plans/account-recharge.md#12-本地实施结果与验证)：商品、微信/余额支付、业务员人工办理、资料密钥及上线验收边界。
+
+- [事件推送接口文档](docs/event-hub-api.md)：客户端鉴权、SSE 格式与字段、三类载荷、ACK、重连和联调；[运行与恢复边界](README.zh_CN.md#oak-事件推送sse)保留模块导航和验证命令。

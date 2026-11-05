@@ -115,7 +115,8 @@ func beginAdminAudit(c *gin.Context) *auditResponseWriter {
 		body:           bytes.NewBuffer(nil),
 		maxSize:        64 * 1024,
 	}
-	// 代充值凭据读取不缓存响应正文；业务事件已在事务内记录，状态码用于兜底审计。
+	// 代充值凭据和新建事件Token不缓存响应正文，避免明文进入审计缓冲。
+	// 业务侧已记录安全元数据，状态码仍可用于兜底审计。
 	if c.FullPath() == "/api/account-recharge/operations/orders/:id/reveal-account-info" || c.FullPath() == "/api/event-hub/consumers/:id/tokens" {
 		writer.maxSize = 0
 	}

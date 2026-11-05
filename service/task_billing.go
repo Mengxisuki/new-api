@@ -276,6 +276,9 @@ func taskModelName(task *model.Task) string {
 // 原有用户与渠道累计用量仍只回减一次，请求次数保持原合同。
 // 不撤回已送达的历史告警，告警表示当时已确认的费用快照。
 // 旧独立测试未启动捕获时继续验证原账务路径。
+// 所需任务身份来自持久任务，缺失身份时返回失败而不制造临时观察。
+// 任务费用在确认资金前保持原值，失败调用方仍能识别待处理金额。
+// 数据库已提交但缓存未确认时保留记录，不能自动按原额度再退一次。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
 	quota := task.Quota
 	if model.HubCaptureEnabled() {
@@ -357,6 +360,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 // 任务公开编号作为幂等身份，上游私有编号不参与通知协议。
 // 返回值保持原接口，调用方不能依据日志是否存在判断结算成功。
 // 已处理观察保留至少七天，供后续同模型费用比较。
+// 上游重复完成回调只有首次认领会修改Key和累计用量。
+// 陈旧任务快照会被事务内旧费用校验拒绝，不能覆盖新结算结果。
+// 异常检测从数据库观察读取，后台任务失败不会制造成功通知。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason *common.Message, clamps ...*common.QuotaClamp) {
 	if actualQuota < 0 {
 		return

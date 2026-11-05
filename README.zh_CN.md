@@ -453,3 +453,41 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 目标模型 Tokens、GPT Tokens 和真实 `web_search` 调用分别沿用现有价格，工具价格仍在计费设置中调整。日志详情以父请求 ID 关联所有子账单。当前采用阶段缓冲 SSE，等待时发送心跳；同步 HTTP 显式历史可续轮，尚不支持搜索编排的 WebSocket、持久响应或后台任务。部署前还需发布 GPT-Load 已有的 Kimi/GLM `reasoning.context` 参数兼容改动。
 
 配置示例、限制、验证方法和相关模块见[模型映射实施说明：GPT 搜索编排](docs/plans/api-key-model-mapping.md#gpt-搜索编排2026-11-04-102019-0000本地已实现)。定向回归：`go test ./controller ./middleware ./model -run 'TestSearchBridge|TestTokenModelMapping|TestResourceRelayTokenModelMapping' -count=1`。前端配置与日志测试位于 `web/src/features/system-settings/models/__tests__/search-bridge-settings.test.tsx` 和 `web/src/features/usage-logs/components/__tests__/detail-preview.test.tsx`。本轮代码未发布。
+
+## Oak 事件推送（SSE）
+
+超级管理员进入「系统设置 → 运维 → 事件推送」（`/system-settings/operations/events`），可管理服务开关、保留期、异常扣费规则、消费者、授权 Token、在线连接和确认进度。外部客户端使用普通 HTTP SSE 接收事件，再用 HTTP POST 确认，无需 MQ SDK 或额外消息中间件。
+
+**客户端开发与交付文档：[平台事件推送接口文档](docs/event-hub-api.md)。** 独立说明鉴权、请求参数、SSE 帧、全部字段及单位、三类业务载荷、ACK、错误处理、重连幂等和联调验收；接入方无需阅读项目源码。
+
+| 主题 | 产生时机 | 摘要范围 |
+| --- | --- | --- |
+| `wallet.topup_succeeded` | 钱包充值真正入账，包括人工补单 | 用户、交易号、实付文本、到账额度、支付渠道 |
+| `billing.charge_anomaly` | 真实最终费用达到异常阈值 | 用户、请求身份、计费模型、来源、费用、基线和触发原因 |
+| `recharge.info_submitted` | 已付款代充值订单提交或更新账户资料 | 订单编号/版本、业务状态、提交类型与处理人编号；不含买家编号或账户资料 |
+
+每个需要独立收到消息的客户端应创建自己的**消费者**，可以按主题及用户 ID 关注。一个消费者可以创建多枚 Token，用于轮换或访问不同主题；这些 Token **共享确认进度**，不提供各自独立的一份消息，也不承诺同消费者多连接之间的独占分配。平台最多 100 个消费者，每个消费者最多 20 枚有效 Token、8 个在线连接。
+
+Token 以 `evt_` 开头，仅可读事件和 ACK，不能调用管理、模型或代充值办理接口。创建需要当前网页登录及一次安全验证，明文只展示一次，数据库仅存哈希。Token 具有独立主题范围、到期时间及撤销状态；消费者创建者被禁用、降权或认证版本失效后，委托也失效，需要重新建立消费者。只允许通过 `Authorization: Bearer` 传递，URL 中的密钥会被拒绝，正式接入使用 HTTPS。
+
+### 接入与确认
+
+使用专用 Token 调用 `GET /api/event-hub/stream`，按 `event_id` 幂等处理并持久保存结果，再将投递 `id` 提交至 `POST /api/event-hub/ack`。仅收到消息或传递 `Last-Event-ID` 都不能代替确认。完整参数、字段表、错误与可复制请求统一维护在[独立接口文档](docs/event-hub-api.md)；网页管理页的状态刷新不代表消费或确认消息。
+
+### 保留期、检测与运行边界
+
+默认暂停网络投递、保留 7 天。进程启动完成迁移后始终捕获业务事件和最终费用，暂停投递也会继续保存与检测；这会增加主数据库的同步写入。消费者默认接收创建后匹配的事件，管理页可按事件编号补发保留期内历史通知，补发不会重新执行充值或扣费。多节点共享主数据库，先升级主节点完成迁移，再启动从节点；缺少事件表的从节点拒绝启动。
+
+扣费基线按「用户 + 实际计费模型 + 钱包/订阅来源」分别统计，取最近 7 天最多 100 笔正向最终费用的中位数，排除当前请求、未完成任务和退款。样本达到门槛时，阈值为 `max(最低异常额度, 中位数 × 倍率)`；不足时使用独立的无历史高额阈值。额度采用平台内部单位，页面显示对应货币金额。异步任务提交价暂不告警，完成后才确认整笔最终费用；同任务补扣和退款更新原记录，不新增历史样本。
+
+超过保留期的未确认消息会清理，并累加消费者的缺口计数。新连接或计数增加时发送 `event: retention_gap`，数据为 `{"expired_unacked_count":数量,"action":"reconcile_business_state"}`，管理页同时提示。收到后应通过原业务接口核对状态，不能依赖事件服务无限重放历史。
+
+现有异步任务在写入终态后、费用结算前退出，可能留下待核对记录；数据库已提交而 Redis 增量确认未知时也会保留标记。管理页分别显示未决任务数和缓存待确认数；观察表 `hub_charge_observations` 的 `request_key`、`task_id`、`state`、`cache_sync_pending` 可用于定位。此类记录不会被保留期清理，不自动猜测终价、退款或重复应用缓存增量。资金与模型 Key 预算沿用既有两阶段更新，Key 更新失败仍需结合错误日志核对，不计入上述两个页面计数。同步请求或 Realtime 连接尚未到最终结算就进程退出时，也无法生成最终费用观察；本次没有新增通用账务恢复系统。
+
+核心目录：`model/event_hub*.go` 保存主库事件、订阅、投递账本和费用观察；`controller/event_hub.go` 提供管理、SSE 和 ACK；`service/event_hub.go` 执行后台检测与恢复；`web/src/features/event-hub/` 为管理页面。Gin 路由避开 gzip，`deploy/oak/Caddyfile` 排除事件流压缩并实时刷新。
+
+验证入口：`go test ./router ./middleware ./controller ./model ./service -count=1`；核心 `go test -race ./controller -run '^TestEventHub' -count=1`；三库行为 `go test ./controller ./service -run 'TestEventHub|TestHubBilling' -count=1 -v`，外部库通过隔离实例的 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 提供。已验证 SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17，包括重复迁移、保留既有业务数据、独立日志库、事务回滚、权限收缩、在线撤销及真实 HTTP SSE。代理验证使用官方 Caddy 2.11.7：`CADDY_TEST_BINARY=/绝对路径/caddy python3 deploy/oak/tests/test_caddy_body_log.py`。
+
+前端验证：在 `web/` 执行 `bun x tsgo -b`、`bun run test src/features/event-hub/__tests__/event-hub.test.tsx` 及相关文件 oxlint，9 项交互测试通过；先 `bun run build` 再在仓库根执行 `go build`，避免清理前端产物时破坏 Go embed。隔离编译实例已实际完成消费者创建/编辑、Token 二次验证签发/撤销、SSE 首帧/合成事件接收及持久 ACK；页面刷新不重复详情。本轮未部署，也未进行真实支付或上游模型调用。
+
+鉴权复核参考 ASVS 5.0.0 的 7.2.1（后端验证）与 7.4.1（会话终止后失效），以及 [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) 与 [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)，落实高熵凭据、限权与到期、敏感操作再验证、服务器端失效检查及凭据不入审计。定向测试覆盖证明绑定/重用拒绝、消费者与主题越权、凭据撤销和会话失效；这些验证不等同于全站 ASVS 认证。

@@ -16,6 +16,43 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+/**
+ * 事件接口边界：
+ * 这里只管理和读取事件摘要。
+ * 订阅接口与资金接口完全分离。
+ * 消费者编号不是认证凭据，
+ * 也不能替代访问授权。
+ * 列表返回的令牌尾号仅用于识别，
+ * 不能拼接成完整令牌。
+ * 主题目录使用公开业务名称；
+ * 未知主题不能自动扩展成全量事件。
+ * 订阅用户列表与主题列表都是筛选条件，
+ * 不能绕过后端角色和归属校验。
+ * 所有输入在服务端仍要重新验证，
+ * 浏览器类型不能当作授权依据。
+ * 事件的业务标识与投递标识用途不同：
+ * 前者用于去重与补发，
+ * 后者用于确认指定消息。
+ * 管理页读取投递列表不会确认消息，
+ * 查询成功也不能推进消费者进度。
+ * 服务概况与详情采用严格结构校验，
+ * 服务端返回坏数据时必须让页面显式失败。
+ * 分页接口只请求明确页码，
+ * 不把查询失败解释为没有事件。
+ * 创建令牌的响应包含一次性明文，
+ * 因此不能复用持久列表缓存。
+ * 令牌创建必须携带安全证明，
+ * 并禁止认证刷新后自动重放请求。
+ * 取消信号贯穿创建请求，
+ * 页面离开后不能把返回的凭据展示给新身份。
+ * 保存和撤销请求统一检查业务成功标识，
+ * 不依据状态码猜测业务成功。
+ * 补发事件只重新开放通知记录，
+ * 不再次执行该事件背后的充值或扣款。
+ * 额度配置保留整数语义，
+ * 货币展示不改变配置值；
+ * 时间戳统一使用秒。
+ */
 import { z } from 'zod'
 
 import { api } from '@/lib/api'
@@ -109,6 +146,8 @@ export type TokenInput = { name: string; topics: string[]; expires_at: number }
 // 所有请求复用统一认证和错误契约，业务失败不得变成空列表。
 // Token 创建使用单次授权配置，认证刷新后不能自动重放写操作。
 const root = '/api/event-hub'
+// 读取概况与读取详情都检查业务成功，再执行结构校验。
+// 错误必须沿原请求传播，调用方才能展示可定位的失败。
 export async function getEventHub(): Promise<EventOverview> {
   const response = await api.get(root)
   return overviewSchema.parse(requireServerSuccess(response.data).data)

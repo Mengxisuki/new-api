@@ -36,6 +36,18 @@ class CaddyBodyLogTest(unittest.TestCase):
         release_stream = threading.Event()
 
         class Upstream(BaseHTTPRequestHandler):
+            def do_GET(self):
+                # 复用真实 SSE 路径与压缩协商，验证管理事件不会被代理缓冲。
+                # 客户端读到首帧后才释放末帧，不能用完整响应替代流式验证。
+                self.send_response(200)
+                self.send_header("X-Oneapi-Request-Id", "event-stream")
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(b": connected\n\n")
+                self.wfile.flush()
+                release_stream.wait(3)
+                self.wfile.write(b"event: fixture\ndata: {}\n\n")
+
             def do_POST(self):
                 # 测试数据不含 chunk 扩展或 trailer，读法只服务此处固定夹具。
                 # 这里不是生产 HTTP 解析器，不把简化实现复用到应用中。
@@ -140,16 +152,29 @@ class CaddyBodyLogTest(unittest.TestCase):
                         else:
                             self.assertEqual(response.read().decode(), hashlib.sha256(body).hexdigest())
                         connection.close()
+                    # 业务推送使用 GET；即便客户端声明支持 gzip，也必须直接取得首帧。
+                    # 共享事件只用于因果握手，上一条模型 SSE 完成后重新置为等待。
+                    release_stream.clear()
+                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                    connection.request("GET", "/api/event-hub/stream", headers={"Accept-Encoding": "gzip, zstd"})
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertIsNone(response.getheader("Content-Encoding"))
+                    self.assertEqual(response.readline(), b": connected\n")
+                    release_stream.set()
+                    self.assertIn(b"event: fixture", response.read())
+                    connection.close()
                     # 等异步访问日志写完再检查；不根据响应成功推断落盘成功。
                     for _ in range(50):
                         rows = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-                        if len(rows) == len(cases):
+                        if len(rows) == len(cases) + 1:
                             break
                         time.sleep(0.05)
                     # 必须出现所有请求，不能让日志队列遗漏被采集范围判断掩盖。
                     # 日志行之外不导出任何正文到测试输出。
                     by_id = {row["request_id"]: row for row in rows}
-                    self.assertEqual(set(by_id), {case[0] for case in cases})
+                    self.assertEqual(set(by_id), {case[0] for case in cases} | {"event-stream"})
+                    self.assertNotIn("request_body", by_id["event-stream"])
                     for ident, _, body, _, _, recorded in cases:
                         # 同时覆盖采集和排除路径，缺字段代表按策略跳过正文。
                         self.assertEqual("request_body" in by_id[ident], recorded)

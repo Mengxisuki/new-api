@@ -201,14 +201,18 @@ func ProcessHubChargeObservations(ctx context.Context) error {
 	}
 	// 未决任务和缓存未知结果不能因保留期到达而静默消失。
 	// 已处理样本至少保留七天，避免短通知保留期改变费用基线。
+	pruneBefore := common.GetTimestamp() - int64(max(7, settings.RetentionDays))*24*60*60
 	var expired []int
 	if err := DB.WithContext(ctx).Model(&HubChargeObservation{}).
-		Where("state <> ? AND cache_sync_pending = ? AND evaluated_revision >= revision AND updated_at < ?", HubChargePending, false, common.GetTimestamp()-int64(max(7, settings.RetentionDays))*24*60*60).
+		Where("state <> ? AND cache_sync_pending = ? AND evaluated_revision >= revision AND updated_at < ?", HubChargePending, false, pruneBefore).
 		Order("id ASC").Limit(100).Pluck("id", &expired).Error; err != nil {
 		return err
 	}
 	if len(expired) > 0 {
-		return DB.WithContext(ctx).Where("id IN ?", expired).Delete(&HubChargeObservation{}).Error
+		// 选择后任务可能修订，删除时重新校验资格，不能丢掉新版本观察。
+		return DB.WithContext(ctx).Where("id IN ?", expired).
+			Where("state <> ? AND cache_sync_pending = ? AND evaluated_revision >= revision AND updated_at < ?", HubChargePending, false, pruneBefore).
+			Delete(&HubChargeObservation{}).Error
 	}
 	return nil
 }

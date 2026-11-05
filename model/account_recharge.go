@@ -294,6 +294,12 @@ func saveRechargeEvent(tx *gorm.DB, o *AccountRechargeOrder, actor int, action, 
 // 重复提交不会把已完成订单重新入队。
 // 此层只接收密文，
 // 数据库SQL日志不接触认证资料原文。
+// 订单归属和版本在同一行锁中验证，不能接受其他用户的版本号。
+// 通知仅包含业务状态，接收方需要通过原授权接口读取处理资料。
+// 保留已领取订单的处理人，补交不会重新成为公共待领取订单。
+// 业务流水与推送事件共用事务，任一写入失败都允许原版本重试。
+// 服务暂停投递时仍保存事件，稍后恢复不需要用户重新提交资料。
+// 状态先保存再引用递增版本，事件身份与最终订单事实保持一致。
 func SubmitAccountRechargeInfo(id, userID, version int, secret, mask string) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var o AccountRechargeOrder

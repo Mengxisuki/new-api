@@ -76,6 +76,11 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 // 异步任务的提交费用会标为待定，真正终态再进入历史基线。
 // 计费上下文内冻结的来源不可因通知设置改变而切换。
 // 金额单位一直是内部额度，避免与支付人民币分混算。
+// 订阅PostDelta继续反映本次差额，保证后续用量日志含义不变。
+// 额度提醒在资金和Key调整成功后发出，不把提醒当成结算依据。
+// 持久观察只认领资金事实，不替代原用户通知偏好。
+// 旧增量协议仍由原调用方提供最终总额，本层不会猜测累计值。
+// 异常错误直接向调用方返回，不能因事件服务启用而吞掉账务失败。
 func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) error {
 	if relayInfo.Billing != nil {
 		preConsumed := relayInfo.Billing.GetPreConsumedQuota()
@@ -115,7 +120,7 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 	}
 
 	// 无会话的历史协议也保存最终总额，不将预扣或差额当作样本。
-	// FundingApplied 会阻止后续 Key 失败被误认为资金没有提交。
+	// 已保存观察会阻止相同请求在 Key 失败后再次扣除资金。
 	quotaDelta := actualQuota - relayInfo.FinalPreConsumedQuota
 	if model.HubCaptureEnabled() {
 		applied, err := settleHubBillingFunding(relayInfo, actualQuota, quotaDelta)
@@ -125,9 +130,19 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 		if !applied {
 			return nil
 		}
+		// 沿用旧路径的订阅日志差额，不能只保存数据库用量而遗漏上下文。
+		if relayInfo.BillingSource == BillingSourceSubscription {
+			relayInfo.SubscriptionPostDelta += int64(quotaDelta)
+		}
 		// 资金已提交，Key 预算仍沿用原合同；通知不能触发再次资金调整。
 		if !relayInfo.IsPlayground && quotaDelta != 0 {
-			return model.ApplyTokenQuotaDeltaSync(relayInfo.TokenId, relayInfo.TokenKey, -quotaDelta)
+			if err := model.ApplyTokenQuotaDeltaSync(relayInfo.TokenId, relayInfo.TokenKey, -quotaDelta); err != nil {
+				return err
+			}
+		}
+		// 与旧PostConsumeQuota保持相同提醒入口，事件推送不替换余额提醒。
+		if actualQuota != 0 {
+			checkAndSendQuotaNotify(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota)
 		}
 		return nil
 	}

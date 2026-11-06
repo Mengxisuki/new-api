@@ -235,3 +235,20 @@
 现象：挂帐财务列表先执行 Count、SUM，再 Scan 当前页，三种数据库都报重复联表或歧义字段。根因：同一个携带 Joins 的 GORM 查询对象被终结操作继续修改，后续 Scan 累积相同关联。
 
 修复：保留公共过滤条件，各次 Count、聚合和分页 Select 使用 `Session(&gorm.Session{})` 独立查询状态；不改写 SQL 或吞掉错误。`model/credit_query.go` 已应用，`controller/credit_account_test.go` 的真实 SQLite、MySQL、PostgreSQL 列表及金额断言验证。适用于同一个联表查询被多次聚合、投影或分页复用的路径。
+
+## 2026-11-05 18:38:05 +00:00 — 控制台错误已有词条仍需显式翻译元数据
+
+现象：代充值挂帐报价返回 `Insufficient available credit`，七语言词条已存在，中文 Toast 仍展示英文。根因：`rechargeError` 直接构造只有 `message` 的 JSON；统一前端 `getServerMessage` 仅对 `message_key` 调用 i18next，普通 `message` 按原文展示，以保护上游或用户自定义文本。
+
+修复：共享错误出口使用 `common.ApiErrorStatus(c, code, common.NewMessage(message))`，保留原状态码与英文说明，并附加显式翻译键。继续仅将固定白名单错误传入，未知异常保持脱敏，不全局猜测翻译任意错误文本。
+
+验证：`TestRechargeErrorTranslationContract` 修复前失败、修复后通过，覆盖挂帐四类错误、余额不足、权限、未找到、缓存与内部故障；`web/src/lib/__tests__/server-error-notifications.test.ts` 经真实报价 API、全局 QueryClient 与中文资源断言 Toast 为「可用挂帐额度不足。」且仅一次。相关后端定向测试与前端 28 项错误链路测试通过；未部署。
+
+
+## 2026-11-05 18:46:51 +00:00 — 执行层冷却不能被当成结果未知，免费失败也须独立落日志
+
+现象：挂靠优先时，原厂明确额度拒绝后的请求仍返回502，New API请求日志没有对应失败。只读现场确认GPT-Load首次429后进入模型额度冷却，后续连续失败均attempt_count=0。
+
+根因：New API仅采纳一分钟内额度快照，执行层虽有未处理/未发送证据却没有数据面合同传递；免费链路非2xx提前返回，又绕开平台渠道错误日志。不能把所有429都放行，也不能通过永久信任旧零额度快照处理。
+
+修复：GPT-Load以全请求尝试状态生成保留的安全拒绝头，任一未知结果永久撤销；New API只接受回环执行端唯一精确标记的429，按原Key授权继续。挂靠失败独立写现有错误日志，关联用户和执行层请求身份，不留凭据/原厂正文，不将未知用量当零。HTTP/SSE、无隐含钱包及单次扣费回归和真实SQLite3.50.4/MySQL8.4.2/PostgreSQL14.17矩阵通过，两服务回归、vet/build通过；未发布。细节与已验证边界见[排障记录](../diagnostics/hosting-resource-fallback.md)。

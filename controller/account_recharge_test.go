@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -877,6 +878,47 @@ func TestRechargeOrderInvoice(t *testing.T) {
 			// 未申请开票无须存在发票行，返回 null 表达真实选择。
 			require.NoError(t, db.Model(&order).Update("invoice_required", false).Error)
 			assert.Contains(t, read("").Body.String(), `"invoice":null`)
+		})
+	}
+}
+
+// 控制台必须收到明确翻译键，仅有英文 message 不会触发前端翻译。
+// 此处测试共享错误出口，覆盖报价、付款和财务结清的同一响应合同。
+// 同时保留原 HTTP 状态，不能为添加国际化改成统一成功响应。
+func TestRechargeErrorTranslationContract(t *testing.T) {
+	cases := []struct { // 覆盖共享出口的每类业务状态。
+		name    string // 子测试名用于定位遗漏的错误类型。
+		err     error  // 传入真实模型业务错误。
+		status  int    // 原协议 HTTP 状态必须保持。
+		message string // 英文原文同时是静态翻译键。
+	}{
+		{"credit_limit", model.ErrCreditLimit, 400, "Insufficient available credit"},
+		{"credit_unavailable", model.ErrCreditUnavailable, 400, "On-account payment is not enabled for this user and module"},
+		{"credit_invalid", model.ErrCreditInvalid, 400, "Invalid credit account request"},
+		{"credit_conflict", model.ErrCreditConflict, 409, "Credit record changed. Refresh and try again."},
+		{"wallet_balance", model.ErrRechargeBalance, 400, "Insufficient wallet balance"},
+		{"not_found", gorm.ErrRecordNotFound, 404, "Recharge order or product not found"},
+		{"forbidden", model.ErrRechargeForbidden, 403, "You cannot process this recharge order"},
+		{"cache", model.ErrRechargeCache, 503, "Wallet synchronization is pending. Check this order before retrying."},
+		// 未知底层错误不能因为新增翻译字段而暴露内部详情。
+		{"internal", errors.New("private database detail"), 500, "Recharge request failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			rechargeError(ctx, tc.err)                // 调用生产出口，不在测试里构造预期响应。
+			assert.Equal(t, tc.status, recorder.Code) // 翻译不能改变失败的业务含义。
+			var payload struct {
+				Success    bool   `json:"success"`
+				Message    string `json:"message"`
+				MessageKey string `json:"message_key"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+			assert.False(t, payload.Success)                                         // 失败不能被前端当成有效报价。
+			assert.Equal(t, tc.message, payload.Message)                             // 非网页调用者仍收到英文说明。
+			assert.Equal(t, tc.message, payload.MessageKey)                          // 中文提示依赖的显式协议字段。
+			assert.NotContains(t, recorder.Body.String(), "private database detail") // 未知异常继续脱敏，不能加入翻译参数。
 		})
 	}
 }

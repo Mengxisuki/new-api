@@ -24,12 +24,15 @@ import {
   CanceledError,
   type AxiosAdapter,
 } from 'axios'
+import i18next from 'i18next'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { quoteOrder } from '@/features/account-recharge/api'
 import { saveModelPricing } from '@/features/model-pricing/api'
 import { useUpdateOption } from '@/features/system-settings/hooks/use-update-option'
+import zh from '@/i18n/locales/zh.json'
 import { handleServerError } from '@/lib/handle-server-error'
 import { api } from '@/lib/http-client'
 import { createAppQueryClient } from '@/lib/query-client'
@@ -441,4 +444,57 @@ it('rejects an unsuccessful setting update so callers cannot proceed as if it sa
   expect(success).not.toHaveBeenCalled()
   unmount()
   client.clear()
+})
+
+// 使用真实中文资源和全局查询错误处理，覆盖报价请求最终弹出的文案。
+// 只替换 HTTP 边界；业务 API、响应解析和 Toast 翻译均执行真实实现。
+// 后端显式提供 message_key，不能靠猜测所有外部错误文本来翻译。
+it('挂帐额度不足的报价错误以中文提示且只通知一次', async () => {
+  const previousLanguage = i18next.language // 记住测试前的语言，结束后完整恢复。
+  i18next.addResourceBundle('zhCN', 'translation', zh.translation, true, true) // 加载项目已有中文词条，不能在测试里编造译文。
+  await i18next.changeLanguage('zhCN') // 复现中文界面收到英文业务错误的场景。
+  const client = createAppQueryClient() // 页面实际使用的统一错误通知链路。
+  const notify = vi.spyOn(toast, 'error').mockReturnValue('credit-error') // 观察用户最终看到的提示，而非只测词条存在。
+  api.defaults.adapter = async (config) => {
+    // 模拟后端修复后的 400 响应，保留英文供非网页调用者读取。
+    throw new AxiosError(
+      'Request failed with status code 400',
+      'ERR_BAD_REQUEST',
+      config,
+      undefined,
+      {
+        data: {
+          success: false, // 报价失败不得继续创建订单。
+          message: 'Insufficient available credit', // 外部调用者保留兼容英文原文。
+          message_key: 'Insufficient available credit', // 显式元数据才触发统一前端翻译。
+        },
+        status: 400, // 保持真实业务拒绝状态。
+        statusText: 'Bad Request',
+        headers: {},
+        config,
+      }
+    )
+  }
+  try {
+    await expect(
+      client.fetchQuery({
+        queryKey: ['recharge', 'quote', 'credit-i18n'], // 使用独立缓存键，避免继承成功报价。
+        queryFn: () =>
+          quoteOrder({
+            product_id: 4, // 复现请求参数，不读取或修改线上商品。
+            product_version: 5, // 版本仅用于构造报价，不会发起真实订单。
+            payment_method: 'credit', // 挂帐错误经真实业务 API 传播。
+            invoice_required: false, // 排除开票校验对测试错误的干扰。
+            request_id: '', // 报价没有写入动作，不需要付款幂等键。
+          }),
+        retry: false, // 业务拒绝无需等待网络退避才能验收文案。
+      })
+    ).rejects.toThrow()
+    expect(notify.mock.calls.map(([message]) => message)).toEqual([
+      '可用挂帐额度不足。',
+    ])
+  } finally {
+    client.clear() // 释放查询状态，避免错误通知影响后续测试。
+    await i18next.changeLanguage(previousLanguage) // 恢复共享语言，不污染其他场景。
+  }
 })

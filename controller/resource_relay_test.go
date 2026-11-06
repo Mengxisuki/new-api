@@ -31,13 +31,15 @@ import (
 // resourceFixture 运行真实鉴权、策略、控制面 client 与数据面转发。
 // 执行层控制面与原厂执行由本地 HTTP 服务替代，钱包与令牌使用真实数据库。
 type resourceFixture struct {
-	user     *model.User             // 数据库所有者，用于归属和真实钱包验证。
-	token    *model.Token            // 统一模型 Key，不承载互斥的收费类型。
-	accounts []*model.HostingAccount // 账号顺序由策略明确授权，不能由余额自动重排。
-	engine   *gin.Engine
-	calls    []string // 仅记录实际执行凭据，不把控制面观察计为模型调用。
-	status   int      // 故障发生在外部执行之后，用于检查不可重放边界。
-	stream   bool     // 让同一真实转发器处理增量输出，避免另造模拟实现。
+	user             *model.User             // 数据库所有者，用于归属和真实钱包验证。
+	token            *model.Token            // 统一模型 Key，不承载互斥的收费类型。
+	accounts         []*model.HostingAccount // 账号顺序由策略明确授权，不能由余额自动重排。
+	engine           *gin.Engine
+	calls            []string    // 仅记录实际执行凭据，不把控制面观察计为模型调用。
+	status           int         // 故障发生在外部执行之后，用于检查不可重放边界。
+	stream           bool        // 让同一真实转发器处理增量输出，避免另造模拟实现。
+	rejectionHeaders http.Header // 执行层自己的安全拒绝证据，不来自客户端。
+	rejectFirstOnly  bool        // 只拒绝首账号，观察第二账号或付费来源是否真正执行。
 }
 
 // newResourceFixture 给每个测试独立数据库与两个账号。
@@ -113,17 +115,30 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		require.Contains(t, string(body), `"model":"gpt-4"`)
+		status := f.status
+		// 状态仅按执行凭据区分，控制面读取不计入失败次数。
+		if f.rejectFirstOnly && r.Header.Get("Authorization") != "Bearer internal-0" {
+			status = http.StatusOK
+		}
+		// 拒绝发生在流输出之前；流式请求同样可能收到 JSON 429。
+		if status >= 400 {
+			// 允许夹具模拟执行层自有头，但不替换真实调度判断。
+			for name, values := range f.rejectionHeaders {
+				w.Header()[name] = values
+			}
+			w.Header().Set("Content-Type", "application/json")
+			// 拒绝不输出任何模型内容，后续是否执行完全由调用方决定。
+			w.WriteHeader(status)
+			io.WriteString(w, `{"error":{"code":"rate_limit_exceeded"}}`)
+			return
+		}
 		if f.stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\ndata: [DONE]\n\n")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(f.status)
-		if f.status >= 400 {
-			io.WriteString(w, `{"error":{"code":"rate_limit_exceeded"}}`)
-			return
-		}
+		w.WriteHeader(status)
 		// 原平台协议返回真实格式，回归经过适配器解析、结算而非只验证路由命中。
 		switch r.URL.Path {
 		case "/v1/embeddings":
@@ -151,7 +166,8 @@ func newResourceFixture(t *testing.T) *resourceFixture {
 	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Key: "platform-only", Name: "platform", Status: common.ChannelStatusEnabled, Models: "gpt-4", Group: "default", BaseURL: &server.URL}
 	require.NoError(t, channel.Insert())
 	f.engine = gin.New()
-	f.engine.Use(middleware.BodyStorageCleanup())
+	// 使用真实请求身份中间件，失败与成功日志才能按同一用户请求关联。
+	f.engine.Use(middleware.RequestId(), middleware.BodyStorageCleanup())
 	f.engine.Use(middleware.TokenAuth(), middleware.TokenModelMapping())
 	f.engine.POST("/v1/chat/completions", ResourceRelay(), func(c *gin.Context) { c.JSON(418, gin.H{"legacy": true}) })
 	f.engine.POST("/v1/responses", ResourceRelay())
@@ -266,6 +282,143 @@ func TestResourceRelayExhaustionAndNoReplay(t *testing.T) {
 	response := f.request(t, "POST", "/v1/chat/completions", body)
 	require.Equal(t, 502, response.Code, response.Body.String())
 	require.Equal(t, []string{"Bearer internal-0"}, f.calls)
+}
+
+// 复现缓存不新鲜、实际额度已耗尽时的跨来源顺延。
+// 可信执行层只有在确认未处理时才返回安全标记。
+// 普通 429、错误标记及非 429 响应仍必须终止。
+// 实际请求经过鉴权、HTTP 转发和来源策略，不直接调用内部判断函数。
+// 每次拒绝都应写失败日志，包含原请求与执行层请求的关联身份。
+// 换账号成功的消费日志应保留前序来源跳过原因。
+// 错误响应不得向客户端泄漏内部安全头或原厂正文。
+// 钱包必须显式列入策略且预算足够，才允许付费顺延。
+// 免费失败不扣平台额度，后续付费只按实际成功调用结算。
+// 账号池没有近期额度快照，覆盖现场无法预判而必须真实尝试的条件。
+// 钱包与订阅分开验证，防止实现只支持某一种后续模式。
+// 订阅场景不配置钱包，因此无法用其他资金来源掩盖失败。
+// 未授权后续来源时返回 503，不能因安全标记自动扩展用户策略。
+// 非 429 即使携带正确标记，也不能得到跨来源重放资格。
+// 未知标记必须与缺失标记同样处理，不能默认为安全。
+// 执行层请求身份来自响应头，用户请求身份来自平台入口。
+// 两种身份同时保存在失败日志，定位时不需要读取密钥。
+// 流式拒绝日志必须保留 stream 标记，不能因响应为 JSON 而误报。
+// 后续来源使用独立上下文，既不继承失败身份，也不继承其安全证据。
+// 这里固定价格仅用于验证扣款次数，不替换原平台计费实现。
+func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
+	for _, test := range []struct {
+		name, next, evidence string
+		status, want         int
+		stream               bool
+	}{
+		{"next account", "hosting", "rejected_before_processing", 429, 200, false},
+		{"wallet", "wallet", "rejected_before_processing", 429, 200, false},
+		{"subscription", "subscription", "rejected_before_processing", 429, 200, false},
+		{"Responses stream", "hosting", "rejected_before_processing", 429, 200, true},
+		{"unknown 429", "hosting", "", 429, 502, false},
+		{"invalid evidence", "hosting", "unknown", 429, 502, false},
+		{"duplicate evidence", "hosting", "duplicate", 429, 502, false},
+		{"server failure", "hosting", "rejected_before_processing", 500, 502, false},
+		{"no authorized fallback", "", "rejected_before_processing", 429, 503, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newResourceFixture(t)
+			// 各用例独立建库，前一个用例的余额与账号状态不能影响本例。
+			// 只打开现有日志开关，测试结束后恢复全局配置。
+			previousError, previousConsume := constant.ErrorLogEnabled, common.LogConsumeEnabled
+			constant.ErrorLogEnabled, common.LogConsumeEnabled = true, true
+			t.Cleanup(func() { constant.ErrorLogEnabled, common.LogConsumeEnabled = previousError, previousConsume })
+			// 第一账号真实返回拒绝，后续来源保持正常。
+			f.status, f.rejectFirstOnly = test.status, true
+			f.stream = test.stream
+			f.rejectionHeaders = http.Header{"X-GPTLoad-Replay-Safety": {test.evidence}, "X-GPTLoad-Request-ID": {"execution-request"}}
+			// 重复的安全声明也拒绝，避免代理合并多个值后产生解释歧义。
+			if test.evidence == "duplicate" {
+				f.rejectionHeaders.Set("X-GPTLoad-Replay-Safety", "rejected_before_processing")
+				f.rejectionHeaders.Add("X-GPTLoad-Replay-Safety", "rejected_before_processing")
+			}
+			// 后续账号与首账号归属相同，排除权限错误干扰顺延结论。
+			next := model.ResourceSource{Kind: test.next, Enabled: true}
+			if test.next == "hosting" {
+				next.AccountID = f.accounts[1].ID
+			} else if test.next != "" {
+				// 使用真实预扣与结算，不能仅观察平台调用次数。
+				require.NoError(t, model.DB.Model(f.user).Update("quota", 1_000_000).Error)
+				require.NoError(t, model.DB.Model(f.token).Update("remain_quota", 1_000_000).Error)
+			}
+			// 活跃订阅必须实际接住预扣与结算，不能先失败后偷偷走钱包。
+			if test.next == "subscription" {
+				// 不启用周期重置，避免测试运行时刻改变本期消费断言。
+				plan := &model.SubscriptionPlan{Title: "fallback", Enabled: true, TotalAmount: 1_000_000, QuotaResetPeriod: "never"}
+				require.NoError(t, model.DB.Create(plan).Error)
+				require.NoError(t, model.DB.Create(&model.UserSubscription{UserId: f.user.Id, PlanId: plan.Id, Status: "active", AmountTotal: 1_000_000, StartTime: time.Now().Unix(), EndTime: time.Now().Add(time.Hour).Unix()}).Error)
+			}
+			// 只有策略中启用的来源可以被顺延，缺失时应明确耗尽。
+			sources := []model.ResourceSource{{Kind: "hosting", AccountID: f.accounts[0].ID, Enabled: true}}
+			if test.next != "" {
+				sources = append(sources, next)
+			}
+			f.setPolicy(t, sources...)
+			// 正文使用合成内容，测试不向供应商发送真实用户任务。
+			path, body := "/v1/chat/completions", `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"max_tokens":4}`
+			// 流式入口先收到 JSON 拒绝，再由第二账号输出 SSE。
+			if test.stream {
+				path, body = "/v1/responses", `{"model":"gpt-4","input":"hello","stream":true}`
+			}
+			response := f.request(t, "POST", path, body)
+			require.Equal(t, test.want, response.Code, response.Body.String())
+			// 未获可靠证据时只允许第一账号被调用一次。
+			wantCalls := []string{"Bearer internal-0"}
+			if test.want == 200 {
+				key := "Bearer internal-1"
+				if test.next != "hosting" {
+					key = "Bearer platform-only"
+				}
+				wantCalls = append(wantCalls, key)
+			}
+			require.Equal(t, wantCalls, f.calls)
+			require.Empty(t, response.Header().Get("X-GPTLoad-Replay-Safety"))
+			// 失败写到既有请求日志表，不能只留 systemd 文本日志。
+			var failure model.Log
+			// 失败类型需要真实落库，控制台才能读取到它。
+			require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeError).Last(&failure).Error)
+			require.Equal(t, response.Header().Get(common.RequestIdKey), failure.RequestId)
+			require.Equal(t, "execution-request", failure.UpstreamRequestId)
+			require.Equal(t, test.stream, failure.IsStream)
+			require.Contains(t, failure.Other, `"resource_source":"hosting"`)
+			require.Contains(t, failure.Other, fmt.Sprintf(`"status_code":%d`, test.status))
+			// 稳定错误分类不应包含任何可用凭据。
+			require.NotContains(t, failure.Content, "internal-0")
+			// 失败日志绝不能伪造收费或原厂计量。
+			require.Zero(t, failure.Quota)
+			if test.want != 200 {
+				return
+			}
+			var success model.Log
+			// 成功应只有真实来源的消费记录，不能由失败记录伪装。
+			require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Last(&success).Error)
+			// 成功与失败使用同一个用户请求身份，但执行层身份各自隔离。
+			require.Equal(t, failure.RequestId, success.RequestId)
+			// 第二来源的日志不能继承第一账号的执行层请求身份。
+			require.NotEqual(t, failure.UpstreamRequestId, success.UpstreamRequestId)
+			require.Contains(t, success.Other, fmt.Sprintf("hosting:%d:account_unavailable", f.accounts[0].ID))
+			if test.next == "subscription" {
+				// 订阅已用额度与实际消费一致，挂靠拒绝不能形成第二份预扣。
+				var subscription model.UserSubscription
+				require.NoError(t, model.DB.First(&subscription).Error)
+				require.EqualValues(t, success.Quota, subscription.AmountUsed)
+				require.Contains(t, success.Other, `"resource_source":"subscription"`)
+			}
+			if test.next == "wallet" {
+				// 挂靠失败不收费，钱包及 Key 只扣成功平台响应的一份费用。
+				quota, err := model.GetUserQuota(f.user.Id, false)
+				require.NoError(t, err)
+				require.Equal(t, 1_000_000-success.Quota, quota)
+				token, err := model.GetTokenById(f.token.Id)
+				require.NoError(t, err)
+				require.Equal(t, quota, token.RemainQuota)
+			}
+		})
+	}
 }
 
 // Key 自己的来源顺序决定调度，空数组表示禁用全部来源。

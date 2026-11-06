@@ -53,7 +53,9 @@ func rechargeError(c *gin.Context, err error) {
 	case errors.Is(err, model.ErrRechargeCache):
 		code, message = 503, err.Error()
 	}
-	c.JSON(code, gin.H{"success": false, "message": message})
+	// 保留英文 message 与原状态码，同时声明前端应翻译的稳定词条。
+	// 这里只传入上方白名单文案，未知底层异常仍使用固定脱敏错误。
+	common.ApiErrorStatus(c, code, common.NewMessage(message))
 }
 
 // 限制凭据正文大小；

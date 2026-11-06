@@ -115,7 +115,8 @@ func ResourceRelay() gin.HandlerFunc {
 			nextPlatform()
 			return
 		}
-		if _, err := helper.GetAndValidateRequest(c, format); err != nil {
+		validatedRequest, err := helper.GetAndValidateRequest(c, format)
+		if err != nil {
 			status := http.StatusBadRequest
 			if common.IsRequestBodyTooLargeError(err) {
 				status = http.StatusRequestEntityTooLarge
@@ -123,6 +124,8 @@ func ResourceRelay() gin.HandlerFunc {
 			resourceRelayError(c, "invalid_request", status)
 			return
 		}
+		// 免费转发没有 GenRelayInfo，失败日志仍需准确保留客户端流式标记。
+		common.SetContextKey(c, constant.ContextKeyIsStream, validatedRequest.IsStream(c.Request))
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		reasons := []string{}
 		for index, source := range policy.Sources {
@@ -340,7 +343,7 @@ func hostingQuotaExhausted(observation *hosting.Observation, modelName string, n
 // 不允许 HTTP 重定向，防止内部 Key 随 307/308 流向其他服务。
 // 不读取系统代理环境，保证管理配置的回环服务不会意外经过出站代理。
 // 请求取消传递给 Transport；客户端断开后不再等待或启动下一来源。
-// 非成功 HTTP 状态不能证明未执行，因此不在这里向钱包重发正文。
+// 非成功 HTTP 状态本身不能证明未执行，只有执行层可信安全标记允许顺延。
 // 接受的成功媒体类型仅为 JSON 与 SSE，HTML 错误页不能冒充模型输出。
 // 下发头采用白名单，不能把内部管理信息、Cookie 或传输控制头暴露出去。
 // 内容不落到账号表，也不为记录日志缓存完整回答，内存占用与块大小相关。
@@ -349,7 +352,35 @@ func hostingQuotaExhausted(observation *hosting.Observation, modelName string, n
 // 未解析上游 usage 的记录使用 unknown，不把零 token 伪装成真实计量。
 // 消费日志 quota 固定为零；RecordConsumeLog 本身不会修改钱包或令牌余额。
 // 不在免费链路调用 SettleBilling，避免缺失 BillingSession 时回落旧钱包路径。
-func relayHostingResource(c *gin.Context, accountID int, modelName string) (string, error) {
+func relayHostingResource(c *gin.Context, accountID int, modelName string) (skipped string, relayErr error) {
+	started := time.Now()
+	upstreamStatus := 0
+	// 免费链路不经过平台渠道错误处理，必须独立记录拒绝和未知结果。
+	// 即使随后换来源成功，此次拒绝也保留原 request_id 供双服务定位。
+	// 只记录稳定分类和状态，原厂正文、密钥与内网地址不进入日志。
+	defer func() {
+		if !constant.ErrorLogEnabled || relayErr == nil && upstreamStatus < http.StatusBadRequest {
+			return
+		}
+		code := "hosting_execution_rejected"
+		if relayErr != nil {
+			code = relayErr.Error()
+		}
+		status := upstreamStatus
+		if status == 0 {
+			status = http.StatusBadGateway // 未收到 HTTP 响应时保留执行结果未知。
+		}
+		other := model.NewLogOther()
+		service.AppendResourceLogInfo(c, other)
+		other.SetPublic("request_path", c.Request.URL.Path)
+		other.SetPublic("error_code", code)
+		other.SetPublic("status_code", status)
+		other.SetPublic("usage_status", "unknown") // 错误不代表真实零用量。
+		other.SetPublic("resource_fallback_safe", relayErr == nil)
+		logger.LogError(c, fmt.Sprintf("hosting resource failed: code=%s status=%d", code, status))
+		// 使用既有失败日志结构，免费失败不触发余额或 Key 预算变更。
+		model.RecordErrorLog(c, c.GetInt("id"), 0, modelName, c.GetString("token_name"), code, c.GetInt("token_id"), int(time.Since(started).Seconds()), common.GetContextKeyBool(c, constant.ContextKeyIsStream), c.GetString("group"), other)
+	}()
 	route, err := hosting.ResolveRoute(c.Request.Context(), c.GetInt("id"), accountID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "account_unavailable", nil
@@ -388,6 +419,16 @@ func relayHostingResource(c *gin.Context, accountID int, modelName string) (stri
 		return "", errors.New("hosting_execution_outcome_unknown")
 	}
 	defer response.Body.Close() // 客户端取消或复制失败都释放上游连接。
+	upstreamStatus = response.StatusCode
+	// 执行层生成的请求身份属于本次尝试，不能污染下一来源的日志。
+	c.Set(common.UpstreamRequestIdKey, response.Header.Get("X-GPTLoad-Request-ID"))
+	// 只信固定回环执行层生成的唯一安全标记，不分析上游错误文案猜测可重放。
+	// 旧版执行层没有该证据时仍明确失败；普通 429、5xx 与超时保持停止。
+	if response.StatusCode == http.StatusTooManyRequests && !c.Writer.Written() &&
+		len(response.Header.Values("X-GPTLoad-Replay-Safety")) == 1 &&
+		response.Header.Get("X-GPTLoad-Replay-Safety") == "rejected_before_processing" {
+		return "account_unavailable", nil
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", errors.New("hosting_execution_rejected")
 	}

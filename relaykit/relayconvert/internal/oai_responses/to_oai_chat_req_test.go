@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -536,6 +537,75 @@ func TestResponsesRequestToChatCompletionsRequestHoistsToolOutputMediaAfterToolB
 		require.NotNil(t, parts[0].GetImageMedia())
 		assert.Equal(t, dataURL, parts[0].GetImageMedia().Url)
 	})
+}
+
+// TestResponsesReasoningHistoryKeepsToolTurn 验证真实续轮的消息归属与工具配对。
+// 使用合成内容复现线上项顺序，不保存用户正文或供应商密文。
+func TestResponsesReasoningHistoryKeepsToolTurn(t *testing.T) {
+	// 同一轮的推理可能在文字之前、之后，或仅有不可读密文。
+	// 可读正文优先于摘要，与反向响应转换已有的提取规则一致。
+	tests := []struct {
+		name, history, wantText, wantReasoning string
+	}{
+		// 线上失败轮是文字后跟推理，再发起自定义工具调用。
+		{"summary after text", `{"role":"assistant","content":"working"},{"type":"reasoning","content":null,"summary":[{"type":"summary_text","text":"plan"}]},`, "working", "plan"},
+		// 反向排序也要合并，不能产生缺少推理的第二条 assistant。
+		{"summary before text", `{"type":"reasoning","summary":[{"type":"summary_text","text":"plan"}]},{"role":"assistant","content":"working"},`, "working", "plan"},
+		// 模型可以直接调用工具，不要求先输出普通文字。
+		{"reasoning before call", `{"type":"reasoning","summary":[{"type":"summary_text","text":"plan"}]},`, "", "plan"},
+		// 同时存在正文和摘要时保留正文，避免重复输入两个版本。
+		{"content before summary", `{"type":"reasoning","content":[{"type":"reasoning_text","text":"full reasoning"}],"summary":[{"type":"summary_text","text":"summary"}]},`, "", "full reasoning"},
+		// 多个推理项是同轮的连续片段，不能只留下最后一个。
+		{"multiple reasoning items", `{"type":"reasoning","summary":[{"type":"summary_text","text":"first"}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"second"}]},`, "", "first\n\nsecond"},
+		// 密文不可迁移，保留工具轮并通过诊断报告损失。
+		{"encrypted only", `{"type":"reasoning","content":null,"summary":[],"encrypted_content":"opaque"},`, "", ""},
+		// 合法空推理与仅有密文不同，不应制造转换损失告警。
+		{"empty reasoning", `{"type":"reasoning","summary":[]},`, "", ""},
+	}
+	// 自定义工具仍按既有契约编码为单一 input 参数的函数。
+	// 工具结果必须紧跟包含对应 call_id 的 assistant 消息。
+	const toolHistory = `{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"print(1)"},{"type":"custom_tool_call_output","call_id":"call_1","output":"1"}]`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 固定用户轮，确保推理不会被误认为新增用户输入。
+			input := `[{"role":"user","content":"run a tool"},` + tt.history + toolHistory
+			ctx, diagnostics := convdiag.WithCollector(context.Background())
+			got, err := ResponsesRequestToChatCompletionsRequest(ctx, &dto.OpenAIResponsesRequest{
+				Model: "deepseek-test", Input: json.RawMessage(input),
+			})
+			require.NoError(t, err)
+			// 始终只有 user、assistant、tool 三条消息。
+			// 多出空 user 或独立 assistant 都会破坏这个会话契约。
+			require.Len(t, got.Messages, 3)
+			assert.Equal(t, dto.Message{Role: "user", Content: "run a tool"}, got.Messages[0])
+			assistant := got.Messages[1]
+			assert.Equal(t, "assistant", assistant.Role)
+			// 普通输出与推理字段分别校验，防止把推理混入正文。
+			assert.Equal(t, tt.wantText, assistant.StringContent())
+			assert.Equal(t, tt.wantReasoning, assistant.GetReasoningContent())
+			// 校验实际工具调用，而非仅检查消息数或内部辅助函数。
+			calls := assistant.ParseToolCalls()
+			require.Len(t, calls, 1)
+			assert.Equal(t, "exec", calls[0].Function.Name)
+			assert.JSONEq(t, `{"input":"print(1)"}`, calls[0].Function.Arguments)
+			assert.Equal(t, "call_1", calls[0].ID)
+			// 回传 ID 必须与调用 ID 一致，正文不能因合并被改写。
+			assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "call_1", Content: "1"}, got.Messages[2])
+			// 最终发送的 JSON 也必须保留 reasoning_content。
+			// 加密内容不能被当作明文推理或普通用户文本发送。
+			encoded, err := kitutil.Marshal(got)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantReasoning, gjson.GetBytes(encoded, "messages.1.reasoning_content").String())
+			assert.NotContains(t, string(encoded), "opaque")
+			// 纯密文的损失必须可见，正常空推理则无需告警。
+			if tt.name == "encrypted only" {
+				require.Len(t, diagnostics.Diagnostics(), 1)
+				assert.Equal(t, "encrypted_reasoning_omitted", diagnostics.Diagnostics()[0].Code)
+			} else {
+				assert.Empty(t, diagnostics.Diagnostics())
+			}
+		})
+	}
 }
 
 func mustRawMessage(t *testing.T, value any) []byte {

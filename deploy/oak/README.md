@@ -29,6 +29,12 @@ Caddy 自动申请并续期 Let's Encrypt 证书，HTTP 自动返回 308 跳转�
 
 已配置 HTTPS Secure/HttpOnly/SameSite=Strict 刷新 Cookie、精确可信 Origin、随机且持久保存的 session/crypto 密钥。流式反向代理配置 `flush_interval -1`；实际模型流式请求需配置上游渠道后再验证。
 
+## cn 跳板入口与 TLS 兼容
+
+`https://cn.oak.qingshukeji.top/v1` 经 DMIT Xray 443 的域名回落、回环 Caddy 8081，再转发到本机原域名 HTTPS 入口；可用于 Codex 的 Responses Base URL。2026-11-06 已验证：DMIT `/usr/local/etc/xray/config.json` 的最低 TLS 版本需允许 1.2，同时继续支持 1.3。原先强制最低 1.3 时，当前本机 Codex 会在 HTTP 之前连接失败，即使浏览器与普通 curl 仍能访问官网。
+
+本次已备份并修复，双 TLS 版本与桌面应用同版本 Codex 的真实 OK 回复均通过。证据、备份、请求 ID 与验证边界见[排障记录](../../docs/diagnostics/cn-proxy-codex-tls.md)。查看 wdm 日志时，需同时核对 DMIT 来源和 `X-Forwarded-Host=cn.oak.qingshukeji.top`；DMIT 也作网络代理出口，不能单凭来源 IP 认定经过 cn 反向代理。
+
 ## Caddy 请求正文留存（2026-11-04 已上线）
 
 按用户授权，在 `ssh wdm` 的 Caddy 层保留进入 New API **之前**的请求正文，供模型映射与协议转换排障。采用官方 Caddy 2.11.7，发布包 SHA-256 为 `727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b`，与官方 GitHub 发布资产摘要一致。此能力不是完整审计归档；[官方 log_append 说明](https://caddyserver.com/docs/caddyfile/directives/log_append) 将正文缓冲用于调试，因此本配置限制入口和单条体积，不采集响应正文。

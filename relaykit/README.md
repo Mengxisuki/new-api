@@ -31,6 +31,8 @@ function tool 的定义、调用和结果在四种协议之间互转。Responses
 
 reasoning effort、thinking budget 和是否返回思考内容用 `dto.ReasoningConversionState` 在转换步骤之间传递，多跳路径上的每一步都能读到精确的 budget 和 effort。Claude 的 max_tokens 和 budget 超出模型范围时会调整，Gemini 的 thinkingConfig 按模型归一化，这些改动都以诊断返回，例如 `claude_max_tokens_raised` 和 `claude_budget_adjusted`。
 
+Responses 转 Chat 时，历史 `reasoning` 的可读正文或摘要写入同轮 assistant 的 `reasoning_content`，与文字和工具调用保留在一起，不生成额外用户消息。只有密文而没有可读内容时不能跨供应商恢复推理，会返回 `encrypted_reasoning_omitted` 诊断；这不保证目标供应商接受所有工具续轮，仍需按实际渠道验证。
+
 ### 多模态
 
 图片和文件内容块在协议之间转换。需要下载 URL 或解析 data URL 时，RelayKit 调用宿主用 `SetMediaResolver` 注册的函数，未注册时转换返回错误。

@@ -204,6 +204,12 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, messages []dto.Message) ([]dto.Message, []any, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 	switch itemType {
+	case responsesOutputTypeReasoning:
+		// 推理属于 assistant 轮，不能走缺省 user 分支。
+		// 工具续轮需要在同一消息保留推理和 tool_calls。
+		// 此处只修正历史归属，不改变请求的推理设置。
+		nextMessages, err := responsesReasoningItemToChatMessages(ctx, item, messages)
+		return nextMessages, nil, err
 	case responsesInputTypeFunctionCall:
 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
 		if err != nil {
@@ -230,7 +236,58 @@ func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, 
 	if err != nil {
 		return nil, nil, err
 	}
+	// Responses 先发推理再发文字时，补齐同一 assistant 消息。
+	// 只合并尚无正文和工具调用的推理消息，保留原有轮次边界。
+	// 后续工具调用仍由既有逻辑追加到这条消息。
+	// 已有正文或调用时不再合并，避免吞掉独立的 assistant 项。
+	if role == "assistant" && len(messages) > 0 {
+		last := &messages[len(messages)-1]
+		if last.Role == "assistant" && last.ReasoningContent != nil && last.Content == nil && len(last.ToolCalls) == 0 {
+			last.Content = content
+			return messages, nil, nil
+		}
+	}
 	return append(messages, dto.Message{Role: role, Content: content}), nil, nil
+}
+
+// responsesReasoningItemToChatMessages 将可读推理归入对应 assistant 轮。
+// 与响应转换共用正文优先、摘要兜底的提取规则，避免双向契约漂移。
+// 密文只能由原供应商解释，不能冒充 reasoning_content 发送给其他模型。
+func responsesReasoningItemToChatMessages(ctx context.Context, item map[string]any, messages []dto.Message) ([]dto.Message, error) {
+	// 复用已有 DTO 校验文本结构，不静默接受畸形推理内容。
+	output, err := kitutil.Any2Type[dto.ResponsesOutput](item)
+	if err != nil {
+		return nil, fmt.Errorf("invalid reasoning item: %w", err)
+	}
+	text := reasoningOutputText(&output)
+	if text == "" {
+		// 空推理不产生消息，尤其不能插入一条空 user。
+		// 只有密文可用时显式报告转换损失，便于定位兼容边界。
+		// 诊断只说明能力缺失，不记录密文或用户推理正文。
+		if strings.TrimSpace(kitutil.Interface2String(item["encrypted_content"])) != "" {
+			convdiag.Add(ctx, types.ConversionDiagnostic{
+				Code: "encrypted_reasoning_omitted", Path: "input.reasoning",
+				Message:  "encrypted reasoning has no readable content or summary; Chat Completions cannot represent it",
+				Severity: types.ConversionDiagnosticWarning,
+			})
+		}
+		return messages, nil
+	}
+	// 推理可能出现在文字之前，按需创建待补齐的 assistant 消息。
+	// 已有 assistant 则直接复用，让文字、推理和调用处于同一轮。
+	// 不跨越 user 或 tool 消息寻找旧轮次，防止错配历史。
+	if len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
+		messages = append(messages, dto.Message{Role: "assistant"})
+	}
+	last := &messages[len(messages)-1]
+	// 多段推理按既有分隔规则拼接，保留顺序而非覆盖前段。
+	// 使用可选字段承载明文，未提供推理时继续省略该字段。
+	var combined strings.Builder
+	appendSeparatedText(&combined, last.GetReasoningContent())
+	appendSeparatedText(&combined, text)
+	value := combined.String()
+	last.ReasoningContent = &value
+	return messages, nil
 }
 
 func responsesInputContentToChatContent(ctx context.Context, content any) (any, error) {

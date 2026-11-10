@@ -252,3 +252,39 @@
 根因：New API仅采纳一分钟内额度快照，执行层虽有未处理/未发送证据却没有数据面合同传递；免费链路非2xx提前返回，又绕开平台渠道错误日志。不能把所有429都放行，也不能通过永久信任旧零额度快照处理。
 
 修复：GPT-Load以全请求尝试状态生成保留的安全拒绝头，任一未知结果永久撤销；New API只接受回环执行端唯一精确标记的429，按原Key授权继续。挂靠失败独立写现有错误日志，关联用户和执行层请求身份，不留凭据/原厂正文，不将未知用量当零。HTTP/SSE、无隐含钱包及单次扣费回归和真实SQLite3.50.4/MySQL8.4.2/PostgreSQL14.17矩阵通过，两服务回归、vet/build通过；未发布。细节与已验证边界见[排障记录](../diagnostics/hosting-resource-fallback.md)。
+
+
+## 2026-11-06 07:54:30 +00:00 — cn 入口仅允许 TLS 1.3 可使本机 Codex 在 HTTP 之前失败
+
+现象：cn 官网与普通 curl 可访问，但本机 Codex 发送 Responses 时报 `is_connect=true`，wdm 无对应请求。DMIT Xray 443 入站显式配置 `minVersion=1.3`；强制 TLS 1.2 握手收到 protocol version alert，原域名可用。隔离回环 Xray 仅将最低版本改为 1.2 后，同一 Codex CLI 成功进入 New API 并得到合成无效令牌的 401；TLS 1.3 也保持可用。证明是该客户端与入口 TLS 策略的兼容问题，不能把网站可访问等同于 Codex 传输可用，也不推广为所有 Codex 均不支持 TLS 1.3。
+
+排查时必须用 `X-Forwarded-Host=cn.oak.qingshukeji.top` 区分 cn 反向代理与 DMIT 网络代理出口；仅依据远端 IP 会混入原域名成功/失败请求。候选配置已通过 Xray 校验，生产未修改，等待用户明确应用授权。完整证据、关联 ID、候选位置与验证边界见[诊断记录](../diagnostics/cn-proxy-codex-tls.md)。
+
+
+## 2026-11-06 08:00:08 +00:00 — cn TLS 最低版本修复已上线并经真实 Codex 验收
+
+承接 07:54:30 条目：用户明确授权后，DMIT Xray 已将最低 TLS 版本改为 1.2，保留 TLS 1.3、原证书、路由及配置权限；生产已备份并正常重启。正式入口双 TLS 版本检查通过。桌面应用自带 `codex-cli 0.167.0-alpha.3.2` 使用既有 API Key 与 `gpt-6.1-sol` 经 cn 完成一次真实请求，退出码 0、输出 OK；wdm Caddy 确认 cn 转发 Host 与 Responses 200，请求 ID `202611060759041417139878268d9d6fELnFHld`。客户端永久配置与 wdm 配置未改。此前“待授权、生产未修改”是当时状态，现已完成；备份、SHA-256 和验收边界见[诊断记录](../diagnostics/cn-proxy-codex-tls.md)。
+
+## 2026-11-10 03:30:44 +00:00 — 托管模型跳过后仍受 Key 的 Auto 分组范围约束
+
+现象：渠道模型测试成功，实际 Responses 请求却返回 `resource_sources_exhausted`。只读核对 wdm 的 Caddy 精确请求、Key 映射、Auto 分组和 abilities，并确认线上 New API 与本地均为 `34e0fea2777a`：客户端请求 `gpt-6-astra`，Key 映射目标为 `claude-fable-5-1`；本人 Codex 私有组目录不含目标模型，而 Key 的显式 Auto 列表只有 GPT、GLM、Gemini、Deepseek、Kimi。目标模型的启用渠道仅属于 default 或 Cursor_claude，两者均不在该 Key 列表中，因此平台候选也无法选出渠道。
+
+调用链：`controller/resource_relay.go` 查询 GPT-Load 私有账号模型目录，发送生成请求前对不支持模型返回 `model_unavailable`，随后遍历已授权的订阅/钱包来源；`service/channel_select.go` / `service/group.go` 继续按当前 Key 的显式 Auto 列表选渠道，不自动扩大到新分组。渠道测试由 `controller/channel-test.go` 按指定渠道 ID 执行，不能证明这个 Key 的自动路由覆盖该渠道。修正配置应明确将目标渠道所属分组纳入该 Key，保持用户授权边界；当时无 MaxTokenAutoGroups 覆盖，默认上限为 5。
+
+排障边界：`credit_accounts` 是挂帐授信账户，`subscription_enabled` 是预留的挂帐购买开关，不是模型调用订阅资源开关；托管快照的 credits=0 也不等同于 Plus 计划窗口耗尽。不能用这两项解释本例 503。相邻 `hosting_route_unavailable` 是另一请求的 502，需独立归因。本轮仅核对源码、线上只读数据及访问日志，未重放用户任务、执行模型测试或修改生产配置。
+
+## 2026-11-10 08:04:57 +00:00 — platform_execution_failed 需要继续追溯实际渠道与工具续轮
+
+现象：Codex 工具加载后重连并显示 HTTP 502 / `platform_execution_failed`。按 Caddy 中确切任务内容核对，2026-11-10 06:45:08 UTC 的首轮请求 `202611100645088784200438268d9d6BU4ANxmb` 成功；06:45:17–06:45:48 UTC 的 24 次工具续轮均为 502。首个失败 ID 为 `202611100645177792296038268d9d6sMkVscuS`，入站 JSON 可解析，新增 reasoning、custom_tool_call、custom_tool_call_output 历史。
+
+已验证调用链：Key 将 `gpt-6.1-terra` 映射为 `deepseek-v4.1-flash`；New API 已记录 `hosting:2:model_unavailable` 并选择 subscription，实际渠道为 #9“兔子”，直连第三方 tuzai.icu。New API 将 Responses 转成 Chat，记录 additional_tools 展平、namespace 展平、custom exec 转函数三类诊断；上游返回 HTTP 400 / `invalid_request_body`，外层统一表现为 502。初始成功轮也有上述转换诊断，因此诊断警告本身不足以确定拒绝字段。Caddy 同期无服务警告，GPT-Load 数据面在 06:43–06:47 UTC 没有该请求；不能把所有平台渠道都当成经过 GPT-Load。
+
+适用边界：简单模型测试或首次文本响应成功，不能证明 Codex 工具历史在 Responses→Chat→第三方链路上可继续。当前证据把故障定位到带工具历史的转换后请求被第三方拒绝，具体字段仍需受控最小对照或供应商详细错误；不能仅凭通用 400 指定某个参数。相邻 Claude 的 HTML 502 属于其他会话，不能混作本例证据。本轮仅查询三个服务的日志、只读数据库与实际渠道配置，未重放任务、调用模型测试或修改生产。
+
+## 2026-11-10 08:30:31 +00:00 — Responses 推理历史曾被误转成空用户轮，本地已修复
+
+承接 08:04:57 条目：只读核对留存正文结构，确认失败续轮为 assistant 文字 → reasoning（content=null、summary 非空）→ custom_tool_call → custom_tool_call_output。`relaykit/relayconvert/internal/oai_responses/to_oai_chat_req.go` 原先没有 reasoning 分支，缺省按 user 处理，既插入空用户消息又丢失摘要；合成回归在修复前复现失败。
+
+本地修复将可读推理写入同轮 assistant.reasoning_content，与正文及工具调用合并；复用响应侧正文优先、摘要兜底规则。纯密文不冒充明文，省略时给出 encrypted_reasoning_omitted 诊断。既有测试文件覆盖文字与推理顺序、直接工具调用、正文优先、多段、纯密文与空推理；RelayKit 全量测试、GOWORK=off 独立构建及 New API 服务入口 go build -o /dev/null . 通过。
+
+边界：已证实的是转换缺陷，不是第三方通用 400 的唯一拒绝字段；没有向第三方重放真实任务或执行付费模型探测，生产未发布。全仓 go build ./... 被无关 dujiao-next-main 的既有依赖校验缺失阻断，不能写成全仓构建通过。发布后仍需在渠道 #9 用合成的工具调用与结果回传验证实际兼容性。

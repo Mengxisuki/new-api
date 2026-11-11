@@ -385,6 +385,16 @@ func InjectTieredBillingInfo(other *model.LogOther, relayInfo *relaycommon.Relay
 	}
 }
 
+// ResourceAttempt 是已证实可安全顺延的挂靠 429，仅作为最终日志详情。
+// 账号 ID 用于已有的本人身份投影；执行层请求 ID 用于双服务定位。
+// 不保存原厂正文、凭据或地址，也不将限流推断为额度耗尽。
+// 这里每项均已通过执行层未处理证明，未知结果仍由终止错误日志负责。
+type ResourceAttempt struct {
+	AccountID         int    `json:"account_id"`          // 本地挂靠账号引用。
+	StatusCode        int    `json:"status_code"`         // 执行层返回的 HTTP 状态。
+	UpstreamRequestID string `json:"upstream_request_id"` // 非凭据的诊断身份。
+}
+
 // AppendResourceLogInfo 记录用户可见的实际来源、策略版本与发送前跳过原因。
 // 只保存本地账号 ID，远端组、凭据与内部 Key 都不能进入公共日志。
 // 未启用策略的历史日志不增加虚构来源字段。
@@ -397,6 +407,11 @@ func AppendResourceLogInfo(ctx *gin.Context, other *model.LogOther) {
 	other.SetPublic("resource_source", ctx.GetString("oak.resource_source"))
 	other.SetPublic("resource_policy_revision", ctx.GetString("oak.resource_revision"))
 	other.SetPublic("resource_skip_reasons", ctx.GetStringSlice("oak.resource_reasons"))
+	// 历次安全拒绝跟随最终来源保存，消费列表不会再多出失败行。
+	// 值是冻结的快照，后续追加不会污染已经交给日志系统的元数据。
+	if attempts, ok := ctx.Get("oak.resource_attempts"); ok {
+		other.SetPublic("resource_attempts", attempts)
+	}
 	if accountID := ctx.GetInt("oak.resource_account"); accountID > 0 { // 只有实际选择挂靠时才附账号引用。
 		other.SetPublic("hosting_account_id", accountID)
 	}

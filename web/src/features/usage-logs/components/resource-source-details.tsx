@@ -79,6 +79,10 @@ export function ResourceSourceDetails(props: { other: LogOtherData | null }) {
   // 来源不支持模型时只解释此次跳过，不向用户承诺后续来源必然成功。
   const reasonLabels: Record<string, string> = {
     account_unavailable: t('Account is not currently available for requests'),
+    // 限流与额度耗尽分开表达；执行层可能没有向原厂发送。
+    rate_limited: t(
+      'Hosted account was rate-limited or cooling down; the request was not processed'
+    ),
     model_unavailable: t('This resource does not support the requested model'),
     group_forbidden: t('The current API key cannot use this group'),
   }
@@ -131,6 +135,30 @@ export function ResourceSourceDetails(props: { other: LogOtherData | null }) {
         <p>
           {t('Fallback reasons')}: {reasons.join(' → ')}
         </p>
+      )}
+      {/* 尝试不是额外请求；身份用于关联执行层日志，保留原顺序。 */}
+      {/* 不声称已经耗尽额度，也不从历史拒绝推断最终消费金额。 */}
+      {(other.resource_attempts?.length ?? 0) > 0 && (
+        <div>
+          <p>{t('Earlier resource attempts (part of this request)')}</p>
+          {other.resource_attempts?.map((attempt) => (
+            // 策略校验禁止账号重复，每个账号在该请求中最多尝试一次。
+            <p key={attempt.account_id}>
+              {accountName(String(attempt.account_id))}:{' '}
+              {t(
+                'Hosted account was rate-limited or cooling down; the request was not processed'
+              )}
+              {` (HTTP ${attempt.status_code})`}
+              {/* 执行层 ID 只是诊断元信息，不触发网络查询或重试。 */}
+              {attempt.upstream_request_id && (
+                <>
+                  {' '}
+                  · {t('Upstream Request ID')}: {attempt.upstream_request_id}
+                </>
+              )}
+            </p>
+          ))}
+        </div>
       )}
       {/* 执行结果未知与 Token 用量未知独立，不能相互替代。 */}
       {other.execution_status === 'outcome_unknown' && (

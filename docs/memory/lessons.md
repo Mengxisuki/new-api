@@ -308,3 +308,11 @@
 反方向 Responses→Chat 已删除 ExtractOutputTextFromResponses 遍历所有 output.content 的回退，只接受 assistant message.output_text；reasoning.content 不再因缺少正文被复制到 content。新回归集中在 `relay/channel/openai/reasoning_output_test.go`，先复现失败再通过，覆盖四条返回入口、标签变体/嵌套/错配/未闭合、孤立闭合、整段重复、工具轮、迟到别名、断流、扩展字段及有/无供应商用量。RelayKit 全量测试和独立构建、OpenAI/高级自定义/DeepSeek/helper 包回归、相关定向 race、vet、服务入口构建均通过。实现与命令见 [中文说明](../../README.zh_CN.md#deepseek-chat-推理分离)。未提交、推送或部署，生产是否恢复仍需发布后用合成请求验证。
 
 额外接入教训：将清理后的 SSE JSON 反序列化回同一个非空 DTO 时，JSON 中已删除的字段不会自动清空，会让旧 content 再次进入转换器。`responses_via_chat.go` 现在先清零 chunk 再解析，避免“清理器正确但转换后仍泄漏”；定向四入口回归已覆盖此故障。用量处理在清理前保留原始文本或快照，不能用清理后的短回答偷偷降低生成量。
+
+## 2026-11-11 07:48:47 +00:00 — 挂靠顺延的一次请求不应写成两个顶层使用记录
+
+现象：挂靠优先遇到拒绝后订阅成功，使用面板显示一条 `hosting_execution_rejected` 与一条消费记录。只读核对请求 `202611110712299387973438268d9d6oRfNN6BA`，两行客户端 ID 相同，执行层 `attempt_count=0`；失败零收费，最终只有订阅消费。根因是安全拒绝立即记错误、后续成功再记消费，日志条目被用户理解成请求次数；429 本身不足以确认额度耗尽。
+
+本地修复：`controller/resource_relay.go` 将有可信未处理证据的挂靠 429 归入最终日志 `resource_attempts`，保留账号、状态与执行层 ID；终止错误及所有来源不可用仍留最终失败，后续平台预检错误也不丢诊断。`service/log_info_generate.go` 统一附加尝试快照；现有来源详情展示归属及关联身份，公共内容渲染器解释旧错误码。原顺延权限和计费链未改变，历史日志不改写。本轮只需 New API 发布，GPT-Load 已提供安全证据。
+
+验证：SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17 的真实库回归覆盖单条最终记录、尝试累积、账号/钱包/订阅回退、平台单次计数与结算、终止及预检错误；相关后端回归、定向 race、vet、服务构建，前端 27 项回归、类型检查、lint 与构建通过。详细证据与命令见[排障记录](../diagnostics/hosting-resource-fallback.md#2026-11-11-074847-0000--安全顺延尝试并入最终请求日志本地完成)。未提交、推送或部署，线上效果仍待发布验收。

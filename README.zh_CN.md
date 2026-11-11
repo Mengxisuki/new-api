@@ -252,6 +252,20 @@ docker compose logs -f new-api
 
 后端使用 Go 和 Gin；控制台使用 React 19、TypeScript、Rsbuild、TanStack 与 Tailwind CSS 4。前端依赖和脚本使用 Bun；Go 语言基线见 [go.mod](./go.mod)，容器构建工具链见 [Dockerfile](./Dockerfile)。
 
+### DeepSeek Chat 推理分离
+
+`relay/channel/openai/reasoning_output.go` 在客户端协议转换之前统一处理真实上游模型名以 `deepseek-` 开头的 Chat 返回。`<thinking>`、`<think>`、`<reasoning>`、`<thought>` 区块及可确定的重复推理从正文移到 `reasoning_content`；孤立闭合标签之前的整段也归入推理。原生 Chat 与转换成 Responses、Claude、Gemini 的普通/流式返回共用该处理。没有标签或独立推理对照的自然语言不做语义猜测。
+
+为识别跨事件标签、迟到推理及整段重复，DeepSeek 的 SSE 文本在对应 choice 结束后释放，正文和推理的显示会延后；角色、工具及其他事件继续转发。这条路径不执行“推理转正文”。缓冲沿用 `STREAM_SCANNER_MAX_BUFFER_MB` 的大小限制，默认 128 MiB；被清理后只剩推理且上游声称正常结束、缓冲超限或缺少文本终态时明确失败，禁止自动重试。成功响应保留上游用量；缺失用量时仍使用清理前的生成文本估算。
+
+反方向 Responses→Chat 的正文提取位于 `relaykit/relayconvert/internal/oai_responses/to_oai_chat_resp.go`，只接受 assistant message 的 `output_text`；无正文时不从 reasoning 或工具项目兜底。
+
+定向验证（仓库根目录）：
+
+```bash
+go test ./relay/channel/openai -run 'TestDeepSeekReasoning|TestResponsesReasoningOnly' -count=1
+```
+
 后端会嵌入 `web/dist`，首次启动前先构建前端：
 
 ```bash
@@ -296,7 +310,7 @@ New API 配置 `OAK_GPT_LOAD_URL`（默认 `http://127.0.0.1:3001`）与持久�
 
 添加账号或重新授权保存成功后，页面自动查询一次原厂额度；失败可单独重试，不重复添加账号。额度下方提供查询额度、查询重置次数及使用重置次数三个入口；两种查询复用联合观测，使用重置次数继续要求确认与安全验证。连接测试展示实际发送的固定提示词和模型文本，空回复不会算验证通过。实现与验证见[额度快捷操作与测试内容](docs/plans/account-hosting.md#17-额度快捷操作与测试内容)。
 
-源码导航、实际接口、测试命令、回退边界与上线验收见 [Oak 账号挂靠实施记录](docs/plans/account-hosting.md#14-本地实施结果与上线交接)。自有账号首期只执行同步 Chat/Responses/compact；其他接口跳过自有账号，继续使用原平台适配器并遵守当前 Key 的按量/订阅顺序，未启用平台来源则明确拒绝。执行层确认处理前拒绝或冷却未发送时，可凭可信标记按当前 Key 顺序继续后续来源；普通 429、超时或已输出后仍不跨来源重放，不自动耗重置机会。挂靠失败会写入请求日志，并关联执行层请求身份；本次修复的证据、验证及配套发布要求见[挂靠顺延排障记录](docs/diagnostics/hosting-resource-fallback.md)。平台 Claude/Gemini 等协议不受挂靠首期范围限制；Claude 自有账号、文件导入及真实原厂验收仍不在已验证范围。接口契约和本轮验证见[抽屉与全接口兼容](docs/plans/account-hosting.md#15-api-key-抽屉资源顺序与平台接口兼容)。
+源码导航、实际接口、测试命令、回退边界与上线验收见 [Oak 账号挂靠实施记录](docs/plans/account-hosting.md#14-本地实施结果与上线交接)。自有账号首期只执行同步 Chat/Responses/compact；其他接口跳过自有账号，继续使用原平台适配器并遵守当前 Key 的按量/订阅顺序，未启用平台来源则明确拒绝。执行层确认处理前拒绝或冷却未发送时，可凭可信标记按当前 Key 顺序继续后续来源；普通 429、超时或已输出后仍不跨来源重放，不自动耗重置机会。安全顺延的挂靠拒绝归入最终请求日志的 `resource_attempts`，使用面板只产生一条最终记录，详情保留账号、HTTP 状态与执行层关联 ID。全部授权来源不可用或发生终止错误时仍记录最终失败；普通 429 没有安全证据时不会重放。旧 `hosting_execution_rejected` 日志在列表、详情和导出中解释为可读原因，历史记录不迁移或删除。限流/冷却不等于已经确认额度耗尽。本次修复的证据、验证及配套发布要求见[挂靠顺延排障记录](docs/diagnostics/hosting-resource-fallback.md)。平台 Claude/Gemini 等协议不受挂靠首期范围限制；Claude 自有账号、文件导入及真实原厂验收仍不在已验证范围。接口契约和本轮验证见[抽屉与全接口兼容](docs/plans/account-hosting.md#15-api-key-抽屉资源顺序与平台接口兼容)。
 
 超级管理员可在「系统设置 → 站点设置 → 系统信息」维护采购联系人、微信号和二维码。联系文字通过页面保存按钮提交；二维码上传或删除立即保存。图片支持 PNG、JPEG、WebP，最大 1 MiB，宽高均不超过 4096 像素；空字段在首页隐藏，此配置与微信登录二维码独立。
 

@@ -288,7 +288,7 @@ func TestResourceRelayExhaustionAndNoReplay(t *testing.T) {
 // 可信执行层只有在确认未处理时才返回安全标记。
 // 普通 429、错误标记及非 429 响应仍必须终止。
 // 实际请求经过鉴权、HTTP 转发和来源策略，不直接调用内部判断函数。
-// 每次拒绝都应写失败日志，包含原请求与执行层请求的关联身份。
+// 安全拒绝归入最终日志，包含原请求与执行层请求的关联身份。
 // 换账号成功的消费日志应保留前序来源跳过原因。
 // 错误响应不得向客户端泄漏内部安全头或原厂正文。
 // 钱包必须显式列入策略且预算足够，才允许付费顺延。
@@ -300,10 +300,19 @@ func TestResourceRelayExhaustionAndNoReplay(t *testing.T) {
 // 非 429 即使携带正确标记，也不能得到跨来源重放资格。
 // 未知标记必须与缺失标记同样处理，不能默认为安全。
 // 执行层请求身份来自响应头，用户请求身份来自平台入口。
-// 两种身份同时保存在失败日志，定位时不需要读取密钥。
+// 两种身份同时保存在来源尝试中，定位时不需要读取密钥。
 // 流式拒绝日志必须保留 stream 标记，不能因响应为 JSON 而误报。
 // 后续来源使用独立上下文，既不继承失败身份，也不继承其安全证据。
 // 这里固定价格仅用于验证扣款次数，不替换原平台计费实现。
+// 全部账号拒绝与没有授权后续来源分别覆盖遍历结束的两种原因。
+// 平台预检故障不能靠伪造消费行保留诊断，最终类型必须为错误。
+// ErrorLogEnabled 与 LogConsumeEnabled 同时开启，真实复现使用面板的重复行。
+// 断言记录条数而非仅比较请求身份，防止同 ID 的重复日志被测试遗漏。
+// 成功日志的来源必须是最终选中的资源，不能被首选账号的拒绝覆盖。
+// 两个服务的请求 ID 职责不同，关联信息不能污染下一来源的主身份。
+// 请求次数与费用独立断言，避免只修显示却保留重复累计。
+// 错误分支没有消费金额，不把未知用量写成原厂实际零消耗。
+// 夹具只写本地隔离库，任何耗尽场景均不需要耗用真实账号额度。
 func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
 	for _, test := range []struct {
 		name, next, evidence string
@@ -319,6 +328,8 @@ func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
 		{"duplicate evidence", "hosting", "duplicate", 429, 502, false},
 		{"server failure", "hosting", "rejected_before_processing", 500, 502, false},
 		{"no authorized fallback", "", "rejected_before_processing", 429, 503, false},
+		{"all accounts rejected", "hosting", "rejected_before_processing", 429, 503, false},
+		{"wallet preflight failure", "wallet", "rejected_before_processing", 429, 502, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newResourceFixture(t)
@@ -328,7 +339,7 @@ func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
 			constant.ErrorLogEnabled, common.LogConsumeEnabled = true, true
 			t.Cleanup(func() { constant.ErrorLogEnabled, common.LogConsumeEnabled = previousError, previousConsume })
 			// 第一账号真实返回拒绝，后续来源保持正常。
-			f.status, f.rejectFirstOnly = test.status, true
+			f.status, f.rejectFirstOnly = test.status, test.name != "all accounts rejected"
 			f.stream = test.stream
 			f.rejectionHeaders = http.Header{"X-GPTLoad-Replay-Safety": {test.evidence}, "X-GPTLoad-Request-ID": {"execution-request"}}
 			// 重复的安全声明也拒绝，避免代理合并多个值后产生解释歧义。
@@ -358,6 +369,11 @@ func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
 				sources = append(sources, next)
 			}
 			f.setPolicy(t, sources...)
+			// 模拟后续平台预检失败，未进入适配器时仍需保留最终诊断。
+			// 只破坏本测试的价格配置，不访问或修改生产配置。
+			if test.name == "wallet preflight failure" {
+				require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+			}
 			// 正文使用合成内容，测试不向供应商发送真实用户任务。
 			path, body := "/v1/chat/completions", `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"max_tokens":4}`
 			// 流式入口先收到 JSON 拒绝，再由第二账号输出 SSE。
@@ -368,7 +384,7 @@ func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
 			require.Equal(t, test.want, response.Code, response.Body.String())
 			// 未获可靠证据时只允许第一账号被调用一次。
 			wantCalls := []string{"Bearer internal-0"}
-			if test.want == 200 {
+			if test.want == 200 || test.name == "all accounts rejected" {
 				key := "Bearer internal-1"
 				if test.next != "hosting" {
 					key = "Bearer platform-only"
@@ -377,30 +393,58 @@ func TestResourceRelaySafeRejectionFallbackAndLog(t *testing.T) {
 			}
 			require.Equal(t, wantCalls, f.calls)
 			require.Empty(t, response.Header().Get("X-GPTLoad-Replay-Safety"))
-			// 失败写到既有请求日志表，不能只留 systemd 文本日志。
-			var failure model.Log
-			// 失败类型需要真实落库，控制台才能读取到它。
-			require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeError).Last(&failure).Error)
-			require.Equal(t, response.Header().Get(common.RequestIdKey), failure.RequestId)
-			require.Equal(t, "execution-request", failure.UpstreamRequestId)
-			require.Equal(t, test.stream, failure.IsStream)
-			require.Contains(t, failure.Other, `"resource_source":"hosting"`)
-			require.Contains(t, failure.Other, fmt.Sprintf(`"status_code":%d`, test.status))
-			// 稳定错误分类不应包含任何可用凭据。
-			require.NotContains(t, failure.Content, "internal-0")
-			// 失败日志绝不能伪造收费或原厂计量。
-			require.Zero(t, failure.Quota)
+			// 一次客户端请求只落一条最终记录；安全拒绝作为详情保留。
+			var entries []model.Log
+			require.NoError(t, model.LOG_DB.Order("id").Find(&entries).Error)
+			require.Len(t, entries, 1)
+			entry := entries[0]
+			require.Equal(t, response.Header().Get(common.RequestIdKey), entry.RequestId)
+			require.Equal(t, test.stream, entry.IsStream)
+			// 日志不含内部执行密钥，失败也不能伪造收费或原厂用量。
+			require.NotContains(t, entry.Content+entry.Other, "internal-0")
 			if test.want != 200 {
+				require.Equal(t, model.LogTypeError, entry.Type)
+				require.Zero(t, entry.Quota)
+				if test.want == 503 {
+					// 全部来源不可用时仍落最终失败，保留安全拒绝证据。
+					require.Contains(t, entry.Other, `"error_code":"resource_sources_exhausted"`)
+					require.Contains(t, entry.Other, `"upstream_request_id":"execution-request"`)
+					// 多个安全拒绝按顺序累积，最后一个不能覆盖前面的诊断。
+					// 对外仍只有一个最终错误，内部尝试条数与授权账号一致。
+					var history struct {
+						Attempts []service.ResourceAttempt `json:"resource_attempts"`
+					}
+					require.NoError(t, common.UnmarshalJsonStr(entry.Other, &history))
+					wantAttempts := 1
+					if test.name == "all accounts rejected" {
+						wantAttempts = 2
+					}
+					require.Len(t, history.Attempts, wantAttempts)
+				} else if test.name == "wallet preflight failure" {
+					// 前序关联 ID 保留在详情；未发送的平台没有自己的上游 ID。
+					require.Empty(t, entry.UpstreamRequestId)
+					require.Contains(t, entry.Other, `"upstream_request_id":"execution-request"`)
+				} else {
+					// 普通拒绝没有安全证据，保持终止且记录真实状态码。
+					require.Equal(t, "execution-request", entry.UpstreamRequestId)
+					require.Contains(t, entry.Other, fmt.Sprintf(`"status_code":%d`, test.status))
+				}
 				return
 			}
-			var success model.Log
-			// 成功应只有真实来源的消费记录，不能由失败记录伪装。
-			require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Last(&success).Error)
-			// 成功与失败使用同一个用户请求身份，但执行层身份各自隔离。
-			require.Equal(t, failure.RequestId, success.RequestId)
-			// 第二来源的日志不能继承第一账号的执行层请求身份。
-			require.NotEqual(t, failure.UpstreamRequestId, success.UpstreamRequestId)
-			require.Contains(t, success.Other, fmt.Sprintf("hosting:%d:account_unavailable", f.accounts[0].ID))
+			success := entry
+			require.Equal(t, model.LogTypeConsume, success.Type)
+			// 后续来源的主身份不能被前一个挂靠尝试覆盖。
+			require.NotEqual(t, "execution-request", success.UpstreamRequestId)
+			require.Contains(t, success.Other, fmt.Sprintf("hosting:%d:rate_limited", f.accounts[0].ID))
+			require.Contains(t, success.Other, `"resource_attempts":[`)
+			require.Contains(t, success.Other, `"upstream_request_id":"execution-request"`)
+			require.Contains(t, success.Other, `"status_code":429`)
+			// 免费拒绝不增加累计请求次数；平台成功仅累计一次。
+			var user model.User
+			require.NoError(t, model.DB.First(&user, f.user.Id).Error)
+			if test.next != "hosting" {
+				require.Equal(t, 1, user.RequestCount)
+			}
 			if test.next == "subscription" {
 				// 订阅已用额度与实际消费一致，挂靠拒绝不能形成第二份预扣。
 				var subscription model.UserSubscription

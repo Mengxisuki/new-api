@@ -576,18 +576,42 @@ const AUDIT_TEMPLATES: Record<string, string> = {
 }
 
 /**
- * Render a log's `other.content_parts`, which the backend stores as English
- * source keys plus params so the text follows the viewer's language. Returns
- * null for logs written before structured content, letting callers fall back
- * to the raw `content` field.
+ * 按查看者语言渲染结构化文案，并解释历史挂靠拒绝码。
+ * 原始日志保持不变，列表、详情与 CSV 共用此显示规则。
+ * 只识别已确认的错误合同；缺少元数据时交回原始内容。
+ * 返回 null 表示未作解释，不能被调用方当成空正文覆盖原日志。
  */
 export function renderLogContent(
   other: LogOtherData | null | undefined,
   t: (key: string, opts?: Record<string, unknown>) => string
 ): string | null {
+  // 结构化文案是可信的原始说明，先保留其参数与多段顺序。
+  // 挂靠错误的旧码解释只在缺少结构化文案时生效。
   const parts = other?.content_parts
-  if (!Array.isArray(parts) || parts.length === 0) return null
-  return parts.map((part) => t(part.key, part.params)).join(', ')
+  if (Array.isArray(parts) && parts.length > 0) {
+    return parts.map((part) => t(part.key, part.params)).join(', ')
+  }
+  // 历史挂靠错误只有稳定码；列表、详情与导出在同一入口翻译。
+  // 不修改落库内容，也不拿旧日志的安全资格推断最终回退是否成功。
+  // 普通消费与其他资源的错误沿用原路径，不凭零费用猜测挂靠。
+  if (other?.resource_source !== 'hosting') return null
+  // 所有授权来源都不可用是整体失败，与某个账号的 HTTP 拒绝分开。
+  if (other.error_code === 'resource_sources_exhausted') {
+    return t('No authorized resource was available; the request failed')
+  }
+  // 未知错误仍显示原内容，不能把新版本分类误译成账号拒绝。
+  if (other.error_code !== 'hosting_execution_rejected') return null
+  // 普通 429 不能证明未处理；只有旧日志明确保留证据才说明可安全顺延。
+  if (other.status_code === 429 && other.resource_fallback_safe === true) {
+    return t(
+      'Hosted account was rate-limited or cooling down; the request was not processed'
+    )
+  }
+  // 状态缺失时不伪造 HTTP 号码，继续由调用方显示原始错误。
+  if (!other.status_code) return null
+  return t('Hosted account rejected the request (HTTP {{status}})', {
+    status: other.status_code,
+  })
 }
 
 /**

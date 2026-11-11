@@ -29,6 +29,7 @@ import vi from '@/i18n/locales/vi.json'
 import zhTW from '@/i18n/locales/zh-TW.json'
 import zh from '@/i18n/locales/zh.json'
 
+import { renderLogContent } from '../../lib/format'
 import { ResourceSourceDetails } from '../resource-source-details'
 
 // 直接渲染用户详情组件，输入脱敏日志事实，不模拟组件内部状态。
@@ -201,10 +202,97 @@ it('七语言均包含账号与回退说明', () => {
       'The current API key cannot use this group',
       'This resource was skipped; the specific reason is unavailable',
       'Unknown resource source',
+      'Hosted account was rate-limited or cooling down; the request was not processed',
+      'Earlier resource attempts (part of this request)',
+      'Hosted account rejected the request (HTTP {{status}})',
+      'No authorized resource was available; the request failed',
     ]) {
       expect(
         resource.translation[key as keyof typeof resource.translation]
       ).toBeTruthy()
     }
   }
+})
+
+// 安全拒绝是最终请求的尝试详情，不应让用户理解为第二次调用。
+// 身份沿用本人账号显示投影，执行层 ID 仅用于定位且不会代替客户端 ID。
+// 状态说明不把限流或冷却推断为确定的额度耗尽。
+// 最终来源选订阅，防止详情错误地把前序账号标成实际消费来源。
+// 邮箱缺失但备注有效时继续识别账号，不显示用户无法辨认的编号。
+// 合成执行层 ID 与实际接口请求无关，不会触发远程读取。
+it('成功请求显示前序挂靠拒绝及执行层身份', () => {
+  render(
+    <ResourceSourceDetails
+      other={{
+        resource_source: 'subscription',
+        resource_attempts: [
+          {
+            account_id: 2,
+            status_code: 429,
+            upstream_request_id: 'execution-id',
+          },
+        ],
+        hosting_accounts: { '2': { alias: 'Work', email_mask: '' } },
+      }}
+    />
+  )
+  // 独立标题明确归属，不能把前序拒绝显示成另一个顶层请求。
+  // 保留可见关联身份后，用户仍可继续在执行层日志定位原因。
+  expect(
+    screen.getByText('Earlier resource attempts (part of this request)')
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      /Work: Hosted account was rate-limited or cooling down; the request was not processed/
+    )
+  ).toBeVisible()
+  expect(screen.getByText(/execution-id/)).toBeVisible()
+})
+
+// 已经落库的旧记录也必须可读，不能要求修改历史审计数据。
+// 这里复用列表、详情和导出共同的内容渲染入口。
+// 普通 429 没有未处理证明，不能展示安全顺延结论。
+// 两例只改变安全证据，排除来源或状态不同造成的偶然通过。
+// 不传结构化文案，专门覆盖上线前仅保存稳定码的记录。
+// 译文由真实英文资源产生，未模拟渲染器自身。
+it.each([
+  [
+    true,
+    'Hosted account was rate-limited or cooling down; the request was not processed',
+  ],
+  [false, 'Hosted account rejected the request (HTTP 429)'],
+])('旧拒绝日志按安全证据 %s 显示实际含义', async (safe, expected) => {
+  // 每例隔离翻译实例，避免前例切换语言影响结果。
+  const locale = createInstance()
+  // 英文测试不依赖组件内部 state，仅校验公开渲染合同。
+  await locale.init({ lng: 'en', resources: { en } })
+  expect(
+    renderLogContent(
+      {
+        resource_source: 'hosting',
+        error_code: 'hosting_execution_rejected',
+        status_code: 429,
+        resource_fallback_safe: safe,
+      },
+      locale.t
+    )
+  ).toBe(expected)
+})
+
+// 中文是用户实际查看日志的语言；兼容旧码时也必须加载真实资源。
+// 限流证据只解释未处理，不能把这条旧失败记录宣称为回退成功。
+// 参数化 HTTP 状态与错误码转换都经过公共内容渲染器。
+// 资源语言码使用项目现有 zhCN，不能靠默认英文回退通过。
+// 保留未知错误的原始路径，便于未来执行层新增分类后继续定位。
+// 不从当前账号状态重算历史结果，因此无需登录或账户网络 mock。
+it('中文旧日志解释未处理的拒绝并保留未知分类', async () => {
+  const locale = createInstance()
+  await locale.init({ lng: 'zhCN', resources: { zhCN: zh }, nsSeparator: false })
+  // 可信旧证据可以解释原因，但不改写持久化记录。
+  const other = { resource_source: 'hosting' as const, error_code: 'hosting_execution_rejected', status_code: 429, resource_fallback_safe: true }
+  expect(renderLogContent(other, locale.t)).toBe('挂靠账号限流或处于冷却期，请求未被处理')
+  // 同样的状态没有安全证明时，只陈述账号拒绝这一事实。
+  expect(renderLogContent({ ...other, resource_fallback_safe: false }, locale.t)).toBe('挂靠账号拒绝了请求（HTTP 429）')
+  // 未知分类回交原内容路径，不能被宽泛前缀匹配吞掉。
+  expect(renderLogContent({ ...other, error_code: 'hosting_new_error' }, locale.t)).toBeNull()
 })

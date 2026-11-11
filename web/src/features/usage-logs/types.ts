@@ -257,6 +257,18 @@ export interface LogOtherData {
   hosting_accounts?: Record<string, { alias: string; email_mask: string }>
   resource_policy_revision?: string
   resource_skip_reasons?: string[]
+  // 仅保存执行层证实未处理的挂靠 429，属于同一客户端请求。
+  // 状态不能推断具体额度，执行层 ID 也不能当成新的客户端 ID。
+  // 尝试列表仅供诊断展示，不参与路由、计量或费用计算。
+  resource_attempts?: {
+    account_id: number
+    status_code: number
+    upstream_request_id: string
+  }[]
+  // 兼容旧错误记录的安全顺延说明，不修改历史日志。
+  resource_fallback_safe?: boolean
+  error_code?: string
+  status_code?: number
   // 未取得原厂用量与请求执行结果分别记录，避免未知伪装为零。
   usage_status?: 'unknown' | 'known'
   execution_status?: 'forwarded' | 'outcome_unknown'

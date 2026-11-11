@@ -146,12 +146,22 @@ func ResourceRelay() gin.HandlerFunc {
 			var skipped string
 			if source.Kind == "hosting" {
 				skipped, err = relayHostingResource(attempt, source.AccountID, modelName)
+				// Copy 隔离了键值；前序安全拒绝必须显式传回后续来源。
+				// 尝试仅作最终日志详情，不生成第二个客户端请求记录。
+				if attempts, ok := attempt.Get("oak.resource_attempts"); ok {
+					c.Set("oak.resource_attempts", attempts)
+				}
 			} else if source.Kind == "wallet" || source.Kind == "subscription" {
 				skipped, err = relayPlatformResource(attempt, source.Kind, modelName, format, index)
 			} else {
 				err = errors.New("invalid_resource_source")
 			}
 			if err != nil {
+				// 挂靠拒绝后的平台预检也可能失败，不能因尚未进入适配器而丢诊断。
+				// 已由当前来源记录的终止错误不再重复写入。
+				if _, pending := attempt.Get("oak.resource_attempts"); pending && !attempt.GetBool("oak.resource_error_logged") {
+					recordResourceFailure(attempt, modelName, err.Error(), http.StatusBadGateway)
+				}
 				// 已输出时只能在原流内报告错误，绝不切换来源再次执行。
 				if !c.Writer.Written() {
 					resourceRelayError(c, err.Error(), http.StatusBadGateway)
@@ -173,9 +183,43 @@ func ResourceRelay() gin.HandlerFunc {
 			}
 			reasons = append(reasons, fmt.Sprintf("%s:%d:%s", source.Kind, source.AccountID, skipped))
 		}
+		// 全部候选都被跳过时仍保留一条最终失败，避免安全拒绝消失。
+		// 不写消费、不增加请求计费次数，只使用已授权请求的元数据。
+		if _, attempted := c.Get("oak.resource_attempts"); attempted {
+			c.Set("oak.resource_reasons", reasons)
+			// 此处没有实际成功来源；hosting 只标识前序尝试所属的资源类别。
+			c.Set("oak.resource_source", "hosting")
+			c.Set("oak.resource_revision", policy.Revision)
+			recordResourceFailure(c, modelName, "resource_sources_exhausted", http.StatusServiceUnavailable)
+		}
 		c.Header("X-Oak-Resource-Policy", policy.Revision)
 		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "resource_unavailable", "code": "resource_sources_exhausted", "message": i18n.T(c, i18n.MsgResourceSourcesExhausted), "reasons": reasons}})
 	}
+}
+
+// recordResourceFailure 保存来源调度的最终失败，消费与计数仍由原链负责。
+// 安全拒绝已归入 resource_attempts，不能再单独产生一次错误记录。
+// code 仅接受本文件的稳定分类，不保存原厂正文或网络错误中的地址。
+// 账号与策略元数据沿用当前尝试快照，便于区分最终来源和前序拒绝。
+// 所有时间从同一入口计时，平台预检失败也不会留下虚假的零耗时。
+// 错误日志开关保持原有语义，不借日志修复改变用户配置。
+func recordResourceFailure(c *gin.Context, modelName, code string, status int) {
+	if !constant.ErrorLogEnabled {
+		return
+	}
+	other := model.NewLogOther()
+	service.AppendResourceLogInfo(c, other)
+	other.SetPublic("request_path", c.Request.URL.Path)
+	other.SetPublic("error_code", code)
+	other.SetPublic("status_code", status)
+	// 失败不代表原厂真实零用量，也不意味着可以重新发送。
+	other.SetPublic("usage_status", "unknown")
+	other.SetPublic("resource_fallback_safe", false)
+	started := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	logger.LogError(c, fmt.Sprintf("resource request failed: code=%s status=%d", code, status))
+	model.RecordErrorLog(c, c.GetInt("id"), 0, modelName, c.GetString("token_name"), code, c.GetInt("token_id"), int(time.Since(started).Seconds()), common.GetContextKeyBool(c, constant.ContextKeyIsStream), c.GetString("group"), other)
+	// 只在当前来源上下文标记，不能让历史拒绝冒充最终错误已经写入。
+	c.Set("oak.resource_error_logged", true)
 }
 
 // resourceRelayError 使用稳定错误码，不将内网地址、密钥或上游原始错误回传。
@@ -287,6 +331,8 @@ func relayPlatformResource(c *gin.Context, source, modelName string, format type
 		}
 		// 上游失败仍保留渠道健康处理，但不调用普通 Relay 的跨渠道重试循环。
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), apiErr, info)
+		// 适配器错误可能按既有策略过滤；外层仅在未记录时补最终错误。
+		c.Set("oak.resource_error_logged", constant.ErrorLogEnabled && types.IsRecordErrorLog(apiErr))
 		return "", errors.New("platform_execution_failed")
 	}
 	service.RecordChannelAffinity(c, channel.Id)
@@ -353,13 +399,12 @@ func hostingQuotaExhausted(observation *hosting.Observation, modelName string, n
 // 消费日志 quota 固定为零；RecordConsumeLog 本身不会修改钱包或令牌余额。
 // 不在免费链路调用 SettleBilling，避免缺失 BillingSession 时回落旧钱包路径。
 func relayHostingResource(c *gin.Context, accountID int, modelName string) (skipped string, relayErr error) {
-	started := time.Now()
 	upstreamStatus := 0
 	// 免费链路不经过平台渠道错误处理，必须独立记录拒绝和未知结果。
-	// 即使随后换来源成功，此次拒绝也保留原 request_id 供双服务定位。
+	// 可安全顺延的拒绝并入最终日志；只有终止错误在此独立记录。
 	// 只记录稳定分类和状态，原厂正文、密钥与内网地址不进入日志。
 	defer func() {
-		if !constant.ErrorLogEnabled || relayErr == nil && upstreamStatus < http.StatusBadRequest {
+		if !constant.ErrorLogEnabled || skipped != "" || relayErr == nil && upstreamStatus < http.StatusBadRequest {
 			return
 		}
 		code := "hosting_execution_rejected"
@@ -370,16 +415,7 @@ func relayHostingResource(c *gin.Context, accountID int, modelName string) (skip
 		if status == 0 {
 			status = http.StatusBadGateway // 未收到 HTTP 响应时保留执行结果未知。
 		}
-		other := model.NewLogOther()
-		service.AppendResourceLogInfo(c, other)
-		other.SetPublic("request_path", c.Request.URL.Path)
-		other.SetPublic("error_code", code)
-		other.SetPublic("status_code", status)
-		other.SetPublic("usage_status", "unknown") // 错误不代表真实零用量。
-		other.SetPublic("resource_fallback_safe", relayErr == nil)
-		logger.LogError(c, fmt.Sprintf("hosting resource failed: code=%s status=%d", code, status))
-		// 使用既有失败日志结构，免费失败不触发余额或 Key 预算变更。
-		model.RecordErrorLog(c, c.GetInt("id"), 0, modelName, c.GetString("token_name"), code, c.GetInt("token_id"), int(time.Since(started).Seconds()), common.GetContextKeyBool(c, constant.ContextKeyIsStream), c.GetString("group"), other)
+		recordResourceFailure(c, modelName, code, status)
 	}()
 	route, err := hosting.ResolveRoute(c.Request.Context(), c.GetInt("id"), accountID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -427,7 +463,15 @@ func relayHostingResource(c *gin.Context, accountID int, modelName string) (skip
 	if response.StatusCode == http.StatusTooManyRequests && !c.Writer.Written() &&
 		len(response.Header.Values("X-GPTLoad-Replay-Safety")) == 1 &&
 		response.Header.Get("X-GPTLoad-Replay-Safety") == "rejected_before_processing" {
-		return "account_unavailable", nil
+		// 429 不能直接断言额度耗尽；执行层也可能因冷却而零次发送。
+		// 保留状态与双服务关联身份，不解析或保存原厂错误正文。
+		value, _ := c.Get("oak.resource_attempts")
+		attempts, _ := value.([]service.ResourceAttempt)
+		c.Set("oak.resource_attempts", append(slices.Clone(attempts), service.ResourceAttempt{
+			AccountID: accountID, StatusCode: response.StatusCode,
+			UpstreamRequestID: c.GetString(common.UpstreamRequestIdKey),
+		}))
+		return "rate_limited", nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", errors.New("hosting_execution_rejected")

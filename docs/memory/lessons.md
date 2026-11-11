@@ -288,3 +288,23 @@
 本地修复将可读推理写入同轮 assistant.reasoning_content，与正文及工具调用合并；复用响应侧正文优先、摘要兜底规则。纯密文不冒充明文，省略时给出 encrypted_reasoning_omitted 诊断。既有测试文件覆盖文字与推理顺序、直接工具调用、正文优先、多段、纯密文与空推理；RelayKit 全量测试、GOWORK=off 独立构建及 New API 服务入口 go build -o /dev/null . 通过。
 
 边界：已证实的是转换缺陷，不是第三方通用 400 的唯一拒绝字段；没有向第三方重放真实任务或执行付费模型探测，生产未发布。全仓 go build ./... 被无关 dujiao-next-main 的既有依赖校验缺失阻断，不能写成全仓构建通过。发布后仍需在渠道 #9 用合成的工具调用与结果回传验证实际兼容性。
+
+## 2026-11-11 06:47:42 +00:00 — Flash 正文推理需区分上游输出与转换方向
+
+现象：用户报告 deepseek-v4.1-flash 的 Chat 正文包含规划，询问是否由 Responses→Chat 配置导致。经 SSH 只读核对，New API 线上为 `117f513a7227`，GPT-Load 为 `ba2522dcea0c`；报告时段 2026-11-10 08:50–12:45 UTC 的 Flash 日志全部指向 #9「兔子」直连 tuzai.icu，GPT-Load 同时段无该模型记录。相关渠道 `thinking_to_content=false`。#9 Chat 路由为 converter=none，只有 Responses 入站启用 Responses→Chat；Caddy 留存的 20:36 两次请求均为 cn 的 `/v1/chat/completions`、stream=true，因此没有经过该转换。
+
+合成验证：按报告提示词、400 token 上限，直达 #9 上游及公开 cn Chat 的普通/流式四次请求均为 200，content 保留完整 `<thinking>…</thinking>`，reasoning_content 另有文本。公开 cn Responses 经配置的 Chat 上游路径，普通/流式也保留标签正文，并独立输出 reasoning；最终普通请求 ID `202611110647274982886628268d9d6FnE79fXb`，流式 `202611110645534086706458268d9d6Z4elnpeL`。直连 Chat 的两次公开请求 ID 分别为 `202611110641308803287488268d9d6JD3BNS1H`、`202611110641379594635238268d9d6qlqfXFsZ`，数据库再次确认均为渠道 #9。只发送合成提示词，没有重放用户任务或修改生产配置。
+
+源码与本地验证：`relay/channel/openai/relay-openai.go` 的 sendStreamData 在未开启格式化/推理转正文时原样发送 SSE，OpenaiHandler 普通响应也默认复制原始正文。`relaykit/relayconvert/internal/oai_chat/to_oai_responses_{resp,stream_resp}.go` 分别把 reasoning_content 转为 reasoning、content 转为 output_text，没有标签整块清理或相同文本去重。临时 Go 程序验证正常分离、标签正文、两字段相同的普通/流式转换均保持输入字段。当前链路的清理应在 New API 接收 Chat 上游响应、对外发送或协议转换之前统一执行；只改 GPT-Load 无法覆盖 #9。修复流式标签需要跨 chunk 状态，不能逐 chunk 正则替换；全部为推理时也不能伪造正文成功。此为建议，尚未实现。
+
+另一个独立缺陷已本地复现：反方向“上游 Responses→客户端 Chat”的非流式 `relaykit/relayconvert/internal/oai_responses/to_oai_chat_resp.go::ExtractOutputTextFromResponses` 在没有正式正文时遍历所有 output.content 文本，包含 reasoning.content。只有 `reasoning.content=[{type:reasoning_text,text:内部规划}]` 时，ResponsesResponseToChatCompletionsResponse 同时输出 content=内部规划、reasoning_content=内部规划。需要限制正文提取的项目类型，不能在缺少正文时把推理当回退正文；它不是 #9 当前配置的返回转换方向，不能混为本次报告的已确认根因。既有推理/响应转换定向测试通过，但未覆盖这个边界。
+
+验证边界：诱导输出标签的最小复现证明上游会返回标签块、平台未清理，不能单独证明无诱导时的自发泄漏成因。Caddy 不记录响应正文，历史四次的完整输出和完全相同双写未能从原始响应重新核验；没有发现本地这条 Chat 路径执行“只删 thinking 标签”的逻辑，不能仅凭客户端结果断言由本平台删标签。此次仅完成排查与记忆记录，未修改业务源码、提交、推送或部署。
+
+## 2026-11-11 07:11:08 +00:00 — DeepSeek 返回推理分离已在本地修复
+
+承接 06:47:42 条目，用户明确要求修复。`relay/channel/openai/reasoning_output.go` 在真实上游模型 `deepseek-` 前缀的 Chat 响应上统一处理标签块、缺少起始标签、独立推理重复前缀及完全相同双写，普通/流式 Chat 和 Chat→Responses 已接入；原有 Chat→Claude/Gemini 返回同样经过普通 Chat 处理器。正文与推理只在 choice 终态后释放，以识别迟到推理和跨事件标签；工具、角色、扩展字段与用量保持原路径。缓冲采用现有 SSE 扫描大小上限，缺少终态、超限或清理后只剩推理但上游声称 stop 时显式失败，禁止自动重试。代价是 DeepSeek 文本显示延后，其他模型不启用该策略；无标签、无推理字段对照的规划无法可靠识别，不使用语言或关键词猜测。
+
+反方向 Responses→Chat 已删除 ExtractOutputTextFromResponses 遍历所有 output.content 的回退，只接受 assistant message.output_text；reasoning.content 不再因缺少正文被复制到 content。新回归集中在 `relay/channel/openai/reasoning_output_test.go`，先复现失败再通过，覆盖四条返回入口、标签变体/嵌套/错配/未闭合、孤立闭合、整段重复、工具轮、迟到别名、断流、扩展字段及有/无供应商用量。RelayKit 全量测试和独立构建、OpenAI/高级自定义/DeepSeek/helper 包回归、相关定向 race、vet、服务入口构建均通过。实现与命令见 [中文说明](../../README.zh_CN.md#deepseek-chat-推理分离)。未提交、推送或部署，生产是否恢复仍需发布后用合成请求验证。
+
+额外接入教训：将清理后的 SSE JSON 反序列化回同一个非空 DTO 时，JSON 中已删除的字段不会自动清空，会让旧 content 再次进入转换器。`responses_via_chat.go` 现在先清零 chunk 再解析，避免“清理器正确但转换后仍泄漏”；定向四入口回归已覆盖此故障。用量处理在清理前保留原始文本或快照，不能用清理后的短回答偷偷降低生成量。

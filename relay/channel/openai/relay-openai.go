@@ -119,12 +119,17 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var usage = &dto.Usage{}
 	var lastStreamData string
 	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
+	// DeepSeek 在协议转换和正文发送前统一分离；计量仍读取原始事件。
+	// 兼容策略优先于“推理转正文”，防止清理后又把推理重新写回 content。
+	guard := newChatReasoningGuard(c, info)
+	thinkToContent := info.ChannelSetting.ThinkingToContent && guard == nil
+	var guardErr *types.NewAPIError
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, thinkToContent); err != nil {
 				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
 				sr.Error(err)
 			}
@@ -134,15 +139,29 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 				secondLastStreamData = lastStreamData
 			}
 
-			lastStreamData = data
 			observeStreamChoices(info, data, seenStreamToolCalls, &streamFunctionCallNames)
 			if err := processTokenData(info, data, &responseTextBuilder, &toolCount); err != nil {
 				logger.LogError(c, common.LogText("error processing stream token data: %s", err.Error()))
 				sr.Error(err)
 			}
+			// 累计用量之后才缓冲或清理文本；未知扩展字段继续原样保留。
+			// 失败时停止且不发送成功终态，不能把暂存规划作为回退正文。
+			lastStreamData, guardErr = guard.stream(data)
+			if guardErr != nil {
+				sr.Stop(guardErr)
+			}
 		}
 	})
 
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	if c.Request.Context().Err() == nil {
+		if err := guard.complete(); err != nil {
+			info.StreamStatus.MarkFailed(string(err.GetErrorCode()), "upstream_error", err.StatusCode)
+			return nil, err
+		}
+	}
 	info.StreamStatus.RequireTerminal()
 
 	// 处理最后的响应
@@ -177,7 +196,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		if shouldSendLastResp {
-			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
+			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, thinkToContent)
 		}
 	}
 
@@ -323,6 +342,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
+
+	// 原始用量处理完成后才清理正文；原生 Chat 与跨协议转换共用结果。
+	// 只刷新 Choices，保持已经归一化或估算的 usage 快照不变。
+	responseBody, normalizeErr := newChatReasoningGuard(c, info).response(responseBody, &simpleResponse)
+	if normalizeErr != nil {
+		return nil, normalizeErr
+	}
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:

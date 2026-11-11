@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -35,6 +36,16 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	// 缺少 usage 时沿用清理前的正文估算，避免文本归属修正改变计量输入。
+	// 有上游快照时始终使用其原值，不按清理后的字数重算。
+	var originalText string
+	if len(chatResp.Choices) > 0 {
+		originalText = chatResp.Choices[0].Message.StringContent()
+	}
+	guard := newChatReasoningGuard(c, info)
+	if _, err := guard.response(body, &chatResp); err != nil {
+		return nil, err
+	}
 	info.ObserveResponseModel(chatResp.Model)
 	if responseID := helper.GetResponseID(c); responseID != "" {
 		chatResp.Id = responseID
@@ -50,6 +61,9 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	usage := convertResult.Usage
 	if usage == nil || usage.TotalTokens == 0 {
 		text := service.ExtractOutputTextFromResponses(responsesResp)
+		if guard != nil {
+			text = originalText
+		}
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		responsesResp.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
@@ -78,6 +92,10 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
+	// 原始文本单独参与无 usage 的估算，缓冲文本不会漏计或被重复计算。
+	// guard 按请求创建，与 Responses 转换器一样不跨轮共享状态。
+	guard := newChatReasoningGuard(c, info)
+	var originalText strings.Builder
 	streamErr := (*types.NewAPIError)(nil)
 	// upstreamFailure is the upstream or conversion failure the client was
 	// told about with response.failed.
@@ -155,6 +173,33 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			return
 		}
 
+		// 保存转换器原先计量的正文、推理与工具参数，清理不影响上游用量。
+		// 只有 DeepSeek 需要此副本，其他模型继续使用已有 state.UsageText。
+		if guard != nil {
+			for _, choice := range chunk.Choices {
+				originalText.WriteString(choice.Delta.GetReasoningContent())
+				originalText.WriteString(choice.Delta.GetContentString())
+				for _, call := range choice.Delta.ToolCalls {
+					originalText.WriteString(call.Function.Arguments)
+				}
+			}
+			cleaned, err := guard.stream(data)
+			if err != nil {
+				failResponsesStream(err)
+				streamErr = err
+				stopStream(sr, err)
+				return
+			}
+			// JSON 中省略的字段不会清空已有 DTO，必须先清零以免旧正文复活。
+			// 清理器保留的角色、工具、引用和 usage 随后由同一事件重新填充。
+			chunk = dto.ChatCompletionsStreamResponse{}
+			if err := common.UnmarshalJsonStr(cleaned, &chunk); err != nil {
+				streamErr = reasoningOutputError("invalid normalized upstream chat stream")
+				failResponsesStream(streamErr)
+				stopStream(sr, streamErr)
+				return
+			}
+		}
 		info.ObserveResponseModel(chunk.Model)
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &chunk)
 		if err != nil {
@@ -184,6 +229,15 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if streamErr != nil {
 		return nil, streamErr
 	}
+	// 没有 choice 终态时不能把缓冲文本作为完整回答释放或标记 completed。
+	// 客户端取消仍由既有取消路径处理，不额外创建上游异常。
+	if c.Request.Context().Err() == nil {
+		if err := guard.complete(); err != nil {
+			failResponsesStream(err)
+			info.StreamStatus.MarkFailed(string(err.GetErrorCode()), "upstream_error", err.StatusCode)
+			return nil, err
+		}
+	}
 
 	usage := state.Usage()
 	noUpstreamUsage := usage == nil || usage.TotalTokens == 0
@@ -193,7 +247,11 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return nil, upstreamFailure
 	}
 	if noUpstreamUsage {
-		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		text := state.UsageText()
+		if guard != nil {
+			text = originalText.String()
+		}
+		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		state.SetUsage(usage)
 	}
 	if info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {

@@ -234,6 +234,9 @@ func usageFromResponsesUsage(src *dto.Usage, createBillingSnapshot bool) *dto.Us
 	return usage
 }
 
+// ExtractOutputTextFromResponses 只提取明确属于 assistant 的正式输出。
+// reasoning、工具结果及其他 output 类型不能用于弥补缺失的正文。
+// 对空输出返回空字符串，让调用方保留无正文的真实状态。
 func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 	if resp == nil || len(resp.Output) == 0 {
 		return ""
@@ -241,7 +244,8 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 
 	var sb strings.Builder
 
-	// Prefer assistant message outputs.
+	// 外层项目类型决定语义，不能仅凭内部含有 text 就视为正文。
+	// 缺省角色仍兼容 assistant，但显式 user 或 system 不能回显为回答。
 	for _, out := range resp.Output {
 		if out.Type != "message" {
 			continue
@@ -249,6 +253,8 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		if out.Role != "" && out.Role != "assistant" {
 			continue
 		}
+		// 只接收正式 output_text，推理部件即使混在 message 中也不会下发。
+		// 多段正文使用既有分隔符拼接，保持已支持的消息顺序。
 		var outputText strings.Builder
 		for _, c := range out.Content {
 			if c.Type == "output_text" && c.Text != "" {
@@ -257,18 +263,9 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		}
 		appendSeparatedText(&sb, outputText.String())
 	}
-	if sb.Len() > 0 {
-		return sb.String()
-	}
-	for _, out := range resp.Output {
-		var outputText strings.Builder
-		for _, c := range out.Content {
-			if c.Text != "" {
-				outputText.WriteString(c.Text)
-			}
-		}
-		appendSeparatedText(&sb, outputText.String())
-	}
+	// 正文只来自 assistant message 的 output_text，不从其他 output 兜底。
+	// 没有正文时返回空，保留 reasoning 的独立归属及工具轮的空正文。
+	// 尤其不能把 reasoning.content 再复制一份到 Chat 的 content。
 	return sb.String()
 }
 

@@ -126,6 +126,7 @@ export interface PaymentProcessors {
   regular: (topupAmount: number, paymentType: string) => Promise<boolean>
   waffo: (topupAmount: number, payMethodIndex: number) => Promise<boolean>
   waffoPancake: (topupAmount: number) => Promise<boolean>
+  credit?: (topupAmount: number) => Promise<boolean>
 }
 
 export async function dispatchSelectedPayment(
@@ -143,6 +144,10 @@ export async function dispatchSelectedPayment(
 
   if (isWaffoPancakePayment(paymentMethod.type)) {
     return processors.waffoPancake(topupAmount)
+  }
+
+  if (paymentMethod.type === PAYMENT_TYPES.CREDIT) {
+    return processors.credit ? processors.credit(topupAmount) : false
   }
 
   return processors.regular(topupAmount, paymentMethod.type)

@@ -40,6 +40,8 @@ import type {
   WaffoPaymentResponse,
   WaffoPancakePaymentRequest,
   WaffoPancakePaymentResponse,
+  CreditPaymentRequest,
+  CreditPaymentResponse,
 } from './types'
 
 // ============================================================================
@@ -120,6 +122,17 @@ export async function requestPayment(
     ...res.data,
     url: res.data.url || (res as unknown as { url?: string }).url,
   }
+}
+
+// 授信付款不返回二维码或表单，必须走独立结果合同。
+export async function payWithCredit(
+  request: CreditPaymentRequest
+): Promise<CreditPaymentResponse> {
+  const res = await api.post('/api/user/credit/pay', request, {
+    skipBusinessError: true,
+    singleUseAuthorization: true,
+  } as Record<string, unknown>)
+  return res.data
 }
 
 /**

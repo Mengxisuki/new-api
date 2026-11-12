@@ -74,10 +74,11 @@ func verifyCreditLifecycle(t *testing.T, db *gorm.DB) {
 	require.ErrorIs(t, model.CheckCreditAvailable(nil, "recharge", 6000), model.ErrCreditUnavailable) // 未配置用户没有隐含额度。
 	config := model.CreditAccount{UserID: buyer.Id, Enabled: true, LimitCents: 10000, RechargeEnabled: true}
 	require.NoError(t, model.SaveCreditAccount(config, 100)) // 首次授信需要明确启用。
-	// 首次配置竞争不能覆盖现有授信；服务端拒绝未接入模块。
+	// 首次配置竞争不能覆盖现有授信；两个新模块开关可独立保存。
 	require.ErrorIs(t, model.SaveCreditAccount(config, 100), model.ErrCreditConflict) // 版本零不能覆盖已有账户。
 	config.Version, config.TopupEnabled = 1, true
-	require.ErrorIs(t, model.SaveCreditAccount(config, 100), model.ErrCreditInvalid) // 预留模块拒绝伪开放。
+	require.NoError(t, model.SaveCreditAccount(config, 100)) // topup 开关与 recharge 共用授信总额。
+	config.Version++
 	config.TopupEnabled = false
 	require.ErrorIs(t, model.CheckCreditAvailable(&config, "subscription", 6000), model.ErrCreditUnavailable) // 总开关不能替代逐模块授权。
 	orders := make([]*model.AccountRechargeOrder, 2)                                                          // 两张真实订单共同竞争不足两单的授信。
@@ -290,4 +291,88 @@ func TestCreditCheckoutAndPermissions(t *testing.T) {
 	token = raw // 个人令牌请求复用同一实际鉴权链路。
 	assert.NotEqual(t, 200, request("GET", "/api/finance/credit/entries", nil).Code)
 
+}
+
+// 第二期授信回归覆盖三个模块共用占用、人工来源绑定和坏账核销。
+// 失败来源校验必须在释放之前返回，重复核销不能覆盖首次原因。
+func TestCreditSharedModulesAndWriteOff(t *testing.T) {
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.QuotaLedger{}))
+	user := model.User{Id: 7001, Username: "credit-phase2", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, model.SaveCreditAccount(model.CreditAccount{
+		UserID: user.Id, Enabled: true, LimitCents: 3000,
+		RechargeEnabled: true, TopupEnabled: true, SubscriptionEnabled: true,
+	}, 9))
+
+	var manualEntry model.CreditEntry
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		ledger := model.QuotaLedger{
+			UserID: user.Id, TradeNo: "MANUAL-TOPUP-CREDIT", Source: model.ManualSourceQuota,
+			ReceivableCents: 1000, Delta: 1, CreatedAt: common.GetTimestamp(),
+		}
+		if err := tx.Create(&ledger).Error; err != nil {
+			return err
+		}
+		entry, err := model.ChargeCreditTx(tx, user.Id, model.CreditModuleTopup, ledger.TradeNo, 1000)
+		if err != nil {
+			return err
+		}
+		ledger.CreditEntryID = entry.ID
+		manualEntry = *entry
+		return tx.Model(&ledger).Update("credit_entry_id", entry.ID).Error
+	}))
+
+	// 三个模块都从同一个授信账户原子占用，未知模块和非正金额不能创建债务。
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		if _, err := model.ChargeCreditTx(tx, user.Id, model.CreditModuleRecharge, "RECHARGE-SHARED", 500); err != nil {
+			return err
+		}
+		_, err := model.ChargeCreditTx(tx, user.Id, model.CreditModuleSubscription, "SUBSCRIPTION-SHARED", 500)
+		return err
+	}))
+	require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+		_, err := model.ChargeCreditTx(tx, user.Id, "invalid", "INVALID-MODULE", 1)
+		return err
+	}), model.ErrCreditInvalid)
+	require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+		_, err := model.ChargeCreditTx(tx, user.Id, model.CreditModuleTopup, "ZERO-CREDIT", 0)
+		return err
+	}), model.ErrCreditInvalid)
+	account, err := model.GetCreditAccount(user.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2000, account.UsedCents)
+
+	require.NoError(t, model.WriteOffCreditEntry(manualEntry.ID, 9, "customer insolvency"))
+	require.NoError(t, model.WriteOffCreditEntry(manualEntry.ID, 10, "a later reason must not win"))
+	var written model.CreditEntry
+	require.NoError(t, db.First(&written, manualEntry.ID).Error)
+	assert.Equal(t, "write_off", written.Status)
+	assert.Equal(t, "customer insolvency", written.WriteOffNote)
+	account, err = model.GetCreditAccount(user.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1000, account.UsedCents)
+}
+
+// 来源金额或债务编号不匹配时，结清和核销都不能先释放授信占用。
+func TestCreditSourceMismatchDoesNotRelease(t *testing.T) {
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.QuotaLedger{}))
+	user := model.User{Id: 7002, Username: "credit-source-mismatch", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.CreditAccount{UserID: user.Id, Enabled: true, LimitCents: 1000, TopupEnabled: true}).Error)
+	entry := model.CreditEntry{UserID: user.Id, Module: model.CreditModuleTopup, TradeNo: "MANUAL-BAD-SOURCE", AmountCents: 1000, Status: "outstanding", CreatedAt: common.GetTimestamp()}
+	require.NoError(t, db.Create(&entry).Error)
+	require.NoError(t, db.Model(&model.CreditAccount{}).Where("user_id = ?", user.Id).Update("used_cents", 1000).Error)
+	require.NoError(t, db.Create(&model.QuotaLedger{
+		UserID: user.Id, TradeNo: entry.TradeNo, Source: model.ManualSourceQuota,
+		ReceivableCents: 999, CreditEntryID: entry.ID, Delta: 1, CreatedAt: common.GetTimestamp(),
+	}).Error)
+	require.ErrorIs(t, model.WriteOffCreditEntry(entry.ID, 9, "should fail before release"), model.ErrCreditConflict)
+	require.ErrorIs(t, model.SettleCreditEntry(entry.ID, 9, "offline-bad-source", ""), model.ErrCreditConflict)
+	var account model.CreditAccount
+	require.NoError(t, db.First(&account, user.Id).Error)
+	assert.EqualValues(t, 1000, account.UsedCents)
+	require.NoError(t, db.First(&entry, entry.ID).Error)
+	assert.Equal(t, "outstanding", entry.Status)
 }

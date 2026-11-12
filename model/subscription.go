@@ -222,6 +222,10 @@ type SubscriptionOrder struct {
 	CompleteTime    int64  `json:"complete_time"`
 
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
+	// 请求摘要只用于同键异参检查，唯一性沿用 trade_no。
+	RequestHash string `json:"-" gorm:"size:64"`
+	// 挂帐下单冻结完整套餐权益；不能在付款时读取已改价的权益。
+	PlanSnapshot string `json:"-" gorm:"type:text"`
 }
 
 // 订阅与充值一样，申请快照必须和待付款订单原子创建。
@@ -673,6 +677,10 @@ func completeSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
+		// 现金网关永远不能认领挂帐单，即使旧调用省略 expected provider。
+		if order.PaymentProvider == PaymentProviderCredit {
+			return ErrPaymentMethodMismatch
+		}
 		// 先匹配网关再接受成功状态，避免跨网关通知误认同一订单号。
 		if expectedPaymentProvider != "" && order.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
@@ -794,6 +802,7 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 				Money:           order.Money,
 				TradeNo:         order.TradeNo,
 				PaymentMethod:   order.PaymentMethod,
+				PaymentProvider: order.PaymentProvider, // 镜像保留原来源，挂帐不能混入现金统计。
 				InvoiceRequired: order.InvoiceRequired,
 				CreateTime:      order.CreateTime,
 				CompleteTime:    now,
@@ -803,6 +812,7 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 		}
 		return err
 	}
+	topup.PaymentProvider = order.PaymentProvider // 旧镜像同样保留真实渠道，不能用空值误判现金。
 	topup.Money = order.Money
 	if topup.PaymentMethod == "" {
 		topup.PaymentMethod = order.PaymentMethod
@@ -842,36 +852,101 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentProvider string) err
 	})
 }
 
-// Admin bind (no payment). Creates a UserSubscription from a plan.
-func AdminBindSubscription(userId int, planId int, sourceNote string) (*common.Message, error) {
-	if userId <= 0 || planId <= 0 {
-		return nil, errors.New("invalid userId or planId")
+// PaySubscriptionOnAccount 使用下单权益快照完成挂帐，不复用现金回调。
+// 锁序为订单→用户→订阅权益→债务→授信，任何失败均回滚。
+// 已成功原请求不受后续关闭授权或套餐下架影响。
+// 尚未成功的原单则必须在窗口内且套餐仍开放。
+func PaySubscriptionOnAccount(tradeNo string, userID int) error {
+	tradeNo = strings.TrimSpace(tradeNo) // 用户归属仍在数据库查询条件中限定。
+	if tradeNo == "" || userID <= 0 {
+		return ErrSubscriptionOrderNotFound
 	}
-	plan, err := GetSubscriptionPlanById(planId)
-	if err != nil {
-		return nil, err
-	}
-	groupChanged := false
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		// 与 CompleteSubscriptionOrder 一致：先锁用户行，再做购买次数检查。
-		var userRow User
-		if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&userRow).Error; err != nil {
+	var completed bool    // 区分首次完成和重复成功，避免重复日志。
+	var groupChanged bool // 仅实际开通改变分组时刷新认证使用的缓存。
+	var title string
+	var money float64 // 日志记录冻结应收，不把它标记为现金实收。
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var order SubscriptionOrder
+		if err := lockForUpdate(tx).Where("trade_no = ? AND user_id = ?", tradeNo, userID).First(&order).Error; err != nil {
 			return err
 		}
-		subscription, err := CreateUserSubscriptionFromPlanTx(tx, userId, plan, "admin")
-		if err == nil {
-			groupChanged = subscription.PrevUserGroup != ""
+		if order.PaymentProvider != PaymentProviderCredit { // 其他网关的订单不能用授信强制完成。
+			return ErrPaymentMethodMismatch
 		}
-		return err
+		if order.Status == common.TopUpStatusSuccess { // 关闭授信、下架或到期都不否定已完成结果。
+			return nil
+		}
+		if order.Status != common.TopUpStatusPending { // 明确关闭的未付订单不能恢复。
+			return ErrSubscriptionOrderStatusInvalid
+		}
+		if err := creditCheckoutPending(order.CreateTime); err != nil { // 原单十分钟窗口不因重试延长。
+			return err
+		}
+		// 挂帐无现金实收，不允许冻结或生成开票申请。
+		if order.InvoiceRequired {
+			return ErrCreditInvalid
+		}
+		cents, err := CreditMoneyCents(order.Money) // 严格整分和上限校验在创建债务前完成。
+		if err != nil {
+			return err
+		}
+		var plan SubscriptionPlan // 快照只在本次事务解码，不放入全局套餐缓存。
+		// 旧草稿没有快照的挂帐订单明确拒绝，不能静默采用现价权益。
+		if order.PlanSnapshot == "" {
+			return ErrCreditInvalid
+		}
+		if err := common.UnmarshalJsonStr(order.PlanSnapshot, &plan); err != nil { // 损坏快照原样报错，不能静默切到当前套餐。
+			return err
+		}
+		if plan.Id != order.PlanId { // 快照不得借另一套餐编号绕过限购。
+			return ErrCreditInvalid
+		}
+		var user User // 用户锁串行化同用户的不同购买单。
+		if err := lockForUpdate(tx).Select("id", "status").First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Status != common.UserStatusEnabled { // 仍有授信的停用用户同样不能新购。
+			return ErrCreditUnavailable
+		}
+		// 绕过套餐缓存读取当前开放状态，但价格与权益仍使用原快照。
+		var current SubscriptionPlan
+		if err := tx.Select("id", "enabled").First(&current, order.PlanId).Error; err != nil {
+			return err
+		}
+		if !current.Enabled { // 自助挂帐尚未收款，不享有迟到现金网关的下架豁免。
+			return ErrCreditUnavailable
+		}
+		// 公共开通函数完成续期/限购并先锁权益，再进入授信 helper。
+		sub, err := CreateUserSubscriptionFromPlanTx(tx, userID, &plan, "on_account") // 不另写续期算法，沿用统一购买规则。
+		if err != nil {
+			return err
+		}
+		if _, err := ChargeCreditTx(tx, userID, CreditModuleSubscription, tradeNo, cents); err != nil { // 占额失败会回滚前面的开通或续期。
+			return err
+		}
+		// 镜像仅用于账单展示，不向钱包加额，也不是现金实收。
+		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil { // 镜像记录与权益和债务必须一致提交。
+			return err
+		}
+		order.Status, order.CompleteTime = common.TopUpStatusSuccess, common.GetTimestamp() // 完成时间代表履约而非现金收款日。
+		if err := tx.Save(&order).Error; err != nil {                                       // 保存失败让原单保持可重试。
+			return err
+		}
+		completed, groupChanged = true, sub.PrevUserGroup != "" // 此标记只在所有持久写入成功后设置。
+		title, money = plan.Title, order.Money                  // 日志使用下单快照，管理员改名不篡改本笔描述。
+		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if groupChanged {
-		refreshSubscriptionUserGroupCache(userId, common.LogText("admin subscription creation"))
-		return common.NewMessage("User group will be upgraded to {{group}}", map[string]any{"group": plan.UpgradeGroup}), nil
+	// 重复成功不刷新缓存、不写第二条购买日志。
+	if completed {
+		if groupChanged {
+			refreshSubscriptionUserGroupCache(userID, common.LogText("on-account subscription"))
+		}
+		RecordLog(userID, LogTypeTopup, common.NewMessage("Subscription purchased on account, plan: {{plan}}, amount: {{amount}}", map[string]any{"plan": title, "amount": fmt.Sprintf("%.2f", money)}))
 	}
-	return nil, nil
+	return nil
 }
 
 // GetAllActiveUserSubscriptions returns all active subscriptions for a user.

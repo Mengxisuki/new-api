@@ -92,7 +92,12 @@ export function Wallet(props: WalletProps) {
   const [invoiceRevision, setInvoiceRevision] = useState(0)
   const invoiceProfile = useInvoiceProfile(invoiceRequired)
   const invoiceReady = !invoiceRequired || !!invoiceProfile.data
-  const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const {
+    topupInfo,
+    presetAmounts,
+    loading: topupLoading,
+    refetch: refetchTopupInfo,
+  } = useTopupInfo()
 
   // 公共货币工具统一处理 CNY 与自定义展示率，不另写默认 7.3 的映射。
   const { meta: currencyMeta } = getCurrencyDisplay()
@@ -106,6 +111,7 @@ export function Wallet(props: WalletProps) {
     processing,
     calculatePaymentAmount,
     processPayment,
+    processCreditPayment,
     qrPayment, // 下单成功后仅打开二维码，不修改本地余额。
     clearQrPayment, // 关闭或刷新后释放旧订单展示状态。
   } = usePayment({
@@ -181,6 +187,20 @@ export function Wallet(props: WalletProps) {
     quote.paymentType === getCurrentPaymentType() &&
     !!quote.invoiceRequired === invoiceRequired &&
     invoiceReady
+  const creditDisabledReason = (() => {
+    if (!topupInfo?.credit) return undefined
+    if (!topupInfo.credit.enabled || !topupInfo.credit.topup_enabled) {
+      return t('On-account wallet top-up is disabled.')
+    }
+    if (
+      quote?.paymentType === PAYMENT_TYPES.CREDIT &&
+      quote.quotedCents !== undefined &&
+      quote.quotedCents > topupInfo.credit.limit_cents - topupInfo.credit.used_cents
+    ) {
+      return t('Insufficient remaining credit for this amount.')
+    }
+    return undefined
+  })()
 
   // Handle preset selection
   const handleSelectPreset = (preset: PresetAmount) => {
@@ -217,9 +237,27 @@ export function Wallet(props: WalletProps) {
     }
   }
 
+  // 授信入口只做报价与专用付款，不能把成功响应当作二维码表单处理。
+  const handleCreditSelect = async () => {
+    if (!topupInfo?.credit?.enabled || !topupInfo.credit.topup_enabled) return
+    if (invoiceRequired) {
+      handleServerError(new Error(t('On-account payment does not support invoices.')))
+      return
+    }
+    const method = { name: t('On account'), type: PAYMENT_TYPES.CREDIT }
+    setSelectedPaymentMethod(method)
+    setSelectedWaffoMethodIndex(null)
+    setPaymentLoading(PAYMENT_TYPES.CREDIT)
+    try {
+      const quoted = await calculatePaymentAmount(topupAmount, PAYMENT_TYPES.CREDIT)
+      if (quoted !== null) setConfirmDialogOpen(true)
+    } finally {
+      setPaymentLoading(null)
+    }
+  }
+
   // Handle payment confirmation
   const handlePaymentConfirm = async () => {
-    // 没有当前金额与渠道的有效报价时，不能确认上一笔请求的付款资料。
     if (!selectedPaymentMethod || calculating || !quoteValid) return
 
     const success = await dispatchSelectedPayment(
@@ -230,12 +268,13 @@ export function Wallet(props: WalletProps) {
         regular: processPayment,
         waffo: processWaffoPayment,
         waffoPancake: processWaffoPancakePayment,
+        credit: processCreditPayment,
       }
     )
 
     if (success) {
       setConfirmDialogOpen(false)
-      await fetchUser()
+      await Promise.all([fetchUser(), refetchTopupInfo()])
     }
   }
 
@@ -394,6 +433,10 @@ export function Wallet(props: WalletProps) {
                   enableWaffoPancakeTopup={
                     topupInfo?.enable_waffo_pancake_topup
                   }
+                  credit={topupInfo?.credit}
+                  creditDisabledReason={creditDisabledReason}
+                  creditLoading={paymentLoading === PAYMENT_TYPES.CREDIT}
+                  onCreditSelect={() => void handleCreditSelect()}
                 />
               </div>
 
@@ -432,6 +475,16 @@ export function Wallet(props: WalletProps) {
         creditedQuota={creditedQuota}
         quoteValid={quoteValid}
         invoiceFeeAmount={quote?.invoiceFeeAmount}
+        quotedCents={
+          selectedPaymentMethod?.type === PAYMENT_TYPES.CREDIT
+            ? quote?.quotedCents
+            : undefined
+        }
+        creditAvailableCents={
+          selectedPaymentMethod?.type === PAYMENT_TYPES.CREDIT && topupInfo?.credit
+            ? topupInfo.credit.limit_cents - topupInfo.credit.used_cents
+            : undefined
+        }
       />
 
       {/* 二维码复用公共对话框与现有二维码库，支付凭证不进入 URL。 */}

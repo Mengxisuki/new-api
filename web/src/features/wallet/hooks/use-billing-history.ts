@@ -101,7 +101,7 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
    * Complete a pending order (admin only)
    */
   const handleCompleteOrder = useCallback(
-    async (tradeNo: string) => {
+    async (tradeNo: string, receiptRef: string, note: string) => {
       if (!isSuperAdmin) {
         toast.error(i18next.t('Super admin access required'))
         return false
@@ -109,7 +109,11 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
 
       setCompleting(true)
       try {
-        const response = await completeOrder({ trade_no: tradeNo })
+        const response = await completeOrder({
+          trade_no: tradeNo,
+          receipt_ref: receiptRef.trim(),
+          note: note.trim(),
+        })
         if (isApiSuccess(response)) {
           toast.success(i18next.t('Order completed successfully'))
           // Refresh the list

@@ -563,6 +563,7 @@ export function SubscriptionPlansCard({
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
         officialMethods={officialMethods}
+        credit={topupInfo?.credit}
         onPurchaseSuccess={onPurchaseSuccess}
         purchaseLimit={
           !renewablePlanIds.has(selectedPlan?.plan?.id ?? 0) &&

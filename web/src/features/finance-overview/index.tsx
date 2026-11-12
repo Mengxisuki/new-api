@@ -32,6 +32,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { getFinanceOverview } from './api'
 import { CreditPanel, TodoPanel } from './components/credit-panels'
+import { ManualFinancePanel } from './components/manual-finance-panel'
 import { OverviewMetrics } from './components/overview-metrics'
 import { RevenueBreakdown, RevenueTrend } from './components/revenue-panels'
 import { SubscriptionGantt } from './components/subscription-gantt'
@@ -167,6 +168,10 @@ export function FinanceOverviewPage() {
               <OverviewMetrics data={query.data} />
               <RevenueTrend data={query.data} />
               <RevenueBreakdown data={query.data} />
+              <ManualFinancePanel
+                key={`${query.data.start}:${query.data.end}`}
+                data={query.data}
+              />
               <div className='grid gap-3 xl:grid-cols-[2fr_1fr]'>
                 <CreditPanel data={query.data} />
                 <TodoPanel data={query.data} />

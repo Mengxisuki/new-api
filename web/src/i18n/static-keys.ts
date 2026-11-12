@@ -1025,10 +1025,37 @@ export const creditStaticKeys = [
   'Outstanding credit',
   'Credit settled',
   'Credit cancelled',
+  // 退款与核销共用本期欠款状态表，补齐现有退款状态的遗漏。
+  'Refunded',
+  // 核销状态由欠款接口返回，不表示现金退款。
+  'Credit written off',
+  // 代充值模块名由 CREDIT_MODULE_LABELS 动态选择。
+  'Account recharge',
+  // 人工调额与后台开订阅共用原因映射，按英文显示键登记。
+  'Compensation',
+  'Correction',
+  'Grant',
+  'Offline cash',
+  // 撤回原因仅更正额度，不应被翻译成退款或消债动作。
+  'Revoke compensation',
+  'Revoke grant',
   'Invalid credit account request',
   'On-account payment is not enabled for this user and module',
   'Insufficient available credit',
   'Credit record changed. Refresh and try again.',
+  // 人工财务请求的错误经通用服务端消息入口展示。
+  'A valid adjustment reason is required',
+  // 存储日志使用原始原因参数，占位符不得改名。
+  'Administrator granted a subscription with classification {{reason}}',
+  // 微信补单凭证错误保持原渠道语义，不改变收款分类。
+  'Invalid payment receipt',
+  'Invalid quota adjustment request',
+  'Offline collection requires the received amount and a reference',
+  'Payment quote changed. Please confirm the new amount.',
+  // 挂帐购买日志中的金额是应收，不冒充现金实收。
+  'Subscription purchased on account, plan: {{plan}}, amount: {{amount}}',
+  'This financial request was already used with different details',
+  'Top-up purchased on account, amount: {{amount}}',
 ] as const
 
 // 财务总览的权限目录文案来自后端，业务线、渠道和时段名称经常量映射后传入 t()，
@@ -1042,6 +1069,15 @@ export const financeOverviewStaticKeys = [
   'Subscription',
   'Account top-up',
   'Credit settlement',
+  'Offline collection',
+  // 人工财务汇总与明细通过共享字段映射生成表头。
+  'Adjustment classification',
+  'Net quota change',
+  // 应收金额不等同实收，原始记录编号用于追溯更正。
+  'On-account amount',
+  'Original record ID',
+  // 明细凭证列与微信补单输入使用同一显示键。
+  'Receipt reference',
   'WeChat Pay',
   'Alipay',
   'Epay',

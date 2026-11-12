@@ -29,6 +29,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -579,6 +580,56 @@ test('账单仅允许本人未过期的官方订单继续付款并展示原订�
     { trade_no: 'wx-self' }, // 重试不能更换原订单的业务归属。
     expect.any(Object)
   )
+})
+
+// 专用微信漏单补单要求凭证，金额只能来自原订单，不能进入通用支付表单。
+test('超级管理员补单要求微信收款凭证并沿用原订单金额', async () => {
+  const user = userEvent.setup()
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'root',
+    role: 100,
+  })
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        total: 1,
+        items: [
+          {
+            id: 1,
+            user_id: 8,
+            status: 'pending',
+            amount: 20,
+            money: 20,
+            trade_no: 'wx-missed',
+            payment_method: 'wxpay',
+            create_time: 1700000000,
+          },
+        ],
+      },
+    },
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true },
+  })
+  render(<BillingHistoryDialog open onOpenChange={vi.fn()} />)
+  await user.click(await screen.findByRole('button', { name: 'Complete Order' }))
+  const dialog = screen.getByRole('alertdialog')
+  expect(
+    within(dialog).getByText(/original WeChat payment was received/i)
+  ).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: 'Confirm' })).toBeDisabled()
+  await user.type(within(dialog).getByLabelText(/Receipt reference/), 'wx-receipt')
+  await user.click(within(dialog).getByRole('button', { name: 'Confirm' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/user/topup/complete', {
+      trade_no: 'wx-missed',
+      receipt_ref: 'wx-receipt',
+      note: '',
+    })
+  )
+  expect(get).toHaveBeenCalledTimes(2)
 })
 
 // 恢复请求边界，避免其他钱包用例继承模拟响应。

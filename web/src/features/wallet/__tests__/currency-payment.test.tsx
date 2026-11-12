@@ -24,6 +24,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -221,6 +222,66 @@ test('人民币预设一元不会再次乘显示汇率或旧美元单价', () =>
     />
   )
   expect(screen.getByRole('button', { name: /^1 Pay 1$/ })).toBeVisible()
+})
+
+// 授信付款不依赖微信商户；全部现金渠道关闭时，金额区仍须可操作。
+// 直接渲染真实充值卡片，避免钱包 Hook 的网络桩意外开启现金网关。
+// 该回归只保护入口显示与交互，付款接口由其他网络边界测试验证。
+test('仅开放钱包挂帐且未配置现金渠道时仍可输入金额并选择挂帐', async () => {
+  const user = userEvent.setup()
+  // 三个开关与真实授信摘要一致，不把 credit 塞进 pay_methods。
+  const credit = {
+    enabled: true,
+    limit_cents: 10000,
+    used_cents: 1000,
+    topup_enabled: true,
+    subscription_enabled: true,
+    recharge_enabled: true,
+  }
+  const changeAmount = vi.fn()
+  const selectCredit = vi.fn()
+  render(
+    <RechargeFormCard
+      topupInfo={{
+        enable_online_topup: false,
+        enable_stripe_topup: false,
+        pay_methods: [],
+        min_topup: 1,
+        stripe_min_topup: 1,
+        amount_options: [],
+        discount: {},
+        credit,
+      }}
+      credit={credit}
+      onCreditSelect={selectCredit}
+      presetAmounts={[]}
+      selectedPreset={null}
+      topupAmount={1}
+      paymentAmount={1}
+      localCnyInput
+      calculating={false}
+      paymentLoading={null}
+      redemptionCode=''
+      redeeming={false}
+      onSelectPreset={vi.fn()}
+      onTopupAmountChange={changeAmount}
+      onPaymentMethodSelect={vi.fn()}
+      onRedemptionCodeChange={vi.fn()}
+      onRedeem={vi.fn()}
+    />
+  )
+  // 必须存在可访问金额输入，不能仅在隐藏 DOM 中保留入口。
+  const amount = screen.getByRole('spinbutton', { name: 'Custom Amount' })
+  expect(amount).toBeVisible()
+  await user.clear(amount)
+  await user.type(amount, '25')
+  expect(changeAmount).toHaveBeenLastCalledWith(25)
+  // 挂帐按钮实际执行选择回调，而不是用普通网关按钮冒充可用。
+  const pay = screen.getByRole('button', { name: 'On account' })
+  expect(pay).toBeEnabled()
+  await user.click(pay)
+  expect(selectCredit).toHaveBeenCalledOnce()
+  expect(screen.queryByText(/Online topup is not enabled/)).toBeNull()
 })
 
 // 旧请求晚到不能覆盖当前金额；序号只对前端报价有效，不替代后端验价。

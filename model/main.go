@@ -360,6 +360,7 @@ func migrateDB() error {
 		&AccountRechargeOrder{},   // 支付与人工办理状态分别保存。
 		&CreditAccount{},          // 独立挂帐授信，不能写入钱包余额。
 		&CreditEntry{},            // 债务、结清与退款保留持久对账依据。
+		&QuotaLedger{},            // 手动调额账本，财务统计的唯一来源，只追加不修改。
 		&AccountRechargeEvent{},   // 订单动作与资金事件同事务持久化。
 		&QuotaData{},
 		&Task{},

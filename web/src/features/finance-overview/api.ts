@@ -44,6 +44,20 @@ const debtorSchema = z.object({
 })
 
 const overviewSchema = z.object({
+  // 线下实收已包含在业务线中；核销是损失而非现金退款，两者不得重复运算。
+  offline_cash_cents: z.number().int(),
+  write_off_cents: z.number().int(),
+  write_off_count: z.number().int(),
+  manual_adjustments: z.array(
+    z.object({
+      source: z.enum(['quota_adjust', 'subscription_bind']),
+      reason: z.string(),
+      delta: z.number().int(),
+      cash_cents: z.number().int(),
+      receivable_cents: z.number().int(),
+      count: z.number().int(),
+    })
+  ),
   start: z.number().int(),
   end: z.number().int(),
   topup_cents: z.number().int(),
@@ -93,6 +107,48 @@ const overviewSchema = z.object({
   }),
 })
 export type FinanceOverview = z.infer<typeof overviewSchema>
+
+// 流水返回每次实际操作的快照，钱包与订阅不适用的字段为 null/零而非虚构余额。
+const entrySchema = z.object({
+  id: z.number().int(),
+  user_id: z.number().int(),
+  operator_id: z.number().int(),
+  username: z.string(),
+  trade_no: z.string(),
+  source: z.enum(['quota_adjust', 'subscription_bind']),
+  source_id: z.number().int(),
+  reason: z.string(),
+  mode: z.string(),
+  quota_before: z.number().nullable(),
+  quota_after: z.number().nullable(),
+  delta: z.number(),
+  cash_cents: z.number().int(),
+  receivable_cents: z.number().int(),
+  cash_ref: z.string(),
+  note: z.string(),
+  original_id: z.number().int(),
+  credit_entry_id: z.number().int(),
+  created_at: z.number().int(),
+})
+const entriesSchema = z.object({
+  items: z.array(entrySchema),
+  total: z.number().int(),
+  page: z.number().int(),
+  size: z.number().int(),
+  delta: z.number(),
+})
+
+// 查询范围由总览筛选统一提供，不能显示与上方合计不同期间的记录。
+export async function getFinanceAdjustments(
+  start: number,
+  end: number,
+  page: number
+) {
+  const response = await api.get('/api/finance/adjustments', {
+    params: { start, end, p: page, page_size: 20 },
+  })
+  return entriesSchema.parse(requireServerSuccess(response.data).data)
+}
 
 // 查询 [start, end) 时段，时间为 Unix 秒；范围由调用方按上海自然日算好。
 // 业务失败（包括无权限）由 requireServerSuccess 抛出，不能当成空数据。

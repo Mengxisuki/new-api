@@ -139,9 +139,7 @@ test('添加用户授信并按人民币分保存', async () => {
   await user.clear(within(dialog).getByLabelText('Credit limit (CNY)'))
   await user.type(within(dialog).getByLabelText('Credit limit (CNY)'), '123.45') // 输入元金额应精确转换为分。
   expect(
-    within(dialog).getByText(
-      'Wallet top-up and subscriptions: not available yet.'
-    )
+    within(dialog).getByText('Each enabled module shares this user credit limit.')
   ).toBeVisible()
   await user.click(within(dialog).getByRole('button', { name: 'Save' }))
   await waitFor(() =>
@@ -152,6 +150,8 @@ test('添加用户授信并按人民币分保存', async () => {
         enabled: true,
         limit_cents: 12345,
         recharge_enabled: true,
+        topup_enabled: false,
+        subscription_enabled: false,
         version: 0,
       },
       { singleUseAuthorization: true } // 写入不允许认证恢复自动重放。
@@ -172,7 +172,7 @@ test('编辑授信可关闭代充值授权并保留并发版本', async () => {
   await user.click(await screen.findByRole('button', { name: 'Edit' }))
   const dialog = screen.getByRole('dialog') // 编辑使用统一弹层组件。
   await user.click(
-    within(dialog).getByRole('switch', { name: 'Account top-up' })
+    within(dialog).getByRole('switch', { name: 'Account recharge' })
   )
   await user.click(within(dialog).getByRole('button', { name: 'Save' }))
   await waitFor(() =>
@@ -183,6 +183,8 @@ test('编辑授信可关闭代充值授权并保留并发版本', async () => {
         enabled: true,
         limit_cents: 20000,
         recharge_enabled: false,
+        topup_enabled: false,
+        subscription_enabled: false,
         version: 2,
       },
       { singleUseAuthorization: true }
@@ -235,6 +237,51 @@ test('财务登记整笔结清并刷新账本与授信', async () => {
     )
   )
   await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(1))
+})
+
+// 核销必须填写原因，并使用危险确认；请求不携带退款或发权益字段。
+test('财务核销未结清账目并刷新授信', async () => {
+  const user = userEvent.setup()
+  useAuthStore.getState().auth.setUser({
+    id: 5,
+    username: 'finance',
+    role: 5,
+    permissions: {
+      admin_permissions: { finance: { read: true, write: true } },
+    },
+  })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { items: [entry], total: 1, amount_cents: 6000 } },
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true },
+  })
+  mount(<CreditManagement />)
+  await user.click(await screen.findByRole('button', { name: 'Write off' }))
+  const dialog = screen.getByRole('alertdialog')
+  expect(
+    within(dialog).getByText(/not a cash refund and does not grant benefits/i)
+  ).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: 'Confirm write-off' })).toBeDisabled()
+  await user.type(within(dialog).getByLabelText(/Write-off reason/), 'uncollectible')
+  await user.click(within(dialog).getByRole('button', { name: 'Confirm write-off' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/finance/credit/entries/7/write-off',
+      { reason: 'uncollectible' },
+      { singleUseAuthorization: true }
+    )
+  )
+})
+
+// 已核销的原因为持久审计证据，不能保存后只显示终态而丢失查看入口。
+test('核销历史展示首次原因和操作人且不再提供资金动作', async () => {
+  useAuthStore.getState().auth.setUser({id:5,username:'finance',role:5,permissions:{admin_permissions:{finance:{read:true,write:true}}}})
+  vi.spyOn(api,'get').mockResolvedValue({data:{success:true,data:{items:[{...entry,status:'write_off',write_off_note:'uncollectible evidence',closed_by:42,closed_at:1794500000}],total:1,amount_cents:6000}}})
+  mount(<CreditManagement />)
+  expect(await screen.findByText('uncollectible evidence')).toBeVisible()
+  expect(screen.queryByRole('button',{name:'Record full settlement'})).toBeNull()
+  expect(screen.queryByRole('button',{name:'Write off'})).toBeNull()
 })
 
 // 只读用户可对账，不能因看见记录就获得结清按钮。

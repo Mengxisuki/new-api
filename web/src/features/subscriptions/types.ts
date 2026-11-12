@@ -92,6 +92,15 @@ export interface SubscriptionPayRequest {
   invoice_required?: boolean // 订阅开票仅改变实际收款，不改变套餐期限及配额。
   plan_id: number
   payment_method?: string
+  request_id?: string
+  quoted_cents?: number
+}
+
+export interface CreditSubscriptionPaymentRequest {
+  plan_id: number
+  invoice_required: false
+  request_id: string
+  quoted_cents: number
 }
 
 export interface SubscriptionPayResponse {
@@ -100,7 +109,7 @@ export interface SubscriptionPayResponse {
   data?: {
     // Stripe-style hosted checkout link.
     pay_link?: string
-    payment_kind?: 'qr' | 'redirect' // 官方订阅付款复用二维码或 H5 交互。
+    payment_kind?: 'qr' | 'redirect' | 'credit' // 官方订阅付款复用二维码或 H5 交互。
     qr_code?: string // 仅用于支付展示，不能代表订阅已经生效。
     redirect_url?: string // 官方 H5 结算页由后端返回。
     trade_no?: string // 原订阅订单号，后端通知幂等地开通或续期。
@@ -113,12 +122,20 @@ export interface SubscriptionPayResponse {
     order_id?: string
     token?: string
     token_expires_at?: number | string
+    status?: 'success'
   }
   url?: string
 }
 
 export interface CreateUserSubscriptionRequest {
   plan_id: number
+  reason?: 'compensation' | 'grant' | 'on_account' | 'offline_cash'
+  cash_cents?: number
+  receivable_cents?: number
+  cash_ref?: string
+  note?: string
+  request_id?: string
+  original_id?: number
 }
 
 export interface ResetUserSubscriptionsRequest {

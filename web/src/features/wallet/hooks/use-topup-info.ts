@@ -219,6 +219,11 @@ export function useTopupInfo() {
         waffo_pay_methods: parseWaffoPayMethods(
           response.data.waffo_pay_methods
         ),
+        // 授信是可选对象；缺失或 null 都保持缺失，不用零值制造可用额度。
+        credit:
+          response.data.credit && typeof response.data.credit === 'object'
+            ? response.data.credit
+            : null,
       }
 
       setTopupInfo(processedData)

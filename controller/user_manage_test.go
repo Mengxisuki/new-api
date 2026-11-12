@@ -69,7 +69,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 			}
 		}
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.UserAccessToken{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.UserAccessToken{}, &model.QuotaLedger{})) // 调额账本与钱包同库提交，日志库故障不能影响它。
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	versionQuery := "SELECT version()"
 	if dialect == "sqlite" {
@@ -81,9 +81,28 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// legacyManageQuotaBody 为旧金额、安全边界用例显式补齐账务更正请求。
+// 专门分类回归不调用此夹具，避免将缺少分类的非法请求悄悄修复。
+// 每个旧用例只有一笔有效操作，缓存回归重放同键；多操作分类回归自行提供不同键。
+func legacyManageQuotaBody(t *testing.T, body string) string {
+	t.Helper()
+	var request map[string]any
+	if common.UnmarshalJsonStr(body, &request) != nil || request["action"] != "add_quota" {
+		return body // 保留畸形 JSON 和非财务动作的原验证语义。
+	}
+	if _, explicit := request["reason"]; explicit {
+		return body // 显式分类包括空分类都由用例负责，不能擅自修补校验输入。
+	}
+	request["reason"], request["note"] = "correction", "旧金额与安全边界回归"
+	request["request_id"] = "11111111-1111-4111-8111-111111111111" // 固定 UUID 让审计期望可复核。
+	encoded, err := common.Marshal(request)
+	require.NoError(t, err)
+	return string(encoded)
+}
+
 func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	return performVerifiedManageUserRequest(t, body, service.AuthIdentity{UserID: 9999}, "")
+	return performVerifiedManageUserRequest(t, legacyManageQuotaBody(t, body), service.AuthIdentity{UserID: 9999}, "")
 }
 
 // performVerifiedManageUserRequest drives ManageUser as the root operator from
@@ -286,7 +305,9 @@ func TestManageUserQuotaRecordsTopupAndAudit(t *testing.T) {
 			assert.Equal(t, tc.action, other.Op.Action)
 			params, err := common.Marshal(other.Op.Params)
 			require.NoError(t, err)
-			expectedParams := model.AuditFields{"target_user_id": user.Id, "target_username": user.Username, "mode": tc.mode, "requested_quota": tc.value, "from": 1000, "to": tc.wantQuota}
+			var ledger model.QuotaLedger // 主库记录的 ID 与日志引用必须指向同一次提交。
+			require.NoError(t, db.Where("user_id = ?", user.Id).First(&ledger).Error)
+			expectedParams := model.AuditFields{"target_user_id": user.Id, "target_username": user.Username, "mode": tc.mode, "requested_quota": tc.value, "from": 1000, "to": tc.wantQuota, "reason": "correction", "request_id": "11111111-1111-4111-8111-111111111111", "ledger_id": ledger.ID, "duplicate": false}
 			if tc.mode != "override" {
 				expectedParams["quota"] = tc.value
 			}
@@ -434,7 +455,7 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 			}
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
-			c.Request = httptest.NewRequest(http.MethodPost, "/api/user/manage", strings.NewReader(fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, tc.targetID, tc.mode, tc.value)))
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/user/manage", strings.NewReader(legacyManageQuotaBody(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, tc.targetID, tc.mode, tc.value))))
 			role := tc.operatorRole
 			if role == 0 {
 				role = common.RoleRootUser
@@ -454,7 +475,7 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 			assert.False(t, audits[0].Success)
 			params, err := common.Marshal(audits[0].Other.Op.Params)
 			require.NoError(t, err)
-			expected, err := common.Marshal(model.AuditFields{"target_user_id": tc.targetID, "mode": tc.mode, "requested_quota": tc.value, "failure_reason": tc.reason})
+			expected, err := common.Marshal(model.AuditFields{"target_user_id": tc.targetID, "mode": tc.mode, "requested_quota": tc.value, "failure_reason": tc.reason, "reason": "correction", "request_id": "11111111-1111-4111-8111-111111111111"})
 			require.NoError(t, err)
 			assert.JSONEq(t, string(expected), string(params))
 			assert.NotContains(t, audits[0].Content, user.Username)
@@ -467,6 +488,9 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 
 func TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest(t *testing.T) {
 	db := setupManageUserTestDB(t)
+	// 单独运行本测试时也初始化正式旧令牌过渡期，不能依赖别的测试先执行 InitDB。
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 	pat := "quota-middleware-test-token"
 	operator := model.User{Id: 9999, Username: "root-operator", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &pat, Quota: 1000}
 	require.NoError(t, db.Create(&operator).Error)
@@ -483,7 +507,7 @@ func TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest(t *testing.T) {
 		{`{"id":`, "generic", false},
 	} {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, "/api/user/manage", strings.NewReader(tc.body))
+		request := httptest.NewRequest(http.MethodPost, "/api/user/manage", strings.NewReader(legacyManageQuotaBody(t, tc.body)))
 		request.Header.Set("Authorization", "Bearer "+pat)
 		request.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(recorder, request)
@@ -542,7 +566,8 @@ func TestManageUserQuotaConcurrentSnapshots(t *testing.T) {
 	results := make(chan result, 2)
 	for _, value := range []int{10, 20} {
 		go func(value int) {
-			adjustment, err := model.AdjustUserQuota(user.Id, common.RoleRootUser, "add", value)
+			// 两个并发逻辑操作使用不同 UUID，不能把幂等恢复误判为行锁串行化。
+			adjustment, err := model.AdjustUserQuota(user.Id, common.RoleRootUser, "add", value, 9999, model.ManualFinanceInput{Reason: "grant", Note: "并发金额快照", RequestID: fmt.Sprintf("22222222-2222-4222-8222-%012d", value)})
 			results <- result{adjustment, err, value}
 		}(value)
 	}
@@ -627,6 +652,11 @@ func TestManageUserQuotaCacheUsesCommittedIntegerDifference(t *testing.T) {
 			}
 			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
 			assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, !tc.failUpdate))
+			if !tc.failUpdate {
+				// 重放同一键只恢复原结果，不能再次向 Redis 补差额或覆盖在途预扣。
+				retry := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
+				assert.Contains(t, retry.Body.String(), `"success":true`)
+			}
 			require.NoError(t, db.First(&user, user.Id).Error)
 			assert.Equal(t, tc.after, user.Quota)
 			if tc.missingCache {

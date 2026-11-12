@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Crown, CalendarClock, Package } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -35,6 +35,7 @@ import { submitPaymentForm } from '@/features/wallet/lib/payment'
 import type {
   OfficialPaymentData,
   PaymentMethod as WalletPaymentMethod,
+  TopupInfo,
 } from '@/features/wallet/types'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
@@ -47,6 +48,7 @@ import {
   paySubscriptionEpay,
   paySubscriptionWaffoPancake,
   paySubscriptionOfficial,
+  paySubscriptionCredit,
   quoteSubscriptionInvoice,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
@@ -69,6 +71,7 @@ interface Props {
   purchaseLimit?: number
   purchaseCount?: number
   officialMethods?: WalletPaymentMethod[]
+  credit?: TopupInfo['credit']
   onPurchaseSuccess?: () => void | Promise<void>
 }
 
@@ -80,6 +83,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
   const [invoiceRequired, setInvoiceRequired] = useState(false) // 每次重新打开默认不需要发票。
   const [invoiceRevision, setInvoiceRevision] = useState(0)
+  const creditRequest = useRef<{ fingerprint: string; id: string } | null>(null)
   const invoiceProfile = useInvoiceProfile(props.open && invoiceRequired)
   const invoiceQuote = useQuery({
     queryKey: [
@@ -133,13 +137,57 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
   const hasOfficial = (props.officialMethods?.length ?? 0) > 0
+  const hasCredit = !!props.credit
+  const creditEnabled =
+    props.credit?.enabled === true && props.credit.subscription_enabled === true
+  const creditCents = Math.round(Number(plan.price_amount || 0) * 100)
+  const creditRemaining = props.credit
+    ? props.credit.limit_cents - props.credit.used_cents
+    : undefined
+  let creditDisabledReason: string | undefined
+  if (!creditEnabled) {
+    creditDisabledReason = t('On-account subscription is not enabled.')
+  } else if (creditRemaining !== undefined && creditCents > creditRemaining) {
+    creditDisabledReason = t('Insufficient remaining credit for this subscription.')
+  }
   const hasAnyPayment =
-    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasOfficial
+    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasOfficial || hasCredit
   const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
   const limitReached =
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
+
+  const handlePayCredit = async () => {
+    if (!creditEnabled || creditDisabledReason || invoiceRequired) return
+    setPaying(true)
+    const payload = {
+      plan_id: plan.id,
+      invoice_required: false as const,
+      quoted_cents: creditCents,
+    }
+    const fingerprint = JSON.stringify(payload)
+    if (creditRequest.current?.fingerprint !== fingerprint) {
+      creditRequest.current = { fingerprint, id: crypto.randomUUID() }
+    }
+    try {
+      const res = await paySubscriptionCredit({
+        ...payload,
+        request_id: creditRequest.current.id,
+      })
+      if (res.success && res.data?.payment_kind === 'credit') {
+        toast.success(t('Payment completed'))
+        await props.onPurchaseSuccess?.()
+        props.onOpenChange(false)
+      } else {
+        handleServerError(res, t('Payment request failed'))
+      }
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
+    } finally {
+      setPaying(false)
+    }
+  }
 
   const handlePayStripe = async () => {
     if (invoiceRequired) {
@@ -387,6 +435,23 @@ export function SubscriptionPurchaseDialog(props: Props) {
               )}
             </p>
           ) : null}
+          {hasCredit && (
+            <div className='bg-muted/50 space-y-1 rounded-lg border p-3 text-sm'>
+              <div className='flex justify-between'>
+                <span className='text-muted-foreground'>{t('Confirmed receivable')}</span>
+                <span>{formatLocalCurrencyAmount(creditCents / 100, { abbreviate: false })}</span>
+              </div>
+              {creditRemaining !== undefined && (
+                <div className='flex justify-between'>
+                  <span className='text-muted-foreground'>{t('Remaining credit')}</span>
+                  <span>{formatLocalCurrencyAmount(creditRemaining / 100, { abbreviate: false })}</span>
+                </div>
+              )}
+              {creditDisabledReason && (
+                <p className='text-muted-foreground'>{creditDisabledReason}</p>
+              )}
+            </div>
+          )}
           {hasAnyPayment && (
             <div className='space-y-3'>
               <p className='text-muted-foreground text-xs'>
@@ -440,6 +505,17 @@ export function SubscriptionPurchaseDialog(props: Props) {
                     </Button>
                   ))}
                 </div>
+              )}
+              {hasCredit && (
+                <Button
+                  variant='outline'
+                  className='w-full justify-start'
+                  onClick={() => void handlePayCredit()}
+                  disabled={paying || limitReached || !!creditDisabledReason || invoiceRequired}
+                  title={creditDisabledReason}
+                >
+                  {t('Pay on account')}
+                </Button>
               )}
               {hasEpay && (
                 <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>

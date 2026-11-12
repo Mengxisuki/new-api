@@ -107,7 +107,11 @@ type FinanceOverview struct {
 	// 消耗来自按小时汇总的看板数据；该功能关闭时没有数据，不能把零当成没有消耗。
 	ConsumptionAvailable bool `json:"consumption_available"`
 
-	Todo FinanceTodo `json:"todo"` // 需要人工跟进的事项数量。
+	Todo              FinanceTodo         `json:"todo"`               // 需要人工跟进的事项数量。
+	OfflineCashCents  int64               `json:"offline_cash_cents"` // 已含在对应业务线实收中，不再次相加。
+	WriteOffCents     int64               `json:"write_off_cents"`    // 按本期核销时间统计的坏账，不是现金支出。
+	WriteOffCount     int64               `json:"write_off_count"`    // 本期核销笔数。
+	ManualAdjustments []QuotaLedgerTotals `json:"manual_adjustments"` // 人工发放/更正分来源分原因统计。
 }
 
 // financeBucket 是一次分组查询的一行：某自然日、某渠道的金额与笔数。
@@ -147,12 +151,14 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 	// 不按 provider 为空直接排除，避免把确实存在的旧钱包订单一起丢弃。
 	subscriptionMirror := DB.Model(&SubscriptionOrder{}).Select("1").Where("subscription_orders.trade_no = top_ups.trade_no")
 	topups, err := financeBuckets(DB.Model(&TopUp{}).Where("NOT EXISTS (?)", subscriptionMirror).
+		Where("payment_provider <> ?", PaymentProviderCredit).
 		Where("status = ? AND complete_time >= ? AND complete_time < ?", common.TopUpStatusSuccess, start, end),
 		"complete_time", "payment_provider", "money")
 	if err != nil {
 		return nil, err
 	}
-	subscriptions, err := financeBuckets(DB.Model(&SubscriptionOrder{}).Where("status = ? AND complete_time >= ? AND complete_time < ?", common.TopUpStatusSuccess, start, end),
+	subscriptions, err := financeBuckets(DB.Model(&SubscriptionOrder{}).Where("payment_provider <> ?", PaymentProviderCredit).
+		Where("status = ? AND complete_time >= ? AND complete_time < ?", common.TopUpStatusSuccess, start, end),
 		"complete_time", "payment_provider", "money")
 	if err != nil {
 		return nil, err
@@ -225,6 +231,48 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 			total.Cents += cents
 			total.Count += row.Cnt
 		}
+	}
+	// 线下收款按人工记录发生日计入所属业务线，渠道单独展示，不造网关账单。
+	// 调额后消费不再计一次收入，后台开订阅也不重复生成 TopUp 镜像。
+	manualCash, err := financeBuckets(DB.Model(&QuotaLedger{}).
+		Where("reason = ? AND created_at >= ? AND created_at < ?", QuotaAdjustReasonOnsiteCash, start, end), "created_at", "source", "cash_cents")
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range manualCash {
+		cents := int64(row.Amount)
+		daily := &overview.Daily[(row.BucketDay-firstDay)/86400]
+		switch row.BucketLabel {
+		case ManualSourceQuota:
+			overview.TopupCents += cents
+			daily.TopupCents += cents
+		case ManualSourceSubscription:
+			overview.SubscriptionCents += cents
+			daily.SubscriptionCents += cents
+		default:
+			return nil, ErrQuotaLedgerInvalid // 未知来源不能静默混入现金报表。
+		}
+		overview.OfflineCashCents += cents
+		channel := channels[QuotaAdjustReasonOnsiteCash]
+		if channel == nil {
+			channel = &FinanceChannel{Channel: QuotaAdjustReasonOnsiteCash}
+			channels[QuotaAdjustReasonOnsiteCash] = channel
+		}
+		channel.Cents += cents
+		channel.Count += row.Cnt
+	}
+	overview.ManualAdjustments, err = SumQuotaLedgers(start, end)
+	if err != nil {
+		return nil, err
+	}
+	// 核销只记录损失和归还占用，不能把原应收金额再次作为现金支出扣除。
+	if err := DB.Model(&CreditEntry{}).Where("status = ? AND closed_at >= ? AND closed_at < ?", "write_off", start, end).
+		Select("COALESCE(SUM(amount_cents), 0)").Scan(&overview.WriteOffCents).Error; err != nil {
+		return nil, err
+	}
+	if err := DB.Model(&CreditEntry{}).Where("status = ? AND closed_at >= ? AND closed_at < ?", "write_off", start, end).
+		Count(&overview.WriteOffCount).Error; err != nil {
+		return nil, err
 	}
 	for _, channel := range channels {
 		overview.Channels = append(overview.Channels, *channel)

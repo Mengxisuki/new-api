@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Ban, Plus, RotateCcw, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -34,7 +34,10 @@ import {
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { Button } from '@/components/ui/button'
+import { Field, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { Combobox } from '@/components/ui/combobox'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -61,13 +64,25 @@ import {
   resetUserSubscriptionsByPlan,
 } from '../../api'
 import { formatTimestamp } from '../../lib'
-import type { PlanRecord, UserSubscriptionRecord } from '../../types'
+import { ADJUSTMENT_REASON_LABELS } from '@/features/users/lib/adjustment-reasons'
+
+import type {
+  CreateUserSubscriptionRequest,
+  PlanRecord,
+  UserSubscriptionRecord,
+} from '../../types'
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   user: { id: number; username?: string } | null
   onSuccess?: () => void
+}
+
+function parseCents(value: string): number {
+  if (!/^\d+(\.\d{1,2})?$/.test(value.trim())) return 0
+  const cents = Math.round(Number(value) * 100)
+  return Number.isSafeInteger(cents) ? cents : 0
 }
 
 function SubscriptionStatusBadge(props: {
@@ -112,6 +127,14 @@ export function UserSubscriptionsDialog(props: Props) {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [subs, setSubs] = useState<UserSubscriptionRecord[]>([])
   const [selectedPlanId, setSelectedPlanId] = useState<string>('')
+  const [openingReason, setOpeningReason] = useState<
+    NonNullable<CreateUserSubscriptionRequest['reason']>
+  >('grant')
+  const [openingNote, setOpeningNote] = useState('')
+  const [openingCash, setOpeningCash] = useState('')
+  const [openingCashRef, setOpeningCashRef] = useState('')
+  const [openingReceivable, setOpeningReceivable] = useState('')
+  const openingRequest = useRef<{ fingerprint: string; id: string } | null>(null)
   const [resetting, setResetting] = useState(false)
   const [advanceResetTime, setAdvanceResetTime] = useState(true)
   const [resetAction, setResetAction] = useState<{
@@ -159,6 +182,12 @@ export function UserSubscriptionsDialog(props: Props) {
   useEffect(() => {
     if (props.open && props.user?.id) {
       setSelectedPlanId('')
+      setOpeningReason('grant')
+      setOpeningNote('')
+      setOpeningCash('')
+      setOpeningCashRef('')
+      setOpeningReceivable('')
+      openingRequest.current = null
       loadData()
     }
   }, [props.open, props.user?.id, loadData])
@@ -168,10 +197,39 @@ export function UserSubscriptionsDialog(props: Props) {
       toast.error(t('Please select a subscription plan'))
       return
     }
+    if (!openingNote.trim()) {
+      toast.error(t('A note is required'))
+      return
+    }
+    const cashCents = openingReason === 'offline_cash' ? parseCents(openingCash) : 0
+    const receivableCents = openingReason === 'on_account' ? parseCents(openingReceivable) : 0
+    if (openingReason === 'offline_cash' && (!cashCents || !openingCashRef.trim())) {
+      toast.error(t('Offline cash requires the received amount and a reference'))
+      return
+    }
+    if (openingReason === 'on_account' && !receivableCents) {
+      toast.error(t('Receivable amount is required'))
+      return
+    }
+    const payload: CreateUserSubscriptionRequest = {
+      plan_id: Number(selectedPlanId),
+      reason: openingReason,
+      cash_cents: cashCents,
+      receivable_cents: receivableCents,
+      cash_ref: openingReason === 'offline_cash' ? openingCashRef.trim() : '',
+      note: openingNote.trim(),
+    }
+    const fingerprint = JSON.stringify({ user_id: props.user.id, ...payload })
+    if (openingRequest.current?.fingerprint !== fingerprint) {
+      openingRequest.current = { fingerprint, id: crypto.randomUUID() }
+    }
+    const requestId = openingRequest.current?.id
+    if (!requestId) return
     setCreating(true)
     try {
       const res = await createUserSubscription(props.user.id, {
-        plan_id: Number(selectedPlanId),
+        ...payload,
+        request_id: requestId,
       })
       if (res.success) {
         toast.success(getServerMessage(res.data) || t('Added successfully'))
@@ -256,7 +314,7 @@ export function UserSubscriptionsDialog(props: Props) {
           </SheetHeader>
 
           <div className={sideDrawerFormClassName()}>
-            <div className='flex gap-2'>
+            <div className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.45fr)]'>
               <Combobox
                 options={plans.map((p) => ({
                   value: String(p.plan.id),
@@ -264,17 +322,76 @@ export function UserSubscriptionsDialog(props: Props) {
                 }))}
                 value={selectedPlanId}
                 onValueChange={(v) => v !== null && setSelectedPlanId(v)}
-                className='flex-1'
+                className='w-full'
                 placeholder={t('Select subscription plan')}
               />
-              <Button
-                onClick={handleCreate}
-                disabled={creating || !selectedPlanId}
+              <NativeSelect
+                aria-label={t('Adjustment category')}
+                value={openingReason}
+                onChange={(event) =>
+                  setOpeningReason(
+                    event.target.value as NonNullable<
+                      CreateUserSubscriptionRequest['reason']
+                    >
+                  )
+                }
               >
-                <Plus className='mr-1 h-4 w-4' />
-                {t('Add subscription')}
-              </Button>
+                {(['compensation', 'grant', 'on_account', 'offline_cash'] as const).map(
+                  (value) => (
+                    <NativeSelectOption key={value} value={value}>
+                      {t(ADJUSTMENT_REASON_LABELS[value])}
+                    </NativeSelectOption>
+                  )
+                )}
+              </NativeSelect>
             </div>
+            <Field>
+              <FieldLabel htmlFor='admin-subscription-note'>{t('Note')} *</FieldLabel>
+              <Input
+                id='admin-subscription-note'
+                value={openingNote}
+                maxLength={500}
+                onChange={(event) => setOpeningNote(event.target.value)}
+              />
+            </Field>
+            {openingReason === 'offline_cash' && (
+              <div className='grid gap-3 sm:grid-cols-2'>
+                <Field>
+                  <FieldLabel htmlFor='admin-subscription-cash'>{t('Cash received (CNY)')} *</FieldLabel>
+                  <Input
+                    id='admin-subscription-cash'
+                    value={openingCash}
+                    onChange={(event) => setOpeningCash(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor='admin-subscription-cash-ref'>{t('Cash reference')} *</FieldLabel>
+                  <Input
+                    id='admin-subscription-cash-ref'
+                    value={openingCashRef}
+                    maxLength={128}
+                    onChange={(event) => setOpeningCashRef(event.target.value)}
+                  />
+                </Field>
+              </div>
+            )}
+            {openingReason === 'on_account' && (
+              <Field>
+                <FieldLabel htmlFor='admin-subscription-receivable'>{t('Receivable (CNY)')} *</FieldLabel>
+                <Input
+                  id='admin-subscription-receivable'
+                  value={openingReceivable}
+                  onChange={(event) => setOpeningReceivable(event.target.value)}
+                />
+              </Field>
+            )}
+            <Button
+              onClick={() => void handleCreate()}
+              disabled={creating || !selectedPlanId}
+            >
+              <Plus className='mr-1 h-4 w-4' />
+              {t('Add subscription')}
+            </Button>
 
             <StaticDataTable
               data={loading ? [] : subs}

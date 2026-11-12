@@ -143,6 +143,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/waffo/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPay)
 				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
 				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
+				// 自助挂帐只允许本人登录会话，资金事务仍逐次核实授信授权。
+				selfRoute.POST("/credit/pay", controller.RechargeSessionOnly, middleware.UserCriticalRateLimit("credit-pay"), controller.RequestCreditTopUp)
 				selfRoute.POST("/aff_transfer", middleware.UserCriticalRateLimit("aff-transfer"), controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
 				// 发票抬头与附件均为私有资料，只允许本人读取或修改。
@@ -203,6 +205,8 @@ func SetApiRouter(router *gin.Engine) {
 			financeRoute.GET("/credit/accounts", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceRead), controller.GetCreditAccounts)
 			financeRoute.GET("/credit/entries", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceRead), controller.GetCreditEntries)
 			financeRoute.POST("/credit/entries/:id/settle", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), middleware.UserCriticalRateLimit("credit-settle"), controller.SettleCreditEntry)
+			financeRoute.POST("/credit/entries/:id/write-off", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), middleware.UserCriticalRateLimit("credit-write-off"), controller.WriteOffCreditEntry)
+			financeRoute.GET("/adjustments", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), controller.GetFinanceAdjustments)
 			financeRoute.GET("/invoices", middleware.RequirePermission(authz.FinanceRead), controller.GetFinanceInvoices)
 			financeRoute.PUT("/invoices/:id/status", middleware.RequirePermission(authz.FinanceWrite), controller.UpdateInvoiceStatus)
 			financeRoute.POST("/invoices/:id/file", middleware.RequirePermission(authz.FinanceWrite), controller.UploadInvoiceFile)
@@ -223,6 +227,7 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)
 			subscriptionRoute.POST("/invoice-quote", controller.SubscriptionInvoiceQuote)
 			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)
+			subscriptionRoute.POST("/credit/pay", controller.RechargeSessionOnly, middleware.UserCriticalRateLimit("credit-pay"), controller.RequestCreditSubscription)
 			// 订阅直接向官方商户付款，绝不复用钱包余额兑换。
 			subscriptionRoute.POST("/official/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestOfficialPay)
 			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)

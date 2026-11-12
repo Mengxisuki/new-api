@@ -87,6 +87,10 @@ interface RechargeFormCardProps {
   waffoMinTopup?: number
   onWaffoMethodSelect?: (method: WaffoPayMethod, index: number) => void
   enableWaffoPancakeTopup?: boolean
+  credit?: TopupInfo['credit']
+  creditDisabledReason?: string
+  creditLoading?: boolean
+  onCreditSelect?: () => void
 }
 
 export function RechargeFormCard({
@@ -122,6 +126,10 @@ export function RechargeFormCard({
   waffoMinTopup,
   onWaffoMethodSelect,
   enableWaffoPancakeTopup,
+  credit,
+  creditDisabledReason,
+  creditLoading,
+  onCreditSelect,
 }: RechargeFormCardProps) {
   const { t } = useTranslation()
   const [localAmount, setLocalAmount] = useState(topupAmount.toString())
@@ -141,7 +149,10 @@ export function RechargeFormCard({
     }
   }
 
+  // 挂帐不依赖任何现金渠道配置；获得钱包授信即可使用原金额输入区。
+  // 同时检查账户和模块开关，不能借订阅或代充值授权开放钱包挂帐。
   const hasConfigurableTopup =
+    (credit?.enabled && credit.topup_enabled) ||
     topupInfo?.enable_online_topup ||
     topupInfo?.enable_stripe_topup ||
     enableWaffoTopup ||
@@ -417,7 +428,37 @@ export function RechargeFormCard({
                     })}
                   </div>
                 ) : null}
-                {!hasStandardPaymentMethods && !hasWaffoPaymentMethods && (
+                {credit && onCreditSelect && (
+                  <div className='space-y-2'>
+                    <Button
+                      variant='outline'
+                      className='min-h-14 w-full justify-start text-left'
+                      onClick={onCreditSelect}
+                      disabled={!!creditDisabledReason || !!creditLoading}
+                      title={creditDisabledReason}
+                      aria-label={`${t('On account')}${creditDisabledReason ? `. ${creditDisabledReason}` : ''}`}
+                    >
+                      <WalletCards className='h-4 w-4' />
+                      <span className='flex flex-col items-start'>
+                        <span>{creditLoading ? t('Checking...') : t('On account')}</span>
+                        <span className='text-muted-foreground text-xs font-normal'>
+                          {creditDisabledReason ||
+                            t('Remaining credit: {{amount}} CNY', {
+                              amount: formatNumber(
+                                (credit.limit_cents - credit.used_cents) / 100
+                              ),
+                            })}
+                        </span>
+                      </span>
+                    </Button>
+                    {!credit.enabled || !credit.topup_enabled ? (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('On-account wallet top-up is not enabled for this account.')}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+                {!hasStandardPaymentMethods && !hasWaffoPaymentMethods && !credit && (
                   <Alert>
                     <AlertDescription>
                       {t(

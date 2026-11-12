@@ -30,6 +30,7 @@ import type {
   SubscriptionPayResponse,
   SubscriptionPayRequest,
   SelfSubscriptionData,
+  CreditSubscriptionPaymentRequest,
 } from './types'
 
 // ============================================================================
@@ -87,6 +88,14 @@ export async function createUserSubscription(
     `/api/subscription/admin/users/${userId}/subscriptions`,
     data
   )
+  return res.data
+}
+
+// 旧后台绑定入口与用户子路径使用同一分类字段，避免两个开通入口口径分叉。
+export async function bindSubscription(
+  data: CreateUserSubscriptionRequest & { user_id: number }
+): Promise<ApiResponse<{ message?: string }>> {
+  const res = await api.post('/api/subscription/admin/bind', data)
   return res.data
 }
 
@@ -161,6 +170,16 @@ export async function paySubscriptionOfficial(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {
   const res = await api.post('/api/subscription/official/pay', data)
+  return res.data
+}
+
+// 授信订阅不返回网关表单，服务端成功后直接开通并返回标准支付结果。
+export async function paySubscriptionCredit(
+  data: CreditSubscriptionPaymentRequest
+): Promise<SubscriptionPayResponse> {
+  const res = await api.post('/api/subscription/credit/pay', data, {
+    singleUseAuthorization: true,
+  })
   return res.data
 }
 

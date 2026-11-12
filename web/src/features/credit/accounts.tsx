@@ -167,7 +167,14 @@ export function CreditAccounts(props: {
             {
               id: 'modules', // 当前只有代充值实际接入。
               header: t('Enabled modules'),
-              cell: (row) => (row.recharge_enabled ? t('Account top-up') : '—'),
+              cell: (row) => {
+                const modules = [
+                  row.recharge_enabled ? t('Account recharge') : null,
+                  row.topup_enabled ? t('Wallet top-up') : null,
+                  row.subscription_enabled ? t('Subscription') : null,
+                ].filter(Boolean)
+                return modules.length > 0 ? modules.join(', ') : '—'
+              },
             },
             {
               id: 'actions', // 管理员编辑和财务查看采用不同动作。

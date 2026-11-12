@@ -56,6 +56,14 @@ export const CREDIT_STATUS = {
   settled: 'Credit settled',
   cancelled: 'Credit cancelled',
   refunded: 'Refunded',
+  write_off: 'Credit written off',
+} as const
+
+// 模块标签集中映射，避免把后端内部标识直接当作用户文案。
+export const CREDIT_MODULE_LABELS = {
+  recharge: 'Account recharge',
+  topup: 'Wallet top-up',
+  subscription: 'Subscription',
 } as const
 // 流水金额在下单后冻结，财务不能通过结清编辑金额。
 // 挂帐状态独立于代充值的人工办理进度。
@@ -72,10 +80,16 @@ const entrySchema = z.object({
   user_id: z.number().int(),
   username: z.string(),
   display_name: z.string(),
-  module: z.literal('recharge'), // 未接入模块不得伪装成可处理记录。
+  module: z.enum(['recharge', 'topup', 'subscription']),
   trade_no: z.string(),
   amount_cents: z.number().int(),
-  status: z.enum(['outstanding', 'settled', 'cancelled', 'refunded']),
+  status: z.enum([
+    'outstanding',
+    'settled',
+    'cancelled',
+    'refunded',
+    'write_off',
+  ]),
   created_at: z.number(),
   settled_at: z.number(),
   settled_by: z.number().int(), // 对账显示真实操作人编号。
@@ -84,6 +98,8 @@ const entrySchema = z.object({
   closed_at: z.number(),
   closed_by: z.number().int(),
   refund_ref: z.string(), // 退还已收款不抹掉原收款凭证。
+  // 旧查询没有该字段时按空原因兼容，不能阻止财务查看历史数据。
+  write_off_note: z.string().default(''),
 })
 export type CreditEntry = z.infer<typeof entrySchema>
 
@@ -111,7 +127,13 @@ export async function getCreditAccounts(
 export async function saveCreditAccount(
   account: Pick<
     CreditAccount,
-    'user_id' | 'enabled' | 'limit_cents' | 'recharge_enabled' | 'version'
+    | 'user_id'
+    | 'enabled'
+    | 'limit_cents'
+    | 'recharge_enabled'
+    | 'topup_enabled'
+    | 'subscription_enabled'
+    | 'version'
   >
 ) {
   const response = await api.put('/api/option/credit/accounts', account, {
@@ -182,6 +204,16 @@ export async function settleCreditEntry(
   const response = await api.post(
     `/api/finance/credit/entries/${id}/settle`,
     { reference, note },
+    { singleUseAuthorization: true }
+  )
+  requireServerSuccess(response.data)
+}
+
+// 核销只释放授信占用，不产生现金退款或新的权益；原因是财务审计依据。
+export async function writeOffCreditEntry(id: number, reason: string) {
+  const response = await api.post(
+    `/api/finance/credit/entries/${id}/write-off`,
+    { reason: reason.trim() },
     { singleUseAuthorization: true }
   )
   requireServerSuccess(response.data)

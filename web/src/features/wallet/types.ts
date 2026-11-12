@@ -37,6 +37,11 @@ export type RedemptionResponse = ApiResponse<number>
 // 报价仍保留字符串金额；入账额度来自同一服务端计算，不在浏览器推导。
 export type AmountResponse = ApiResponse<string> & {
   credited_quota?: number
+  quoted_cents?: number
+  credit?: {
+    enabled: boolean
+    available_cents: number
+  }
   invoice_required?: boolean // 当前报价冻结是否开票，不能沿用上次选择。
   invoice_base_amount?: number
   invoice_fee_percent?: number
@@ -53,6 +58,9 @@ export interface PaymentQuote {
   invoiceBaseAmount?: number
   invoiceFeePercent?: number
   invoiceFeeAmount?: number
+  quotedCents?: number
+  creditEnabled?: boolean
+  creditAvailableCents?: number
 }
 // 官方支付返回二维码或跳转链接，订单号用于继续支付与账单定位。
 // 返回值不包含商户密钥，二维码内容由服务端签名后的渠道响应提供。
@@ -190,6 +198,15 @@ export interface TopupInfo {
   payment_compliance_confirmed?: boolean
   /** Current compliance terms version */
   payment_compliance_terms_version?: string
+  // 授信为空表示当前用户没有授信账户，不能渲染虚构的零额度。
+  credit?: {
+    enabled: boolean
+    limit_cents: number
+    used_cents: number
+    topup_enabled: boolean
+    subscription_enabled: boolean
+    recharge_enabled: boolean
+  } | null
 }
 
 /**
@@ -244,6 +261,7 @@ export interface WaffoPancakePaymentRequest {
  */
 export interface AmountRequest {
   invoice_required?: boolean
+  payment_method?: string
   /** Topup amount to calculate */
   amount: number
 }
@@ -325,6 +343,25 @@ export interface BillingHistoryResponse {
  */
 export interface CompleteOrderRequest {
   trade_no: string
+  receipt_ref: string
+  note: string
+}
+
+export interface CreditPaymentRequest {
+  amount: number
+  invoice_required: false
+  request_id: string
+  quoted_cents: number
+}
+
+export interface CreditPaymentResponse {
+  success?: boolean
+  message?: string
+  data?: {
+    trade_no: string
+    status: 'success'
+    payment_kind: 'credit'
+  }
 }
 
 // 重试复用原订单，服务器验证用户归属和订单状态后返回当前支付资料。

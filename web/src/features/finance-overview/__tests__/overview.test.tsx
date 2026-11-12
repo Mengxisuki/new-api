@@ -50,6 +50,10 @@ vi.mock('@tanstack/react-router', async (importOriginal) => ({
 const DAY = 1793462400 // 上海 2026-11-01 00:00
 // 金额均为虚构数据：两天内四条业务线的实收，合计 300.00 元。
 const overview = {
+  offline_cash_cents: 0,
+  write_off_cents: 0,
+  write_off_count: 0,
+  manual_adjustments: [],
   start: DAY,
   end: DAY + 2 * 86400,
   topup_cents: 15050,
@@ -143,6 +147,88 @@ function mount(
   )
   return get
 }
+
+// 人工现金已经包含在服务端实收；前端不得再把挂帐发生额或坏账扣加进去。
+test('分类面板区分人工权益和现金且展开才读取流水', async () => {
+  const get = mount(
+    { finance_overview: { read: true } },
+    {
+      ...overview,
+      offline_cash_cents: 1200,
+      write_off_cents: 800,
+      write_off_count: 1,
+      manual_adjustments: [
+        {
+          source: 'quota_adjust',
+          reason: 'grant',
+          delta: 500000,
+          cash_cents: 0,
+          receivable_cents: 0,
+          count: 1,
+        },
+        {
+          source: 'subscription_bind',
+          reason: 'offline_cash',
+          delta: 0,
+          cash_cents: 1200,
+          receivable_cents: 0,
+          count: 1,
+        },
+      ],
+    }
+  )
+  await screen.findByText('Manual financial activity')
+  expect(screen.getByText('CN¥8.00 · 1')).toBeInTheDocument()
+  expect(metric('Cash received').getByText('CN¥300.00')).toBeInTheDocument()
+  expect(
+    get.mock.calls.some(([url]) => url === '/api/finance/adjustments')
+  ).toBe(false)
+  get.mockImplementation(async () => ({
+    data: {
+      success: true,
+      data: {
+        items: [
+          {
+            id: 4,
+            user_id: 8,
+            operator_id: 100,
+            username: 'debtor',
+            trade_no: 'MAN-test',
+            source: 'quota_adjust',
+            source_id: 0,
+            reason: 'grant',
+            mode: 'add',
+            quota_before: 0,
+            quota_after: 500000,
+            delta: 500000,
+            cash_cents: 0,
+            receivable_cents: 0,
+            cash_ref: '',
+            note: 'audited grant',
+            original_id: 0,
+            credit_entry_id: 0,
+            created_at: DAY,
+          },
+        ],
+        total: 1,
+        page: 1,
+        size: 20,
+        delta: 500000,
+      },
+    },
+  }))
+  await userEvent.click(
+    screen.getByRole('button', { name: 'View adjustment records' })
+  )
+  expect(await screen.findByText('audited grant')).toBeInTheDocument()
+  expect(get).toHaveBeenCalledWith(
+    '/api/finance/adjustments',
+    expect.objectContaining({
+      params: { start: DAY, end: DAY + 2 * 86400, p: 1, page_size: 20 },
+    })
+  )
+  expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+})
 
 // 取某个指标卡的容器：标题所在卡片内同时包含数值和口径说明。
 function metric(label: string) {

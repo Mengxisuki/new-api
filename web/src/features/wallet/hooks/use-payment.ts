@@ -30,6 +30,7 @@ import {
   calculateWaffoAmount,
   calculateWaffoPancakeAmount,
   requestPayment,
+  payWithCredit,
   requestStripePayment,
   isApiSuccess,
 } from '../api'
@@ -85,6 +86,7 @@ export async function requestPaymentQuote(
   }
   const response = await calculator({
     amount: topupAmount,
+    ...(paymentType === 'credit' ? { payment_method: paymentType } : {}),
     ...(invoiceRequired ? { invoice_required: true } : {}),
   })
   // 错误响应必须显式失败，不能将失败金额伪装成零元报价。
@@ -97,6 +99,21 @@ export async function requestPaymentQuote(
   }
   // 入账字段缺失可用于尚无冻结报价的国际渠道，人民币本地渠道随后严格要求。
   const creditedQuota = response.credited_quota ?? null
+  const quotedCents = response.quoted_cents
+  const creditEnabled = response.credit?.enabled
+  const creditAvailableCents = response.credit?.available_cents
+  if (
+    paymentType === 'credit' &&
+    quotedCents === undefined
+  ) {
+    throw new Error(i18next.t('Payment details unavailable. Please retry.'))
+  }
+  if (
+    quotedCents !== undefined &&
+    (!Number.isSafeInteger(quotedCents) || quotedCents <= 0)
+  ) {
+    throw new Error(i18next.t('Payment details unavailable. Please retry.'))
+  }
   if (
     creditedQuota !== null &&
     (!Number.isSafeInteger(creditedQuota) || creditedQuota <= 0)
@@ -119,6 +136,9 @@ export async function requestPaymentQuote(
     invoiceBaseAmount: response.invoice_base_amount,
     invoiceFeePercent: response.invoice_fee_percent,
     invoiceFeeAmount: response.invoice_fee_amount,
+    quotedCents,
+    creditEnabled,
+    creditAvailableCents,
   }
 }
 
@@ -133,6 +153,7 @@ export function usePayment(options: UsePaymentOptions = {}) {
   const invoiceReady = options.invoiceReady !== false
   const [quote, setQuote] = useState<PaymentQuote | null>(null)
   const requestId = useRef(0) // 只有最新金额与渠道的报价可以更新界面。
+  const creditRequest = useRef<{ fingerprint: string; id: string } | null>(null)
   const currency = useSystemConfigStore((state) => state.config.currency)
   const lastRequest = useRef<{ amount: number; paymentType: string } | null>(
     null
@@ -285,6 +306,45 @@ export function usePayment(options: UsePaymentOptions = {}) {
     [invoiceRequired, invoiceReady]
   )
 
+  const processCreditPayment = useCallback(
+    async (topupAmount: number) => {
+      if (!quote || quote.paymentType !== 'credit' || !quote.quotedCents) {
+        handleServerError(
+          new Error(i18next.t('Payment details unavailable. Please retry.'))
+        )
+        return false
+      }
+      const payload = {
+        amount: Math.floor(topupAmount),
+        invoice_required: false as const,
+        quoted_cents: quote.quotedCents,
+      }
+      const fingerprint = JSON.stringify(payload)
+      if (creditRequest.current?.fingerprint !== fingerprint) {
+        creditRequest.current = { fingerprint, id: crypto.randomUUID() }
+      }
+      try {
+        setProcessing(true)
+        const response = await payWithCredit({
+          ...payload,
+          request_id: creditRequest.current.id,
+        })
+        if (!isApiSuccess(response) || response.data?.payment_kind !== 'credit') {
+          handleServerError(response, i18next.t('Payment request failed'))
+          return false
+        }
+        toast.success(i18next.t('Payment completed'))
+        return true
+      } catch (error) {
+        handleServerError(error, i18next.t('Payment request failed'))
+        return false
+      } finally {
+        setProcessing(false)
+      }
+    },
+    [quote]
+  )
+
   return {
     amount: quote?.amount ?? 0,
     creditedQuota: quote?.creditedQuota ?? null,
@@ -294,6 +354,7 @@ export function usePayment(options: UsePaymentOptions = {}) {
     qrPayment,
     calculatePaymentAmount,
     processPayment,
+    processCreditPayment,
     clearQrPayment: () => setQrPayment(null),
   }
 }

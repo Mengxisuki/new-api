@@ -1108,6 +1108,8 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
+	// 调额分类仅用于 add_quota，操作者仍由会话提供。
+	model.ManualFinanceInput
 	Id     int    `json:"id"`
 	Action string `json:"action"`
 	Value  int    `json:"value"`

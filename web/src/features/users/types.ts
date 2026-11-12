@@ -139,12 +139,29 @@ export type ManageUserAction =
   | 'add_quota'
 
 export type QuotaAdjustMode = 'add' | 'subtract' | 'override'
+export type QuotaAdjustReason =
+  | 'compensation'
+  | 'grant'
+  | 'on_account'
+  | 'offline_cash'
+  | 'revoke_grant'
+  | 'revoke_compensation'
+  | 'correction'
 
+// 调额请求把业务分类、现金凭证和幂等键一起提交，服务端据此记账。
+// 金额 value 仍是平台额度单位；人民币字段始终使用整数分。
 export interface ManageUserQuotaPayload {
   id: number
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
+  reason: QuotaAdjustReason
+  note: string
+  cash_cents: number
+  receivable_cents: number
+  cash_ref: string
+  request_id: string
+  original_id?: number
 }
 
 // ============================================================================

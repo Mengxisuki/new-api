@@ -292,26 +292,28 @@ func AdminUpdateSubscriptionPlanStatus(c *gin.Context) {
 }
 
 type AdminBindSubscriptionRequest struct {
+	// 四类人工财务输入嵌入根 JSON，统一由模型校验和记账。
+	model.ManualFinanceInput
 	UserId int `json:"user_id"`
 	PlanId int `json:"plan_id"`
 }
 
 func AdminBindSubscription(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
+	if !requirePaymentCompliance(c) { // 人工分类不绕过既有合规门禁。
 		return
 	}
 
-	var req AdminBindSubscriptionRequest
+	var req AdminBindSubscriptionRequest // 财务分类从根JSON绑定，不接收服务端操作者字段。
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserId <= 0 || req.PlanId <= 0 {
-		common.ApiErrorT(c, "Invalid parameters")
+		common.ApiErrorT(c, "Invalid parameters") // 拒绝不完整购买意图，分类细则由模型统一校验。
 		return
 	}
-	msg, err := model.AdminBindSubscription(req.UserId, req.PlanId, "")
-	if err != nil {
-		common.ApiError(c, err)
+	msg, err := model.AdminBindSubscriptionWithFinance(req.UserId, req.PlanId, c.GetInt("id"), c.GetInt("role"), req.ManualFinanceInput) // 操作者和角色只能来自认证上下文。
+	if err != nil {                                                                                                                      // 任何财务或权益失败都向管理员报告。
+		common.ApiError(c, err) // 不把失败转成未分类免费发放。
 		return
 	}
-	subscriptionChangeSuccess(c, msg)
+	subscriptionChangeSuccess(c, msg) // 保留原分组变动提示的响应合同。
 }
 
 // subscriptionChangeSuccess replies to an admin subscription change. notice
@@ -343,6 +345,8 @@ func AdminListUserSubscriptions(c *gin.Context) {
 }
 
 type AdminCreateUserSubscriptionRequest struct {
+	// 此入口与绑定入口使用同一分类，不能成为无账本旁路。
+	model.ManualFinanceInput
 	PlanId int `json:"plan_id"`
 }
 
@@ -371,28 +375,28 @@ func recordSubscriptionResetUserLogs(c *gin.Context, result *model.SubscriptionR
 	}
 }
 
-// AdminCreateUserSubscription creates a new user subscription from a plan (no payment).
+// AdminCreateUserSubscription 按明确财务分类开通或续期，不能无账本发放。
 func AdminCreateUserSubscription(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
+	if !requirePaymentCompliance(c) { // 人工分类不绕过既有合规门禁。
 		return
 	}
 
-	userId, _ := strconv.Atoi(c.Param("id"))
+	userId, _ := strconv.Atoi(c.Param("id")) // 目标用户来自管理路径，不能覆盖操作者身份。
 	if userId <= 0 {
 		common.ApiErrorT(c, "Invalid user ID")
 		return
 	}
-	var req AdminCreateUserSubscriptionRequest
+	var req AdminCreateUserSubscriptionRequest // 与绑定入口共用ManualFinanceInput的资金约束。
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
-		common.ApiErrorT(c, "Invalid parameters")
+		common.ApiErrorT(c, "Invalid parameters") // 拒绝不完整购买意图，分类细则由模型统一校验。
 		return
 	}
-	msg, err := model.AdminBindSubscription(userId, req.PlanId, "")
-	if err != nil {
-		common.ApiError(c, err)
+	msg, err := model.AdminBindSubscriptionWithFinance(userId, req.PlanId, c.GetInt("id"), c.GetInt("role"), req.ManualFinanceInput) // 两个管理入口必须走同一账本事务。
+	if err != nil {                                                                                                                  // 任何财务或权益失败都向管理员报告。
+		common.ApiError(c, err) // 不把失败转成未分类免费发放。
 		return
 	}
-	subscriptionChangeSuccess(c, msg)
+	subscriptionChangeSuccess(c, msg) // 保留原分组变动提示的响应合同。
 }
 
 func AdminResetUserSubscriptionsByPlan(c *gin.Context) {

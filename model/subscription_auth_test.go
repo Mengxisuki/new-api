@@ -93,7 +93,7 @@ func TestSubscriptionGroupCacheRefreshFailureDoesNotChangeCommittedResult(t *tes
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	DB, LOG_DB = db, db
-	require.NoError(t, db.AutoMigrate(&User{}, &SubscriptionPlan{}, &UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &SubscriptionPlan{}, &UserSubscription{}, &QuotaLedger{}, &Log{})) // 分类账本是开通事务的一部分，不能缺表后误判缓存失败。
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(4)
@@ -136,7 +136,8 @@ func TestSubscriptionGroupCacheRefreshFailureDoesNotChangeCommittedResult(t *tes
 		common.RedisEnabled, common.RDB = oldRedisEnabled, oldRDB
 	})
 
-	message, err := AdminBindSubscription(user.Id, plan.Id, "test")
+	// 缓存失败只能影响同步，不得撤回已提交的分类赠送或升组提示。
+	message, err := AdminBindSubscriptionWithFinance(user.Id, plan.Id, 9999, common.RoleRootUser, ManualFinanceInput{Reason: "grant", Note: "缓存失败不回滚订阅", RequestID: "33333333-3333-4333-8333-333333333333"})
 	require.NoError(t, err)
 	require.NotNil(t, message)
 	assert.Equal(t, "pro", message.Params["group"])

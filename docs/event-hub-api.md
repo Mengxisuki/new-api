@@ -163,7 +163,7 @@ data: {"id":123,"consumer_id":2,"event_id":89,"created_at":1793865600,"last_sent
 
 ### 4.2 钱包充值到账：`wallet.topup_succeeded`
 
-触发于钱包充值订单真正入账的业务事务，包括支付渠道到账及人工补单。不是支付跳转成功提示，也不表示订阅购买、代充值订单付款或所有形式的钱包余额变更。
+触发于钱包充值订单真正增加额度的业务事务，包括支付渠道到账、已核实收款的人工补单及自助挂帐充值。**额度到账不总等于现金到账**：挂帐订单的 `payment_provider/payment_method` 都为 `credit`，`paid_amount` 固定为 `"0.00"`，另有 `receivable_amount` 表示尚未收取的人民币应收元。不是支付跳转成功提示，也不表示订阅购买、代充值订单付款或所有形式的钱包余额变更。
 
 `payload` 字段：
 
@@ -172,7 +172,8 @@ data: {"id":123,"consumer_id":2,"event_id":89,"created_at":1793865600,"last_sent
 | `user_id` | integer | 是 | 钱包所属平台用户编号 |
 | `user_name` | string | 新事件是 | 钱包所属用户的账号名快照；历史兼容规则见 4.1 |
 | `trade_no` | string | 是 | 平台充值交易号，便于与原账单核对 |
-| `paid_amount` | string | 是 | 订单实付金额的十进制文本，当前保留两位小数，如 `"10.00"`；用十进制金额类型处理 |
+| `paid_amount` | string | 是 | 原订单金额的十进制文本，保留两位小数；挂帐固定 `"0.00"`，其他渠道语义见金额单位边界 |
+| `receivable_amount` | string | 挂帐是 | `credit` 充值的应收人民币元，如 `"10.00"`；不计实收，其他渠道不返回此字段 |
 | `credited_quota` | integer | 是 | 实际增加的钱包内部额度，不等于实付金额或模型 Token 数 |
 | `payment_provider` | string | 是 | 支付提供方标识；历史数据可能为空，不用于鉴权 |
 | `payment_method` | string | 是 | 原订单支付方式，如 `wxpay`、`alipay`、`stripe`；按开放字符串处理，历史数据可能为空 |

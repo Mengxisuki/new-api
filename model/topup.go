@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -29,6 +31,13 @@ type TopUp struct {
 	Status          string          `json:"status"`
 	// 到期时间由创建时间推导，仅用于展示，不另存状态。
 	ExpiresAt int64 `json:"expires_at" gorm:"-"`
+	// 请求摘要不建立新唯一键，旧记录空值不会造成迁移冲突。
+	RequestHash string `json:"-" gorm:"size:64"`
+	// 补单仅记录已核实的原渠道漏单，不改变资金分类或原金额。
+	ManualCompleted  bool   `json:"manual_completed"`
+	ManualActor      int    `json:"manual_actor"`
+	ManualReceiptRef string `json:"manual_receipt_ref" gorm:"size:128"`
+	ManualNote       string `json:"manual_note" gorm:"size:500"`
 }
 
 const (
@@ -39,6 +48,8 @@ const (
 )
 
 const (
+	// 挂帐渠道与业务模块独立，三个模块均使用相同 provider。
+	PaymentProviderCredit       = "credit"
 	PaymentProviderEpay         = "epay"
 	PaymentProviderStripe       = "stripe"
 	PaymentProviderCreem        = "creem"
@@ -148,12 +159,19 @@ func creditHubTopUpQuota(tx *gorm.DB, topUp *TopUp, quota int, updates map[strin
 	}
 	// 白名单不包含邮箱、支付原始通知或任何商户凭据。
 	// 实付金额使用十进制文本，跨币种不猜测人民币含义。
-	return AppendHubEventTx(tx, fmt.Sprintf("topup:%d", topUp.Id), HubTopicTopup, topUp.UserId, map[string]any{
+	payload := map[string]any{
 		"user_id": topUp.UserId, "trade_no": topUp.TradeNo,
 		"paid_amount":    decimal.NewFromFloat(topUp.Money).StringFixed(2),
 		"credited_quota": quota, "payment_provider": topUp.PaymentProvider,
 		"payment_method": topUp.PaymentMethod,
-	})
+	}
+	// 原微信事件白名单不变；只有挂帐增加应收，现金实收明确为零。
+	// 债务金额独立于充值额度，消费者不能把履约时间当成收款时间。
+	if topUp.PaymentProvider == PaymentProviderCredit {
+		payload["paid_amount"] = "0.00"
+		payload["receivable_amount"] = decimal.NewFromFloat(topUp.Money).StringFixed(2)
+	}
+	return AppendHubEventTx(tx, fmt.Sprintf("topup:%d", topUp.Id), HubTopicTopup, topUp.UserId, payload)
 }
 
 func (topUp *TopUp) Update() error {
@@ -512,90 +530,156 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 	return topups, total, nil
 }
 
-// ManualCompleteTopUp 管理员手动完成订单并给用户充值
-func ManualCompleteTopUp(tradeNo string, callerIp string) error {
-	if tradeNo == "" {
-		return common.NewMessage("Order number not provided")
+// PayTopUpOnAccount 在同一事务完成钱包履约、债务和授信占用。
+// 锁序为订单→用户→债务→授信，失败时不留下半笔余额。
+// 已成功请求先返回，关闭授信不影响原成功请求恢复。
+// 金额只能来自冻结订单，不使用客户端声称的应付或现行汇率。
+func PayTopUpOnAccount(tradeNo string, userID int) error {
+	tradeNo = strings.TrimSpace(tradeNo) // 交易号空白不影响查找，但不能扩大用户范围。
+	if tradeNo == "" || userID <= 0 {
+		return ErrTopUpNotFound
 	}
-
-	refCol := "`trade_no`"
-	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		refCol = `"trade_no"`
-	}
-
-	var userId int
-	var quotaToAdd int
-	var payMoney float64
-	var paymentMethod string
-
+	var topUp TopUp
+	var credited int // 零值表示本次未履约，幂等退出不触发提交后副作用。
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		topUp := &TopUp{}
-		// 行级锁，避免并发补单
-		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return common.NewMessage("Top-up order does not exist")
+		// 原单行锁同时保护重复点击与跨实例并发。
+		if err := lockForUpdate(tx).Where("trade_no = ? AND user_id = ?", tradeNo, userID).First(&topUp).Error; err != nil {
+			return err
 		}
-
-		// 幂等处理：已成功直接返回
-		if topUp.Status == common.TopUpStatusSuccess {
+		if topUp.PaymentProvider != PaymentProviderCredit { // 业务模块名不是支付渠道，不能误认现金单。
+			return ErrPaymentMethodMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess { // 先恢复成功结果，再处理授权或过期检查。
 			return nil
 		}
-
-		if topUp.Status != common.TopUpStatusPending {
-			return common.NewMessage("Order is not pending payment and cannot be completed")
+		if topUp.Status != common.TopUpStatusPending { // 明确失效的订单不能复活。
+			return ErrTopUpStatusInvalid
 		}
+		// 自助挂帐不是网关已收款通知，过期原单不得继续付款。
+		if err := creditCheckoutPending(topUp.CreateTime); err != nil {
+			return err
+		}
+		if topUp.InvoiceRequired { // 即使坏数据绕过控制器，也禁止挂帐开票。
+			return ErrCreditInvalid
+		}
+		quota, err := topUp.QuotaToCredit() // 只兑现已保存的整数额度，不能按现价补算。
+		if err != nil {
+			return err
+		}
+		cents, err := CreditMoneyCents(topUp.Money) // 应收为人民币分，与钱包额度面值无关。
+		if err != nil {
+			return err
+		}
+		// 停用用户不能通过仍开启的授信取得新额度。
+		var user User
+		if err := lockForUpdate(tx).Select("id", "status").First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Status != common.UserStatusEnabled { // 用户停用和授信停用是两项独立约束。
+			return ErrCreditUnavailable
+		}
+		// 公共 helper 统一三模块授信合同，不在充值路径复制占额 SQL。
+		if _, err := ChargeCreditTx(tx, userID, CreditModuleTopup, tradeNo, cents); err != nil {
+			return err
+		}
+		topUp.Status, topUp.CompleteTime = common.TopUpStatusSuccess, common.GetTimestamp() // 此时间表示履约，并非现金收款。
+		if err := tx.Save(&topUp).Error; err != nil {                                       // 保存失败同时撤销已创建债务。
+			return err
+		}
+		// Hub 事件与余额同事务；挂帐事件实收零，应收单列。
+		if err := creditHubTopUpQuota(tx, &topUp, quota, nil); err != nil {
+			return err
+		}
+		credited = quota // 只在事件和余额均成功后标记本次确实入账。
+		return nil
+	})
+	if err != nil {
+		return err // 不以缓存或日志成功掩盖事务失败。
+	}
+	// 只有本次实际完成才更新缓存和日志，重复成功不产生副作用。
+	if credited > 0 {
+		syncCreditUserQuotaCache(userID, credited, common.LogText("on-account topup"))
+		RecordTopupLog(userID, common.NewMessage("Top-up purchased on account, amount: {{amount}}", map[string]any{"amount": fmt.Sprintf("%.2f", topUp.Money)}), "", PaymentProviderCredit, PaymentProviderCredit)
+	}
+	return nil
+}
 
-		// 新官方及易支付订单读取冻结权益，不能按当前展示币种重算。
-		// Stripe 仍按 Money 表示的美元额度，其它网关仍按原 Amount 契约。
-		// 只有真实历史易支付零冻结订单保留原美元数量规则。
-		var quotaErr error
-		if IsOfficialPaymentProvider(topUp.PaymentProvider) {
-			quotaToAdd, quotaErr = topUp.QuotaToCredit()
-		} else if topUp.PaymentProvider == PaymentProviderEpay {
-			// 人工补单与自动回调使用同一冻结规则，不能因入口不同多发额度。
-			quotaToAdd, quotaErr = topUp.epayQuotaToCredit()
-		} else if topUp.PaymentProvider == PaymentProviderStripe {
-			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
-				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-			)
+// ManualCompleteTopUp 仅补回已核实收款但遗漏到账的原现金订单。
+// 凭证、操作者与标记随订单同事务保存，不额外写现金账本重复计收。
+// 拒绝挂帐和订阅镜像；不能借人工入口将债务转成现金充值。
+// 国际订单的实收币种与 Money 含义未统一核实，因此明确拒绝。
+func ManualCompleteTopUp(tradeNo, callerIP string, actor int, receiptRef, note string) error {
+	tradeNo, receiptRef, note = strings.TrimSpace(tradeNo), strings.TrimSpace(receiptRef), strings.TrimSpace(note)
+	if tradeNo == "" || actor <= 0 || receiptRef == "" || len(receiptRef) > 128 || len([]rune(note)) > 500 { // 凭证必填且按持久字段容量限制。
+		return common.NewMessage("Invalid payment receipt")
+	}
+	var topUp TopUp
+	var credited int // 提交后副作用只基于本次实际发放。
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		// 与原渠道通知竞争同一原单锁，不能分别发放两次。
+		if err := lockForUpdate(tx).Where("trade_no = ?", tradeNo).First(&topUp).Error; err != nil {
+			return err
+		}
+		if !IsOfficialPaymentProvider(topUp.PaymentProvider) && topUp.PaymentProvider != PaymentProviderEpay { // 仅保留已核实本地现金合同。
+			return ErrPaymentMethodMismatch
+		}
+		// 不能按 Amount=0 猜镜像，使用真正的订阅订单关联排除。
+		var subscriptions int64 // 同交易号的订阅付款不能补成钱包充值。
+		if err := tx.Model(&SubscriptionOrder{}).Where("trade_no = ?", tradeNo).Count(&subscriptions).Error; err != nil {
+			return err
+		}
+		if subscriptions > 0 { // 即便镜像状态异常也不授予钱包额度。
+			return ErrPaymentMethodMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess { // 保留首次到账事实，不覆盖原凭证。
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending { // 失败或撤销单须先对账，不能人工强制恢复。
+			return ErrTopUpStatusInvalid
+		}
+		// 此处是线下凭证确认过的已收款，不能套用自助付款过期判断。
+		// 金额必须有效但保持原值，不按最新配置或凭证内容重算。
+		// 现金补单不占授信，不套用授信金额上限或改写历史小数精度。
+		if topUp.Money <= 0 || math.IsNaN(topUp.Money) || math.IsInf(topUp.Money, 0) {
+			return common.NewMessage("Invalid payment amount")
+		}
+		var quota int
+		var err error
+		if topUp.PaymentProvider == PaymentProviderEpay {
+			quota, err = topUp.epayQuotaToCredit() // 历史零冻结值仍遵循原易支付数量合同。
 		} else {
-			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
-				decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-			)
+			quota, err = topUp.QuotaToCredit() // 官方单缺失冻结额度时不猜测权益。
 		}
-		if quotaErr != nil || quotaToAdd <= 0 {
-			return ErrInvalidTopUpQuota
-		}
-
-		// 标记完成
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
+		if err != nil {
 			return err
 		}
-
-		// 增加用户额度（立即写库，保持一致性）
-		if err := creditHubTopUpQuota(tx, topUp, quotaToAdd, nil); err != nil {
+		// 原 provider、money、credited_quota 均不改写。
+		topUp.Status, topUp.CompleteTime = common.TopUpStatusSuccess, common.GetTimestamp()
+		topUp.ManualCompleted, topUp.ManualActor = true, actor      // 标记与权益共用事务，不写独立现金收入。
+		topUp.ManualReceiptRef, topUp.ManualNote = receiptRef, note // 持久审计不依赖可关闭的日志库。
+		if err := tx.Save(&topUp).Error; err != nil {               // 标记失败不允许余额单独到账。
 			return err
 		}
+		if err := creditHubTopUpQuota(tx, &topUp, quota, nil); err != nil { // 事件失败也回滚人工确认。
+			return err
+		}
+		// 开票申请跟随原已收款事实完成，失败则整笔补单回滚。
 		if topUp.InvoiceRequired {
-			if err := MarkInvoicePaidTx(tx, topUp.TradeNo); err != nil {
+			if err := MarkInvoicePaidTx(tx, tradeNo); err != nil {
 				return err
 			}
 		}
-
-		userId = topUp.UserId
-		payMoney = topUp.Money
-		paymentMethod = topUp.PaymentMethod
+		credited = quota // 只有首次补单完成才需要更新缓存。
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
-
-	// 事务外记录日志，避免阻塞
-	syncCreditUserQuotaCache(userId, quotaToAdd, common.LogText("manual topup"))
-	RecordTopupLog(userId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", payMoney)}), callerIp, paymentMethod, "admin")
+	// 幂等命中不覆盖首次凭证，也不重复日志、缓存或开票。
+	if credited > 0 {
+		syncCreditUserQuotaCache(topUp.UserId, credited, common.LogText("manual topup"))
+		RecordTopupLog(topUp.UserId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(credited), "amount": fmt.Sprintf("%f", topUp.Money)}), callerIP, topUp.PaymentMethod, topUp.PaymentProvider)
+	}
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {

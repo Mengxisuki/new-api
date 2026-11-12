@@ -165,10 +165,14 @@ export async function manageUser(
 /**
  * Adjust user quota atomically (add/subtract/override)
  */
+// 调额写入是资金/权益敏感操作，认证恢复不能自动重放未知结果。
+// 调用方在同一业务操作内复用 request_id，修改参数时才生成新键。
 export async function adjustUserQuota(
   payload: ManageUserQuotaPayload
 ): Promise<ApiResponse<Partial<User>>> {
-  const res = await api.post('/api/user/manage', payload)
+  const res = await api.post('/api/user/manage', payload, {
+    singleUseAuthorization: true,
+  })
   return res.data
 }
 

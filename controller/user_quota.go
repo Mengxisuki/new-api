@@ -16,6 +16,8 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		"target_user_id":  req.Id,
 		"mode":            req.Mode,
 		"requested_quota": req.Value,
+		"reason":          req.Reason, // 审计保存分类，主库账本才是实际收款来源。
+		"request_id":      req.RequestID,
 	}
 	switch req.Mode {
 	case "add":
@@ -43,7 +45,7 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		markAuditLogged(c)
 	}()
 
-	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value)
+	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value, c.GetInt("id"), req.ManualFinanceInput)
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
@@ -56,6 +58,12 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		case errors.Is(err, model.ErrUserQuotaPermission):
 			params["failure_reason"] = "permission_denied"
 			common.ApiErrorT(c, "No permission to update users of same or higher permission level")
+		case errors.Is(err, model.ErrQuotaLedgerInvalid), errors.Is(err, model.ErrQuotaLedgerReason), errors.Is(err, model.ErrQuotaLedgerCash), errors.Is(err, model.ErrQuotaLedgerConflict):
+			params["failure_reason"] = "invalid_financial_request"
+			common.ApiError(c, err)
+		case errors.Is(err, model.ErrCreditInvalid), errors.Is(err, model.ErrCreditUnavailable), errors.Is(err, model.ErrCreditLimit), errors.Is(err, model.ErrCreditConflict):
+			params["failure_reason"] = "credit_unavailable"
+			rechargeError(c, err)
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			params["failure_reason"] = "target_not_found"
 			common.ApiErrorT(c, "User does not exist")
@@ -76,6 +84,13 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		params["quota"] = req.Value
 	}
 	success = true
+	params["ledger_id"] = adjustment.LedgerID
+	params["duplicate"] = adjustment.Duplicate
+	// 请求审计仍保留，但幂等恢复不能再写一次额度发放业务日志。
+	if adjustment.Duplicate {
+		common.ApiSuccess(c, gin.H{"ledger_id": adjustment.LedgerID})
+		return
+	}
 	operation := model.AuditOperation{Action: action, Params: params}
 	model.RecordLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup,
 		auditContentEN(action, params), auditOperatorInfo(c), &operation, c)

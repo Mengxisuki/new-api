@@ -33,7 +33,7 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 			}
 			db := modelManagementDB(t, dialect, dsn)
 			require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.AccountRechargeOrder{},
-				&model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}))
+				&model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.QuotaLedger{}))
 			exportEnabled, consumeEnabled := common.DataExportEnabled, common.LogConsumeEnabled
 			common.DataExportEnabled, common.LogConsumeEnabled = true, true
 			t.Cleanup(func() {
@@ -194,6 +194,36 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 			assert.EqualValues(t, 1234, actual.ReceivedCents)
 			assert.Zero(t, actual.TopupCents)
 			assert.Empty(t, actual.OtherGateways) // 镜像不应被误列为 provider 为空的其他网关。
+
+			// 人工现金与额度采用明显不同数值，防止额度面值被当成人民币。
+			cashInput := model.ManualFinanceInput{Reason: "offline_cash", CashCents: 3400, CashRef: "offline-received", Note: "verified receipt", RequestID: "00000000-0000-4000-8000-000000000001"}
+			_, err = model.AdjustUserQuota(1, common.RoleRootUser, "add", 500000, 100, cashInput)
+			require.NoError(t, err)
+			_, err = model.AdjustUserQuota(1, common.RoleRootUser, "add", 500000, 100, cashInput)
+			require.NoError(t, err) // 原请求重复不能多算一次线下实收。
+			_, err = model.AdminBindSubscriptionWithFinance(1, plan.Id, 100, common.RoleRootUser, model.ManualFinanceInput{Reason: "offline_cash", CashCents: 600, CashRef: "subscription-received", Note: "manual subscription", RequestID: "00000000-0000-4000-8000-000000000002"})
+			require.NoError(t, err)
+			require.NoError(t, db.Model(&model.CreditAccount{}).Where("user_id = ?", 1).Update("topup_enabled", true).Error)
+			adjustment, err := model.AdjustUserQuota(1, common.RoleRootUser, "add", 200000, 100, model.ManualFinanceInput{Reason: "on_account", ReceivableCents: 1700, Note: "deferred collection", RequestID: "00000000-0000-4000-8000-000000000003"})
+			require.NoError(t, err)
+			var ledger model.QuotaLedger
+			require.NoError(t, db.First(&ledger, adjustment.LedgerID).Error)
+			require.NoError(t, model.WriteOffCreditEntry(ledger.CreditEntryID, 100, "uncollectible"))
+			actual, err = model.GetFinanceOverview(now-60, common.GetTimestamp()+60)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3400, actual.TopupCents)
+			assert.EqualValues(t, 1834, actual.SubscriptionCents)
+			assert.EqualValues(t, 5234, actual.ReceivedCents)
+			assert.EqualValues(t, 4000, actual.OfflineCashCents)
+			assert.EqualValues(t, 1700, actual.WriteOffCents)
+			assert.EqualValues(t, 1, actual.WriteOffCount)
+			assert.EqualValues(t, 5234, actual.NetCents) // 坏账核销不是现金退款。
+			assert.Len(t, actual.ManualAdjustments, 3)
+			var dailyTotal int64
+			for _, day := range actual.Daily {
+				dailyTotal += day.TopupCents + day.SubscriptionCents + day.RechargeCents + day.CreditSettledCents
+			}
+			assert.Equal(t, actual.ReceivedCents, dailyTotal)
 		})
 	}
 }
@@ -205,7 +235,7 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
 	require.NoError(t, model.PublishUserAuthCache(root.Id))
 	require.NoError(t, model.DB.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}, &model.TopUp{}, &model.SubscriptionOrder{},
-		&model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}))
+		&model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.QuotaLedger{}))
 	oldMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = oldMaster })
@@ -213,6 +243,7 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 
 	engine := gin.New()
 	engine.GET("/api/finance/overview", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), GetFinanceOverview)
+	engine.GET("/api/finance/adjustments", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), GetFinanceAdjustments)
 	// 周期接口沿用同一会话和只读授权，写操作另经 Root 门槛。
 	require.NoError(t, model.DB.AutoMigrate(&model.SubscriptionPlan{}, &model.UserSubscription{}, &model.FinancePoolSubscription{}))
 	engine.GET("/api/finance/subscriptions", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), GetFinanceSubscriptions)
@@ -285,6 +316,13 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 	require.NoError(t, pat.SetScopes([]string{"finance_overview:read"}))
 	require.NoError(t, model.CreateUserAccessToken(finance.Id, pat, service.AccessTokenMaxPerUser))
 	assert.NotEqual(t, http.StatusOK, get(raw, path).Code)
+	// 人工记录包含收款凭证，不因既有开票角色或 PAT 范围而顺带开放。
+	adjustmentsPath := strings.Replace(path, "/overview?", "/adjustments?", 1)
+	assert.Contains(t, get(financeToken, adjustmentsPath).Body.String(), `"items":[]`)
+	for _, token := range []string{raw, commonToken, ""} {
+		assert.NotEqual(t, http.StatusOK, get(token, adjustmentsPath).Code)
+	}
+	assert.Contains(t, get(rootToken, adjustmentsPath+"&user_id=invalid").Body.String(), `"success":false`)
 
 	// 已获授权财务和管理员可以看周期，个人令牌与普通用户不能看。
 	subPath := strings.Replace(path, "/overview?", "/subscriptions?", 1)

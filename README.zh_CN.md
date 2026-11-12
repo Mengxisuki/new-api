@@ -391,7 +391,7 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 - 退款只包括平台内登记的代充值现金退款和已结清挂帐退款。充值/订阅在商户后台直接退款，目前缺少平台登记来源，不在统计中。
 - 微信、支付宝官方渠道和易支付按本地人民币合同合计。其他网关单列订单存储值，不当作已核实现金；例如 Stripe 的记录金额可能是额度面额。历史钱包订单的渠道不明时也不猜币种。
 - 开票附加费已经包含在实收里，说明金额不重复相加。钱包余额包含赠送、兑换和手动调整，不能当作现金余额或实收；额度显示沿用站点既有单位。消耗依赖消费日志与看板统计均开启，按小时汇总并存在既有缓存落库延迟，不是实时财务账本。
-- 人工补单目前没有独立的持久收款分类，成功订单可能包含人工补单；本页不是与微信商户账单完成核对后的正式财务报表。手动调额分类、充值/订阅自助挂帐、坏账核销、兑换码售赠分类、支出台账及订阅成本覆盖周期均属于后续期，本期未实现。
+- 本页不是与微信商户账单完成核对后的正式财务报表。第一期未覆盖的手动调额分类、充值/订阅自助挂帐、坏账核销和人工补单凭证现已在下方「第 2 期」接入；历史无凭证的成功补单不自动回填。兑换码售赠分类、支出台账及订阅成本覆盖周期仍属于后续期。
 
 代码导航：`model/finance_overview.go` 负责只读聚合，`controller/finance_overview.go` 校验时间范围，`GET /api/finance/overview?start=<Unix秒>&end=<Unix秒>` 返回左闭右开时段；`service/authz/resources_finance.go` 定义总览独立权限，前端在 `web/src/features/finance-overview/`。本期不新增业务表、迁移或依赖。
 
@@ -410,6 +410,44 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 本地验证（2026-11-12）：SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17 的空表创建、已有用户/套餐/订阅表升级、新表连续迁移、索引与记录保留、两类筛选分页及 CRUD 通过；编译后的服务在三个全新隔离库分别启动两次，健康检查与人工记录保留通过。后端 `model/controller/router/middleware/service/authz` 回归通过；前端财务模块 28 项测试、`bun x tsgo -b`、定向 oxlint 和生产构建通过。隔离实例实际登录、创建/修改后的日期回显、两类筛选及 390px 宽度检查通过，页面无横向溢出，浏览器无运行错误。仓库 `bun run typecheck` 当前指向本机不可用的 `bun check`，验证使用已安装的 `tsgo`，未改动依赖。
 
 复验命令：`TEST_MYSQL_DSN='<回环测试库 DSN>' TEST_POSTGRES_DSN='<回环 PostgreSQL URL>' go test ./controller -run '^TestFinance(Overview|Subscriptions)' -count=1 -v`；`go test ./model ./controller ./router ./middleware ./service/authz`；前端 `bun run test src/features/finance-overview/__tests__`、`bun x tsgo -b`、`bun x oxlint -c .oxlintrc.json src/features/finance-overview src/i18n/static-keys.ts`、`bun run build`。本次未提交、推送或生产部署，首次发布须正常执行新表迁移。
+
+### 分类记账与全销售挂帐（第 2 期）
+
+第二期在现有财务总览上关联人工发放、实际线下收款及欠款，不将日志库作为财务账本，也不改变既有订阅甘特图/号池周期。
+
+- **人工调额**：用户管理的调额弹窗需填写分类、说明和稳定请求身份。正向发放/向上覆盖可选补偿、赠送、挂帐、线下收款；线下收款必填人民币分金额及收款凭证，录入即计实收；挂帐独立填写人民币应收分，不由额度面额反推。
+- **扣减与下调覆盖**：仅更正额度，区分撤回赠送、撤回补偿、账务更正，可关联原记录。不会自动退现金、取消欠款或恢复授信；零差额覆盖也不能制造收款/欠款。
+- **后台开订阅**：两个现有管理员入口共用上述四分类和既有续期规则。保存实际订阅实例及前后权益快照，不伪造钱包余额变化或微信订单。
+- **自助挂帐**：Root 在支付设置的用户授信中分别开放钱包充值、订阅、代充值。三类共用人民币授信上限；用户在钱包/订阅付款页选择挂帐，确认本笔应收后获得权益。挂帐不开票、不生成二维码、不调用商户；待付订单有效期为十分钟，支付时再次核对用户状态、模块授权、有效期、额度及套餐状态。
+- **人工补单**：保留“原渠道已经收款但回调漏单”的专用操作，必须核实收款凭证。原订单的渠道、金额、冻结额度不变，成功状态与到账事务正常更新；它不转成四分类。已成功的重复补单/迟到回调不再发权益、记实收、生成到账事件或覆盖首次凭证。仅支持已明确本地金额合同的官方微信/支付宝和易支付，国际渠道不猜测现金金额。
+- **核销**：财务在挂帐管理对未结清单填写核销原因并确认。只释放授信占用，保留欠款金额、原单、操作者和原因；不记实收、不再次发权益、不回收已消费额度或取消订阅。核销、结清与退款竞争只允许一个资金终态。
+- **总览关联**：线下收款归入对应钱包/订阅实收及每日序列，渠道单列；挂帐权益单不计实收，财务结清后才计入。新增人工分类汇总、流水明细和本期坏账核销。额度单位、人民币现金与应收分列，核销不当作现金退款扣减。
+
+主库新增 `quota_ledgers`，保存人工请求唯一身份、摘要、用户/操作者、分类、额度快照、订阅快照及现金/应收。`credit_entries` 增加独立核销说明；`top_ups` 保存人工补单凭证/操作者及自助请求摘要，`subscription_orders` 保存自助请求摘要与冻结套餐快照。启动按 `model/main.go` 自动迁移；旧记录不回填虚构现金或来源，不扫描可清理日志来“还原”已无可靠依据的历史账目。前后端需配套发布，旧客户端缺少新必填字段时明确报错。
+
+调用契约：
+
+| 入口 | 主要参数与限制 |
+| --- | --- |
+| `POST /api/user/manage`（`action=add_quota`） | 原 `id/mode/value` 加 `reason/note/request_id`；现金用 `cash_cents/cash_ref`，挂帐用 `receivable_cents`，可选 `original_id`。用户与额度权限仍由后端验证。 |
+| 两个管理员订阅开通入口 | 原用户/套餐参数加相同分类字段；实际操作人取鉴权身份，不能由请求伪造。 |
+| `POST /api/user/credit/pay` | `amount/request_id/quoted_cents`，`invoice_required=false`；报价沿用 `/api/user/amount`，支付方式为 `credit`。 |
+| `POST /api/subscription/credit/pay` | `plan_id/request_id/quoted_cents`，`invoice_required=false`。 |
+| `POST /api/user/topup/complete` | `trade_no/receipt_ref/note`，不得覆盖原单金额和渠道。 |
+| `POST /api/finance/credit/entries/:id/write-off` | `reason` 必填，要求真实登录会话和财务写权限。 |
+| `GET /api/finance/adjustments` | `start/end` 与总览相同，支持 `p/page_size/user_id/reason/keyword`；要求独立总览查看权限。 |
+
+`request_id` 为 UUIDv4，同次操作重试必须沿用。相同键不同内容拒绝；建单响应丢失可恢复原单，同单付款、回调及补单各自幂等。事务失败不保留半份权益/债务；PostgreSQL 唯一冲突后在事务外恢复原结果。已有消费预扣仍使用原钱包缓存合同，首次提交只同步差额，不以总余额覆盖预扣。
+
+代码导航：`model/quota_ledger.go`、`user_quota_adjustment.go`、`manual_subscription.go` 为人工来源；`model/credit_checkout.go`、`controller/credit_checkout.go` 为自助挂帐；公共占额与结清/核销在 `model/credit_account.go`。前端按 `users`、`subscriptions`、`wallet`、`credit`、`finance-overview` 职责接入。
+
+三库复验：在隔离回环实例配置 `TEST_MYSQL_DSN/TEST_POSTGRES_DSN`，运行 `go test ./controller ./model -run 'TestManualFinance|TestCredit|TestFinanceOverview|TestManageUserQuota|TestSubscriptionRenewal' -count=1 -v`；另用 `TEST_MANAGE_USER_DIALECT=sqlite|mysql|postgres`、`TEST_MANAGE_USER_SEPARATE_LOG_DB=1` 验证独立日志库。定向并发可加 `-race`。前端类型使用本地 `web/node_modules/.bin/tsgo -b`，相关测试、lint、构建后再构建 Go 服务。
+
+第二期本地验证：SQLite **3.50.4**、MySQL **8.4.2**、PostgreSQL **14.17** 新建/旧表升级/重复迁移、唯一约束、资金闭环及竞态检测通过；相关6个后端包完整回归和 `go vet` 通过。全量测试 DSN 应使用新建空库（既有 `TestDeleteRedemptionBatch` 不接受已含用户/兑换码表的库），不在生产库执行测试。
+
+前端受影响 **19 文件134项**、真实引用类型检查、**35个改动文件零lint错误**及前后端生产构建通过。前端全量 **2671项中2670项通过**，剩余一项仍是既有插件市场源码高亮断言，未扩改该模块。临时实例通过真实HTTP完成分类调额、后台订阅、用户充值/订阅挂帐、结清、核销及重试，并以手算核对实收/待收/核销。浏览器实际操作了没有微信配置、只有授信的账户：钱包付款、订阅续费、分类调额及核销历史显示均通过；390px页面无横向溢出和运行时异常。测试未调用真实商户，未部署。
+
+第二期不包括兑换码售赠分类、上游成本/支出台账、订阅成本摊销、部分还款、批量结清或自动坏账追回；生产发布仍需单独授权。
 
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 

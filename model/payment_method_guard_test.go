@@ -409,8 +409,8 @@ func setupEpayFrozenQuotaDatabase(t *testing.T, dialect string) {
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	DB, LOG_DB = db, db // 支付后的日志也写入当前隔离前缀表。
 	common.SetDatabaseTypes(common.DatabaseType(dialect), common.DatabaseType(dialect))
-	initCol()                                  // 方言切换后列名转义必须同步，尤其 PostgreSQL 保留字。
-	models := []any{&User{}, &TopUp{}, &Log{}} // 只建立本次回调与补单实际使用的业务表。
+	initCol()                                                        // 方言切换后列名转义必须同步，尤其 PostgreSQL 保留字。
+	models := []any{&User{}, &TopUp{}, &SubscriptionOrder{}, &Log{}} // 只建立本次回调与补单实际使用的业务表。
 	t.Cleanup(func() {
 		assert.NoError(t, db.Migrator().DropTable(models...)) // 只删除本次专用前缀表。
 		DB, LOG_DB = oldDB, oldLog                            // 在关闭连接前恢复其他测试的模型环境。
@@ -446,7 +446,7 @@ func checkEpayFrozenQuota(t *testing.T, manual bool, frozen int) {
 	for range 2 {
 		var err error
 		if manual {
-			err = ManualCompleteTopUp(order.TradeNo, "127.0.0.1")
+			err = ManualCompleteTopUp(order.TradeNo, "127.0.0.1", 1, "verified-epay-receipt", "已核实渠道收款")
 		} else {
 			_, err = RechargeEpay(order.TradeNo, "wxpay", "127.0.0.1")
 		}

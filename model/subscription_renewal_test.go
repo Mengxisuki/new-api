@@ -61,8 +61,8 @@ func setupSubscriptionRenewalDatabase(t *testing.T, dialect string) {
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType() // 原方言也必须一并恢复。
 	DB, LOG_DB = db, db                                                        // 付款日志走真实实现，但只写本轮测试前缀的表。
 	common.SetDatabaseTypes(common.DatabaseType(dialect), common.DatabaseType(dialect))
-	initCol() // 切换方言后重新生成保留字列名和布尔值表示。
-	models := []any{&User{}, &SubscriptionPlan{}, &UserSubscription{}, &SubscriptionOrder{}, &TopUp{}, &Log{}}
+	initCol()                                                                                                                  // 切换方言后重新生成保留字列名和布尔值表示。
+	models := []any{&User{}, &SubscriptionPlan{}, &UserSubscription{}, &SubscriptionOrder{}, &TopUp{}, &Log{}, &QuotaLedger{}} // 后台发放必须与分类来源单同事务。
 	t.Cleanup(func() {
 		assert.NoError(t, db.Migrator().DropTable(models...)) // 只清理本测试前缀，不操作已有业务表。
 		DB, LOG_DB = oldDB, oldLog                            // 在关闭临时连接前恢复业务句柄。
@@ -127,8 +127,8 @@ func checkSubscriptionRenewal(t *testing.T, scenario string) {
 		t.Cleanup(func() { InvalidateSubscriptionPlanCache(plan.Id) })
 	}
 	if scenario == "admin" {
-		// 管理员授权沿用原入口；用户购买只能通过外部付款回调生效。
-		_, err := AdminBindSubscription(user.Id, plan.Id, "renewal")
+		// 分类赠送使用正式人工入口；原续期锚点、限购与用量断言保持不变。
+		_, err := AdminBindSubscriptionWithFinance(user.Id, plan.Id, 9999, common.RoleRootUser, ManualFinanceInput{Reason: "grant", Note: "后台赠送续期", RequestID: "44444444-4444-4444-8444-444444444444"})
 		require.NoError(t, err)
 	} else {
 		payments := 1 // 普通购买只提供一笔已确认的外部付款。

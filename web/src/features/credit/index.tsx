@@ -38,9 +38,11 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { CreditAccounts } from './accounts'
 import {
+  CREDIT_MODULE_LABELS,
   CREDIT_STATUS,
   getCreditEntries,
   settleCreditEntry,
+  writeOffCreditEntry,
   type CreditEntry,
 } from './api'
 
@@ -139,26 +141,41 @@ export function CreditManagement() {
   const [keyword, setKeyword] = useState('')
   const [userID, setUserID] = useState(0) // 零表示未指定某个债务人。
   const search = useDebounce(keyword) // 使用统一延迟，不自建定时器。
-  const [selected, setSelected] = useState<CreditEntry | null>(null) // 确认目标与筛选列表独立。
-  const [reference, setReference] = useState('') // 收款凭证不会自动取订单号。
-  const [note, setNote] = useState('') // 内部备注不进入买家订单展示。
+  const [selected, setSelected] = useState<CreditEntry | null>(null)
+  const [reference, setReference] = useState('')
+  const [note, setNote] = useState('')
+  const [writeOff, setWriteOff] = useState<CreditEntry | null>(null)
+  const [writeOffReason, setWriteOffReason] = useState('')
   const query = useQuery({
     queryKey: ['credit-entries', page, status, search, userID], // 筛选范围不同必须隔离缓存。
     queryFn: () => getCreditEntries(page, status, search, userID),
     enabled: canRead, // 无权限时禁止后台预读。
   })
+  const invalidateCreditViews = async () => {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['credit-entries'] }),
+      client.invalidateQueries({ queryKey: ['credit-accounts'] }),
+      client.invalidateQueries({ queryKey: ['recharge'] }),
+      client.invalidateQueries({ queryKey: ['finance-overview'] }),
+    ])
+  }
   const settle = useMutation({
     mutationFn: (entry: CreditEntry) =>
       settleCreditEntry(entry.id, reference.trim(), note.trim()),
     onError: (error) => handleServerError(error),
     onSuccess: async () => {
-      // 记录和授信占用必须一起刷新，不能只让按钮消失而保留旧额度。
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ['credit-entries'] }),
-        client.invalidateQueries({ queryKey: ['credit-accounts'] }),
-        client.invalidateQueries({ queryKey: ['recharge'] }),
-      ])
-      setSelected(null) // 成功之后才释放当前确认目标。
+      await invalidateCreditViews()
+      setSelected(null)
+    },
+  })
+  const writeOffMutation = useMutation({
+    mutationFn: (entry: CreditEntry) =>
+      writeOffCreditEntry(entry.id, writeOffReason.trim()),
+    onError: (error) => handleServerError(error),
+    onSuccess: async () => {
+      await invalidateCreditViews()
+      setWriteOff(null)
+      setWriteOffReason('')
     },
   })
   if (!canRead) return <ErrorState title={t('Access denied')} />
@@ -262,7 +279,7 @@ export function CreditManagement() {
                       <div>
                         {row.trade_no}
                         <p className='text-muted-foreground text-xs'>
-                          {t('Account top-up')}
+                          {t(CREDIT_MODULE_LABELS[row.module])}
                         </p>
                       </div>
                     ),
@@ -275,7 +292,18 @@ export function CreditManagement() {
                   {
                     id: 'status', // 债务终态不等于人工办理状态。
                     header: t('Credit status'),
-                    cell: (row) => t(CREDIT_STATUS[row.status]),
+                    cell: (row) => (
+                      <div>
+                        {t(CREDIT_STATUS[row.status])}
+                        {/* 核销不是收款，原因与操作人放在终态下方，不冒充收款凭证。 */}
+                        {row.status === 'write_off' && (
+                          <div className='text-muted-foreground text-xs'>
+                            <p>{row.write_off_note}</p>
+                            <p>#{row.closed_by} · {new Date(row.closed_at * 1000).toLocaleString(locale)}</p>
+                          </div>
+                        )}
+                      </div>
+                    ),
                   },
                   // 日期使用合法界面语言标签，零时间表示尚未发生。
                   {
@@ -308,21 +336,33 @@ export function CreditManagement() {
                     ),
                   },
                   {
-                    id: 'actions', // 操作列仍需细粒度写能力。
+                    id: 'actions',
                     header: t('Actions'),
                     cell: (row) =>
                       canWrite && row.status === 'outstanding' ? (
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          onClick={() => {
-                            setReference('') // 切换记录不能沿用上一笔凭证。
-                            setNote('') // 每次确认重新填写当前收款说明。
-                            setSelected(row) // 只打开当前主动选择的订单。
-                          }}
-                        >
-                          {t('Record full settlement')}
-                        </Button>
+                        <div className='flex flex-wrap justify-end gap-2'>
+                          <Button
+                            size='sm'
+                            variant='outline'
+                            onClick={() => {
+                              setReference('')
+                              setNote('')
+                              setSelected(row)
+                            }}
+                          >
+                            {t('Record full settlement')}
+                          </Button>
+                          <Button
+                            size='sm'
+                            variant='destructive'
+                            onClick={() => {
+                              setWriteOffReason('')
+                              setWriteOff(row)
+                            }}
+                          >
+                            {t('Write off')}
+                          </Button>
+                        </div>
                       ) : null,
                   },
                 ]}
@@ -382,6 +422,36 @@ export function CreditManagement() {
                 value={note}
                 maxLength={500}
                 onChange={(event) => setNote(event.target.value)}
+              />
+            </Field>
+          </ConfirmDialog>
+        )}
+        {writeOff && canWrite && (
+          <ConfirmDialog
+            open
+            destructive
+            title={t('Write off credit entry')}
+            desc={`${writeOff.trade_no} · CNY ${formatNumber(writeOff.amount_cents / 100, locale)}. ${t('Write-off releases the credit hold only. It is not a cash refund and does not grant benefits.')}`}
+            onOpenChange={(open) => {
+              if (!open && !writeOffMutation.isPending) {
+                setWriteOff(null)
+                setWriteOffReason('')
+              }
+            }}
+            isLoading={writeOffMutation.isPending}
+            disabled={!writeOffReason.trim()}
+            confirmText={t('Confirm write-off')}
+            handleConfirm={() => writeOffMutation.mutate(writeOff)}
+          >
+            <Field>
+              <FieldLabel htmlFor='credit-write-off-reason'>
+                {t('Write-off reason')} *
+              </FieldLabel>
+              <Input
+                id='credit-write-off-reason'
+                value={writeOffReason}
+                maxLength={500}
+                onChange={(event) => setWriteOffReason(event.target.value)}
               />
             </Field>
           </ConfirmDialog>

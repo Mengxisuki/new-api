@@ -27,19 +27,11 @@ import {
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -98,6 +90,8 @@ export function BillingHistoryDialog({
 
   const [activeTab, setActiveTab] = useState('orders') // 发票列表仅在用户主动切换时查询。
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
+  const [receiptRef, setReceiptRef] = useState('')
+  const [completionNote, setCompletionNote] = useState('')
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
@@ -123,9 +117,15 @@ export function BillingHistoryDialog({
 
   const handleConfirmComplete = async () => {
     if (confirmTradeNo) {
-      const success = await handleCompleteOrder(confirmTradeNo)
+      const success = await handleCompleteOrder(
+        confirmTradeNo,
+        receiptRef,
+        completionNote
+      )
       if (success) {
         setConfirmTradeNo(null)
+        setReceiptRef('')
+        setCompletionNote('')
       }
     }
   }
@@ -369,9 +369,11 @@ export function BillingHistoryDialog({
                               <Button
                                 size='sm'
                                 variant='outline'
-                                onClick={() =>
+                                onClick={() => {
+                                  setReceiptRef('')
+                                  setCompletionNote('')
                                   setConfirmTradeNo(record.trade_no)
-                                }
+                                }}
                                 disabled={completing}
                               >
                                 {t('Complete Order')}
@@ -443,33 +445,44 @@ export function BillingHistoryDialog({
         tradeNo={retriedPayment?.trade_no}
       />
 
-      {/* Confirm Complete Order Dialog */}
-      <AlertDialog
-        open={!!confirmTradeNo}
-        onOpenChange={(open) => !open && setConfirmTradeNo(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Complete Order')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                'Are you sure you want to manually complete this order? The user will be credited with the corresponding quota.'
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={completing}>
-              {t('Cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmComplete}
-              disabled={completing}
-            >
-              {completing ? t('Processing...') : t('Confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* 补单必须核实原微信收款；金额沿用原订单，禁止在此编辑。 */}
+      {confirmTradeNo && (
+        <ConfirmDialog
+          open
+          title={t('Complete Order')}
+          desc={t('Confirm that the original WeChat payment was received. The order amount cannot be changed.')}
+          onOpenChange={(open) => {
+            if (!open && !completing) {
+              setConfirmTradeNo(null)
+              setReceiptRef('')
+              setCompletionNote('')
+            }
+          }}
+          isLoading={completing}
+          disabled={!receiptRef.trim()}
+          confirmText={t('Confirm')}
+          handleConfirm={() => void handleConfirmComplete()}
+        >
+          <Field>
+            <FieldLabel htmlFor='topup-receipt-ref'>{t('Receipt reference')} *</FieldLabel>
+            <Input
+              id='topup-receipt-ref'
+              value={receiptRef}
+              maxLength={128}
+              onChange={(event) => setReceiptRef(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor='topup-completion-note'>{t('Note')}</FieldLabel>
+            <Input
+              id='topup-completion-note'
+              value={completionNote}
+              maxLength={500}
+              onChange={(event) => setCompletionNote(event.target.value)}
+            />
+          </Field>
+        </ConfirmDialog>
+      )}
     </>
   )
 }

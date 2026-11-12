@@ -63,6 +63,7 @@ export const CHANNEL_LABEL_KEYS: Record<string, string> = {
   official_alipay: 'Alipay',
   epay: 'Epay',
   credit_settlement: 'Credit settlement',
+  offline_cash: 'Offline collection',
 }
 
 // 总览金额固定为人民币实收，不跟随站点余额的展示币种切换。

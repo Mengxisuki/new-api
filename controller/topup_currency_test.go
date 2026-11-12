@@ -148,8 +148,13 @@ func TestLocalTopUpKeepsOtherInputContracts(t *testing.T) {
 // 验证 /api/user/topup/info 真实入口返回的 amount_options 与 discount 保持一致。
 func TestGetTopUpInfoUsesConfiguredDiscountPlans(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	// 充值信息现同时查询本人授信，必须初始化真实用户与授信表。
+	// 未配置授信应返回null，不能用nil数据库代替未授权用户。
+	db := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, db.AutoMigrate(&model.CreditAccount{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "topup-info", Group: "default", Status: common.UserStatusEnabled}).Error)
 	payment := operation_setting.GetPaymentSetting()
-	oldOptions := payment.AmountOptions  // 保存原预设金额列表，避免污染后续用例。
+	oldOptions := payment.AmountOptions   // 保存原预设金额列表，避免污染后续用例。
 	oldDiscount := payment.AmountDiscount // 保存原折扣配置映射，测试结束后完整恢复。
 	t.Cleanup(func() {
 		payment.AmountOptions = oldOptions
@@ -165,6 +170,7 @@ func TestGetTopUpInfoUsesConfiguredDiscountPlans(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1) // 沿用真实会话上下文的身份来源，不接受查询参数冒充。
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/topup/info", nil)
 	GetTopUpInfo(ctx) // 直接调用真实控制器入口，检验序列化后的公开响应结构。
 

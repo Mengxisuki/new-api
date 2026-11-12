@@ -26,6 +26,12 @@ import (
 )
 
 func GetTopUpInfo(c *gin.Context) {
+	// 授信只返回当前登录用户；不加入 pay_methods，避免落入易支付分支。
+	credit, err := model.GetCreditAccount(c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
 	// 支付方式单独组装，避免 append 修改全局配置的底层切片。
@@ -137,6 +143,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	data := gin.H{
+		"credit":                           credit,
 		"enable_online_topup":              isEpayTopUpEnabled() || len(officialChannels) > 0,
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
@@ -171,8 +178,9 @@ type EpayRequest struct {
 }
 
 type AmountRequest struct {
-	Amount          int64 `json:"amount"`
-	InvoiceRequired bool  `json:"invoice_required"`
+	Amount          int64  `json:"amount" form:"amount"`
+	InvoiceRequired bool   `json:"invoice_required" form:"invoice_required"`
+	PaymentMethod   string `json:"payment_method" form:"payment_method"`
 }
 
 func GetEpayClient() *epay.Client {
@@ -603,31 +611,74 @@ func EpayNotify(c *gin.Context) {
 }
 
 func RequestAmount(c *gin.Context) {
-	var req AmountRequest
-	err := c.ShouldBindJSON(&req)
+	var req AmountRequest // 同一输入合同用于GET查询和POST请求体。
+	var err error
+	// GET 与 POST 使用同一报价合同；只有明确 credit 才启用挂帐约束。
+	if c.Request.Method == http.MethodGet {
+		err = c.ShouldBindQuery(&req) // 保留参数类型校验，不能把坏金额默认为零。
+	} else {
+		err = c.ShouldBindJSON(&req) // POST仍沿用原JSON协议。
+	}
 	if err != nil {
-		paymentError(c, common.NewMessage("Invalid parameters"))
+		paymentError(c, common.NewMessage("Invalid parameters")) // 所有报价错误保持原前端错误信封。
 		return
 	}
 
-	if req.Amount < getMinTopup() {
+	// 授信报价不读取微信商户配置，也不能申请发票。
+	if req.PaymentMethod == model.PaymentProviderCredit {
+		if !requirePaymentCompliance(c) { // 授信不是绕过收款合规的新渠道。
+			return
+		}
+		if req.InvoiceRequired { // 无现金实收不能创建发票报价。
+			paymentError(c, model.ErrCreditInvalid)
+			return
+		}
+	}
+	if req.Amount < getMinTopup() { // 沿用本地钱包最低购买数量规则。
 		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": getMinTopup()}))
 		return
 	}
-	id := c.GetInt("id")
-	creditedQuota, err := validateEpayTopUpQuotaForUser(id, req.Amount)
+	id := c.GetInt("id")                                                // 钱包容量和授信只读取本人。
+	creditedQuota, err := validateEpayTopUpQuotaForUser(id, req.Amount) // 报价与真实建单共享到账额度规则。
 	if err != nil {
 		paymentError(c, err)
 		return
 	}
-	group, err := model.GetUserGroup(id, true)
+	group, err := model.GetUserGroup(id, true) // 分组优惠来自服务端身份而非报价参数。
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
-	baseMoney := payMoney
-	invoice, payMoney, err := model.NewInvoiceRequest(id, group, "topup", baseMoney, req.InvoiceRequired)
+	payMoney := getPayMoney(req.Amount, group) // 复用原面额折扣，不在授信另建定价公式。
+	if req.PaymentMethod == model.PaymentProviderCredit {
+		// 报价先按本地渠道舍入到分，再验证范围；金额校验不允许截断。
+		if math.IsNaN(payMoney) || math.IsInf(payMoney, 0) { // 错误价格配置必须可见，不能让decimal转换崩溃。
+			paymentError(c, model.ErrCreditInvalid)
+			return
+		}
+		payMoney = decimal.NewFromFloat(payMoney).Round(2).InexactFloat64()
+		cents, err := model.CreditMoneyCents(payMoney) // 确认后的整数分仍受授信金额上限限制。
+		if err != nil {
+			paymentError(c, err)
+			return
+		}
+		account, err := model.GetCreditAccount(id) // 没有授权返回明确错误，不建立默认授信。
+		if err != nil {
+			paymentError(c, err)
+			return
+		}
+		if err := model.CheckCreditAvailable(account, model.CreditModuleTopup, cents); err != nil { // 其他模块授权不能用于钱包充值。
+			paymentError(c, err)
+			return
+		}
+		// 保留 data 应付字符串，追加准确的整数分供下一步确认。
+		response := invoiceQuoteResponse(payMoney, payMoney, nil)                   // 不开票时保留既有报价结构。
+		response["credited_quota"], response["quoted_cents"] = creditedQuota, cents // 面额权益与应收人民币分分别返回。
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	baseMoney := payMoney                                                                                 // 非挂帐渠道仍使用原税费计算合同。
+	invoice, payMoney, err := model.NewInvoiceRequest(id, group, "topup", baseMoney, req.InvoiceRequired) // 挂帐提前返回，不进入发票计算路径。
 	if err != nil {
 		paymentError(c, err)
 		return
@@ -637,7 +688,7 @@ func RequestAmount(c *gin.Context) {
 		return
 	}
 	response := invoiceQuoteResponse(baseMoney, payMoney, invoice)
-	response["credited_quota"] = creditedQuota
+	response["credited_quota"] = creditedQuota // 旧现金报价新增字段行为保持不变。
 	c.JSON(http.StatusOK, response)
 }
 
@@ -693,23 +744,26 @@ func GetAllTopUps(c *gin.Context) {
 
 type AdminCompleteTopupRequest struct {
 	TradeNo string `json:"trade_no"`
+	// 只接收已核实收款凭证，不接收金额或替换渠道。
+	ReceiptRef string `json:"receipt_ref"`
+	Note       string `json:"note"`
 }
 
 // AdminCompleteTopUp 管理员补单接口
 func AdminCompleteTopUp(c *gin.Context) {
-	var req AdminCompleteTopupRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.TradeNo == "" {
+	var req AdminCompleteTopupRequest                                   // 只补原单，不能提交新金额或替换权益。
+	if err := c.ShouldBindJSON(&req); err != nil || req.TradeNo == "" { // 无订单号不能尝试无条件补单。
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 
 	// 订单级互斥，防止并发补单
 	LockOrder(req.TradeNo)
-	defer UnlockOrder(req.TradeNo)
+	defer UnlockOrder(req.TradeNo) // 失败路径也释放本实例订单锁。
 
-	if err := model.ManualCompleteTopUp(req.TradeNo, c.ClientIP()); err != nil {
+	if err := model.ManualCompleteTopUp(req.TradeNo, c.ClientIP(), c.GetInt("id"), req.ReceiptRef, req.Note); err != nil { // 操作者取登录上下文，凭证由模型强制校验。
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, nil)
+	common.ApiSuccess(c, nil) // 只有幂等恢复或完整补单事务成功才确认。
 }

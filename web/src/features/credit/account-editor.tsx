@@ -49,6 +49,8 @@ const schema = z.object({
     .refine((value) => Number(value) <= 100000000),
   enabled: z.boolean(), // 关闭是合法配置值，不能当作缺省。
   recharge_enabled: z.boolean(), // 模块开关必须明确传递。
+  topup_enabled: z.boolean(),
+  subscription_enabled: z.boolean(),
 })
 
 // 编辑用既有 Dialog，不能在支付设置的大表单中嵌套第二个 form。
@@ -109,7 +111,9 @@ export function CreditAccountEditor(props: {
       user_id: props.account?.user_id ?? 0, // 新建需要用户主动选择。
       amount: String((props.account?.limit_cents ?? 0) / 100), // 编辑显示元，保持分金额合同。
       enabled: props.account?.enabled ?? true, // 新建仍须管理员显式保存。
-      recharge_enabled: props.account?.recharge_enabled ?? true, // 已有关闭状态不能被默认值覆盖。
+      recharge_enabled: props.account?.recharge_enabled ?? true,
+      topup_enabled: props.account?.topup_enabled ?? false,
+      subscription_enabled: props.account?.subscription_enabled ?? false,
     },
   })
   const users = useQuery({
@@ -132,8 +136,10 @@ export function CreditAccountEditor(props: {
       user_id: value.user_id, // 只发送表单校验后的用户编号。
       limit_cents: Math.round(Number(value.amount) * 100), // 两位小数校验后一次转为整数分。
       enabled: value.enabled, // 总授权与模块授权分别保存。
-      recharge_enabled: value.recharge_enabled, // 不传未接入模块的虚假开放值。
-      version: props.account?.version ?? 0, // 新建不能覆盖已经存在的用户授信。
+      recharge_enabled: value.recharge_enabled,
+      topup_enabled: value.topup_enabled,
+      subscription_enabled: value.subscription_enabled,
+      version: props.account?.version ?? 0,
     })
   )
   return (
@@ -221,21 +227,34 @@ export function CreditAccountEditor(props: {
             onCheckedChange={(value) => form.setValue('enabled', value)}
           />
         </Field>
-        {/* 仅代充值可切换；预留模块展示为不可选，不能假装已接入。 */}
         <Field orientation='horizontal'>
-          <FieldLabel htmlFor='credit-recharge'>
-            {t('Account top-up')}
-          </FieldLabel>
+          <FieldLabel htmlFor='credit-recharge'>{t('Account recharge')}</FieldLabel>
           <Switch
             id='credit-recharge'
             checked={form.watch('recharge_enabled')}
+            onCheckedChange={(value) => form.setValue('recharge_enabled', value)}
+          />
+        </Field>
+        <Field orientation='horizontal'>
+          <FieldLabel htmlFor='credit-topup'>{t('Wallet top-up')}</FieldLabel>
+          <Switch
+            id='credit-topup'
+            checked={form.watch('topup_enabled')}
+            onCheckedChange={(value) => form.setValue('topup_enabled', value)}
+          />
+        </Field>
+        <Field orientation='horizontal'>
+          <FieldLabel htmlFor='credit-subscription'>{t('Subscription')}</FieldLabel>
+          <Switch
+            id='credit-subscription'
+            checked={form.watch('subscription_enabled')}
             onCheckedChange={(value) =>
-              form.setValue('recharge_enabled', value)
+              form.setValue('subscription_enabled', value)
             }
           />
         </Field>
         <p className='text-muted-foreground text-sm'>
-          {t('Wallet top-up and subscriptions: not available yet.')}
+          {t('Each enabled module shares this user credit limit.')}
         </p>
         {Object.keys(form.formState.errors).length > 0 && (
           <p role='alert'>

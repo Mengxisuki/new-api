@@ -34,6 +34,7 @@ import { getFinanceOverview } from './api'
 import { CreditPanel, TodoPanel } from './components/credit-panels'
 import { OverviewMetrics } from './components/overview-metrics'
 import { RevenueBreakdown, RevenueTrend } from './components/revenue-panels'
+import { SubscriptionGantt } from './components/subscription-gantt'
 import {
   MAX_RANGE_DAYS,
   customRange,
@@ -51,7 +52,7 @@ const PRESETS: { value: RangePreset; labelKey: string }[] = [
 ]
 
 // 财务总览页面：只读汇总平台实收、退款、挂帐待收、钱包余额和待办。
-// 页面只有一组时间筛选，位于所有内容上方，下面每个数字都按同一时段计算；
+// 收入数字共用顶部时段；订阅甘特图有独立的含未来日期窗口。
 // 挂帐、钱包余额和待办是当前快照，各自的说明文字里标明。
 // 访问由独立的财务总览权限控制，服务端每次请求都会再次校验。
 export function FinanceOverviewPage() {
@@ -172,6 +173,8 @@ export function FinanceOverviewPage() {
               </div>
             </div>
           )}
+          {/* 周期独立查询，收入为空或失败时仍可管理未来号池订阅。 */}
+          <SubscriptionGantt />
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>

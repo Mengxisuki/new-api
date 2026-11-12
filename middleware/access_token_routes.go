@@ -62,6 +62,12 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/finance/credit/entries":             accessTokenSessionRule,
 	"POST /api/finance/credit/entries/:id/settle": accessTokenSessionRule,
 	"GET /api/finance/overview":                   accessTokenSessionRule, // 全平台经营数据不对个人令牌开放。
+	// 订阅周期沿用总览的会话限制，个人令牌不获得全平台周期读取能力。
+	// 三条号池写路由还独立要求 Root，不能从会话声明推导写权限。
+	"GET /api/finance/subscriptions":             accessTokenSessionRule,
+	"POST /api/finance/pool-subscriptions":       accessTokenSessionRule,
+	"PUT /api/finance/pool-subscriptions/:id":    accessTokenSessionRule,
+	"DELETE /api/finance/pool-subscriptions/:id": accessTokenSessionRule,
 	// 代充值只接受网页登录，PAT 不能读取账户凭据或执行资金动作。
 	"GET /api/account-recharge/products":                                   accessTokenSessionRule,
 	"POST /api/account-recharge/quote":                                     accessTokenSessionRule,

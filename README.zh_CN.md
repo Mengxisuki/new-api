@@ -399,6 +399,18 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 
 受影响前端 23 文件 224 项测试、类型检查、定向 lint、前后端构建和后端总览/权限竞态检查通过；390 像素手机视口无页面横向溢出。前端全量测试另有一项既有失败：`src/features/task-plugins/__tests__/marketplace-install-dialog.test.tsx` 的源码高亮断言，已在未修改的 HEAD 代码上复现；未扩改该模块。授权设计参考 [OWASP Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) 的默认拒绝、服务端逐请求校验和最小权限，不宣称完成全项目 ASVS 合规认证。
 
+#### 订阅周期甘特图
+
+财务总览底部新增「订阅周期甘特图」，仅包含「平台用户订阅」和「平台号池」，不维护挂靠账户周期。可选全部或单类，独立选择展示日期（默认完整上海自然月，最长 366 天），每页 20 条。显示与窗口相交的订阅、完整起止日期、未开始/生效/过期/取消状态及今天虚线；长周期在图上裁切，原日期保留，手机在表格内横向滚动。
+
+平台用户周期自动读取 `user_subscriptions`，包括购买和管理员开通的订阅；同一用户的多份订阅分别显示。号池由 Root 点击「新增号池周期」，填写号池/账号名称、开始日、结束日，结束日包含当天。行末编辑与删除只维护人工展示记录，不影响上游账号、用户权益或收入统计。续订可新增下一条周期以保留历史。已有总览查看权限的管理员和财务可以读取，写入仅允许 Root 登录会话，个人访问令牌不支持。
+
+实现导航：`model/finance_subscription.go` 的 `FinancePoolSubscription` 新增 `finance_pool_subscriptions` 表，经 `model/main.go` 启动迁移；`controller/finance_subscription.go` 与 `router/api-router.go` 提供读取、创建、修改和删除入口，`middleware/access_token_routes.go` 声明会话边界。`GET /api/finance/subscriptions` 接受 `start/end`（左闭右开 Unix 秒）、`category=all|user|pool`、`page`；`POST /api/finance/pool-subscriptions` 和 `PUT/DELETE /api/finance/pool-subscriptions/:id` 维护人工配置。前端组件在 `web/src/features/finance-overview/components/`，网络与日期入口在 `subscriptions-api.ts`。复用公共静态表格、分页、弹窗与行操作；现有 DatePicker 禁止未来日期，因此组合已有 Input 的 date 模式，没有新增依赖。
+
+本地验证（2026-11-12）：SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17 的空表创建、已有用户/套餐/订阅表升级、新表连续迁移、索引与记录保留、两类筛选分页及 CRUD 通过；编译后的服务在三个全新隔离库分别启动两次，健康检查与人工记录保留通过。后端 `model/controller/router/middleware/service/authz` 回归通过；前端财务模块 28 项测试、`bun x tsgo -b`、定向 oxlint 和生产构建通过。隔离实例实际登录、创建/修改后的日期回显、两类筛选及 390px 宽度检查通过，页面无横向溢出，浏览器无运行错误。仓库 `bun run typecheck` 当前指向本机不可用的 `bun check`，验证使用已安装的 `tsgo`，未改动依赖。
+
+复验命令：`TEST_MYSQL_DSN='<回环测试库 DSN>' TEST_POSTGRES_DSN='<回环 PostgreSQL URL>' go test ./controller -run '^TestFinance(Overview|Subscriptions)' -count=1 -v`；`go test ./model ./controller ./router ./middleware ./service/authz`；前端 `bun run test src/features/finance-overview/__tests__`、`bun x tsgo -b`、`bun x oxlint -c .oxlintrc.json src/features/finance-overview src/i18n/static-keys.ts`、`bun run build`。本次未提交、推送或生产部署，首次发布须正常执行新表迁移。
+
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。

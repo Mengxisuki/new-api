@@ -373,6 +373,8 @@ func migrateDB() error {
 		&Checkin{},
 		&SubscriptionOrder{},
 		&UserSubscription{},
+		// 人工号池周期仅用于财务甘特图，不参与结算。
+		&FinancePoolSubscription{},
 		&SubscriptionPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},

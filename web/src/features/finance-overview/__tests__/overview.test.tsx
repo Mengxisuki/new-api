@@ -129,9 +129,13 @@ function mount(
     role: 5,
     permissions: { admin_permissions: permissions },
   })
-  const get = vi
-    .spyOn(api, 'get')
-    .mockResolvedValue({ data: { success: true, data } })
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/finance/subscriptions' ? { items: [], total: 0 } : data,
+    },
+  }))
   render(
     <QueryClientProvider client={client}>
       <FinanceOverviewPage />
@@ -166,9 +170,7 @@ test('有总览权限时按人民币展示各项指标并区分时段数字与�
 
   // 其他网关只列原始金额，并说明没有计入合计。
   expect(screen.getByText(/stripe: 20/)).toBeInTheDocument()
-  expect(
-    screen.getByText(/not verified cash receipts/)
-  ).toBeInTheDocument()
+  expect(screen.getByText(/not verified cash receipts/)).toBeInTheDocument()
   // 已知渠道显示名称，结清的挂帐作为独立收款来源出现。
   expect(screen.getByText('WeChat Pay')).toBeInTheDocument()
   // 用户被删除后名称为空，仍以编号标识欠款人。
@@ -186,16 +188,26 @@ test('没有总览权限时不请求数据并显示无访问权限', () => {
 test('默认查询本月至今，切换到今天后按一个自然日重新请求', async () => {
   const get = mount({ finance_overview: { read: true } })
   await screen.findByText('Net revenue')
-  const first = get.mock.calls[0][1]?.params as { start: number; end: number }
-  expect(get.mock.calls[0][0]).toBe('/api/finance/overview')
+  const first = get.mock.calls.find(
+    ([url]) => url === '/api/finance/overview'
+  )?.[1]?.params as { start: number; end: number }
+  expect(
+    get.mock.calls.find(([url]) => url === '/api/finance/overview')?.[0]
+  ).toBe('/api/finance/overview')
   // 本月至今：起点是上海某月一日零点，终点是上海某日零点，跨度为整数天。
   expect((first.start + 8 * 3600) % 86400).toBe(0)
   expect((first.end - first.start) % 86400).toBe(0)
   expect(new Date((first.start + 8 * 3600) * 1000).getUTCDate()).toBe(1)
 
   await userEvent.click(screen.getByRole('tab', { name: 'Today' }))
-  await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
-  const today = get.mock.calls[1][1]?.params as { start: number; end: number }
+  await waitFor(() =>
+    expect(
+      get.mock.calls.filter(([url]) => url === '/api/finance/overview')
+    ).toHaveLength(2)
+  )
+  const today = get.mock.calls.filter(
+    ([url]) => url === '/api/finance/overview'
+  )[1][1]?.params as { start: number; end: number }
   expect(today.end - today.start).toBe(86400)
   expect(today.end).toBe(first.end) // 两个预设都以今天结束为右边界。
 })
@@ -308,15 +320,23 @@ test('接口失败时显示可重试的错误状态，不显示零收入', async
     role: 5,
     permissions: { admin_permissions: { finance_overview: { read: true } } },
   })
-  const get = vi
-    .spyOn(api, 'get')
-    .mockResolvedValueOnce({
-      data: {
-        success: false,
-        message: 'Unauthorized, insufficient privileges',
-      },
-    })
-    .mockResolvedValue({ data: { success: true, data: overview } })
+  // 收入与周期是独立请求，故障只注入本用例关注的收入接口。
+  let failed = false
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/finance/subscriptions') {
+      return { data: { success: true, data: { items: [], total: 0 } } }
+    }
+    if (!failed) {
+      failed = true
+      return {
+        data: {
+          success: false,
+          message: 'Unauthorized, insufficient privileges',
+        },
+      }
+    }
+    return { data: { success: true, data: overview } }
+  })
   render(
     <QueryClientProvider client={client}>
       <FinanceOverviewPage />
@@ -326,7 +346,9 @@ test('接口失败时显示可重试的错误状态，不显示零收入', async
   expect(screen.queryByText('Net revenue')).not.toBeInTheDocument()
   await userEvent.click(retry)
   expect(await screen.findByText('Net revenue')).toBeInTheDocument()
-  expect(get).toHaveBeenCalledTimes(2)
+  expect(
+    get.mock.calls.filter(([url]) => url === '/api/finance/overview')
+  ).toHaveLength(2)
 })
 
 test('自定义时段在选齐日期前不发请求并提示需要选择起止日期', async () => {
@@ -336,6 +358,8 @@ test('自定义时段在选齐日期前不发请求并提示需要选择起止�
   expect(
     await screen.findByText('Select a start date and an end date.')
   ).toBeInTheDocument()
-  expect(get).toHaveBeenCalledTimes(1) // 只有默认时段那一次请求。
+  expect(
+    get.mock.calls.filter(([url]) => url === '/api/finance/overview')
+  ).toHaveLength(1) // 只有默认时段那一次请求。
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled()
 })

@@ -213,6 +213,12 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 
 	engine := gin.New()
 	engine.GET("/api/finance/overview", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), GetFinanceOverview)
+	// 周期接口沿用同一会话和只读授权，写操作另经 Root 门槛。
+	require.NoError(t, model.DB.AutoMigrate(&model.SubscriptionPlan{}, &model.UserSubscription{}, &model.FinancePoolSubscription{}))
+	engine.GET("/api/finance/subscriptions", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), GetFinanceSubscriptions)
+	engine.POST("/api/finance/pool-subscriptions", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RootAuth(), SaveFinancePoolSubscription)
+	engine.PUT("/api/finance/pool-subscriptions/:id", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RootAuth(), SaveFinancePoolSubscription)
+	engine.DELETE("/api/finance/pool-subscriptions/:id", middleware.FinanceAuth(), RechargeSessionOnly, middleware.RootAuth(), DeleteFinancePoolSubscription)
 	path := fmt.Sprintf("/api/finance/overview?start=%d&end=%d", financeTestDay, financeTestDay+86400)
 	get := func(token, target string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
@@ -280,6 +286,44 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 	require.NoError(t, model.CreateUserAccessToken(finance.Id, pat, service.AccessTokenMaxPerUser))
 	assert.NotEqual(t, http.StatusOK, get(raw, path).Code)
 
+	// 已获授权财务和管理员可以看周期，个人令牌与普通用户不能看。
+	subPath := strings.Replace(path, "/overview?", "/subscriptions?", 1)
+	for _, token := range []string{rootToken, financeToken, adminToken} {
+		assert.Contains(t, get(token, subPath).Body.String(), `"items":[]`)
+	}
+	for _, token := range []string{raw, commonToken, ""} {
+		assert.NotEqual(t, http.StatusOK, get(token, subPath).Code)
+	}
+	// 错误分页、类别和时间参数不被默默改为默认查询。
+	for _, suffix := range []string{"&page=0", "&page=no", "&category=hosting", "&end=0"} {
+		target := subPath + suffix
+		if suffix == "&end=0" {
+			target = "/api/finance/subscriptions?start=1&end=0"
+		}
+		assert.Contains(t, get(rootToken, target).Body.String(), `"success":false`)
+	}
+	writePeriod := func(token, method, target, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, req)
+		return recorder
+	}
+	body := fmt.Sprintf(`{"name":"HTTP pool","start_time":%d,"end_time":%d}`, financeTestDay, financeTestDay+86400)
+	// 只读授权不包含写入，三个动作均验证，防止仅隐藏前端按钮。
+	for _, token := range []string{financeToken, adminToken, commonToken, raw} {
+		assert.NotEqual(t, http.StatusOK, writePeriod(token, "POST", "/api/finance/pool-subscriptions", body).Code)
+		assert.NotEqual(t, http.StatusOK, writePeriod(token, "PUT", "/api/finance/pool-subscriptions/1", body).Code)
+		assert.NotEqual(t, http.StatusOK, writePeriod(token, "DELETE", "/api/finance/pool-subscriptions/1", "").Code)
+	}
+	assert.Contains(t, writePeriod(rootToken, "POST", "/api/finance/pool-subscriptions", body).Body.String(), `"success":true`)
+	assert.Contains(t, get(rootToken, subPath).Body.String(), `"name":"HTTP pool"`)
+	assert.Contains(t, writePeriod(rootToken, "PUT", "/api/finance/pool-subscriptions/1", strings.Replace(body, "HTTP pool", "Edited", 1)).Body.String(), `"success":true`)
+	assert.Contains(t, get(rootToken, subPath).Body.String(), `"name":"Edited"`)
+	assert.Contains(t, writePeriod(rootToken, "POST", "/api/finance/pool-subscriptions", `{"name":"","start_time":1,"end_time":2}`).Body.String(), `"success":false`)
+	assert.Contains(t, writePeriod(rootToken, "DELETE", "/api/finance/pool-subscriptions/1", "").Body.String(), `"success":true`)
+	assert.Contains(t, get(rootToken, subPath).Body.String(), `"items":[]`)
 	// Root 单独收回后立即失效，不需要等会话过期。
 	update(finance, `{"finance_overview":{"read":false}}`)
 	assert.Equal(t, http.StatusForbidden, get(financeToken, path).Code)
@@ -296,4 +340,134 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 	update(finance, `{"finance_overview":{"read":false}}`)
 	assert.False(t, authz.Can(finance.Id, common.RoleFinanceUser, authz.FinanceRead))
 	assert.False(t, authz.Can(finance.Id, common.RoleFinanceUser, authz.FinanceWrite))
+}
+
+// 周期功能在同一文件集中验证三库、迁移及真实接口权限，避免重复测试夹具。
+// 旧版本已经具有用户/套餐/订阅表；升级只新增人工号池表。
+// 验证相交边界与分页的同时保留原订阅编号和取消状态。
+// 用例在真实方言连接上执行，不用 SQLite 模拟 MySQL 的零受影响行语义。
+// 各子用例通过既有 helper 创建并清理自己的数据库，不触及开发数据。
+// 外部库未配置时明确跳过；交付验证必须同时提供两份回环 DSN。
+// 先建立旧版订阅表，再增加人工周期表，代表本次新增表的升级路径。
+// 自动迁移重复执行两次，确保新表不会在重启时损失记录。
+// 开始日期索引在重复迁移后仍须存在，不能只验证表名存在。
+// 原用户订阅总数不变，证明人工表迁移没有重建用户权益数据。
+// 时间常量采用固定上海零点，数据库服务器本地时区不参与计算。
+// 结束于窗口左端的合同不相交，不能以闭区间查询重复展示边界项。
+// 开始于窗口右端的合同不相交，下一窗口才应出现。
+// 覆盖整个查询窗口的订阅必须保留完整原日期。
+// 同一个用户拥有两份相交订阅，合并不能按用户编号去重。
+// 已取消订阅仍有历史展示价值，不使用 active 状态过滤。
+// 用户名与套餐名连接到正确来源，号池主键不会被当作用户编号。
+// 号池名字首尾空白在入口统一清理，读取时不再额外规范化。
+// 保存后直接重查，避免只断言传入对象中的值就宣称持久化成功。
+// 相同字段重复保存不能被 MySQL 的零变更行数误判为不存在。
+// 空白名称与超长中文名称都必须在服务端拒绝。
+// 反转起止时间不能生成负长度条形，也不能被自动调换为合法值。
+// 更新不存在的编号不能隐式创建新记录，否则编辑会产生重复合同。
+// 超过二十条才可验证真实分页路径，不能只验证固定第一页。
+// 全部类别计数包含两个来源，第二页长度必须与总数一致。
+// 稳定排序包含来源与主键，使相同开始时间的记录顺序可预测。
+// 删除人工记录后再查用户来源，证明没有复用用户订阅删除函数。
+// 重复删除返回错误，防止过期界面显示不存在的成功结果。
+// 删除套餐定义后仍保留购买记录，左连接不能被改成内连接。
+// 名称缺失只是历史关联缺失，不能把订阅整条记录藏掉。
+// 测试不构造订单付款，不涉及余额、收入或真实商户回调。
+// 本次新增表没有金额字段，不能被其他账务路径误作支出凭证。
+// 具体权限另在上方真实登录会话用例验证，避免复制登录夹具。
+func TestFinanceSubscriptionsDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
+			if dialect != "sqlite" && dsn == "" {
+				t.Skip("test database DSN is not configured")
+			}
+			db := modelManagementDB(t, dialect, dsn)
+			// 先建旧版核心表并留下数据，再执行新增表迁移，模拟升级。
+			require.NoError(t, db.AutoMigrate(&model.SubscriptionPlan{}, &model.UserSubscription{}))
+			user := model.User{Username: "gantt-user", AffCode: "gantt"}
+			require.NoError(t, db.Create(&user).Error)
+			plan := model.SubscriptionPlan{Title: "Monthly plan"}
+			require.NoError(t, db.Create(&plan).Error)
+			start, end := financeTestDay, financeTestDay+30*86400
+			// 区间恰好结束于查询开始、开始于查询结束的两条均不可出现。
+			subscriptions := []model.UserSubscription{
+				{UserId: user.Id, PlanId: plan.Id, StartTime: start - 86400, EndTime: start, Status: "expired"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: start - 86400, EndTime: end + 86400, Status: "active"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: end, EndTime: end + 86400, Status: "active"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: start + 86400, EndTime: end, Status: "cancelled"},
+			}
+			require.NoError(t, db.Create(&subscriptions).Error)
+			// 新建空表及连续迁移都需要成功；用户订阅不能被迁移覆盖。
+			require.NoError(t, db.AutoMigrate(&model.FinancePoolSubscription{}))
+			pool, err := model.SaveFinancePoolSubscription(0, "  Codex pool  ", start, end)
+			require.NoError(t, err)
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.FinancePoolSubscription{}))
+			}
+			require.True(t, db.Migrator().HasIndex(&model.FinancePoolSubscription{}, "StartTime"))
+			var stored model.FinancePoolSubscription
+			require.NoError(t, db.First(&stored, pool.ID).Error)
+			assert.Equal(t, "Codex pool", stored.Name)
+			assert.Equal(t, end, stored.EndTime)
+			var existing int64
+			require.NoError(t, db.Model(&model.UserSubscription{}).Count(&existing).Error)
+			assert.EqualValues(t, 4, existing)
+			// 两类合并保留真实归属及状态；只按时间相交筛选，不只取当前 active。
+			result, err := model.GetFinanceSubscriptions(start, end, "all", 1)
+			require.NoError(t, err)
+			require.EqualValues(t, 3, result.Total)
+			require.Len(t, result.Items, 3)
+			assert.Equal(t, "user", result.Items[0].Category)
+			assert.Equal(t, "gantt-user", result.Items[0].Username)
+			assert.Equal(t, "Monthly plan", result.Items[0].Name)
+			assert.Equal(t, "cancelled", result.Items[2].Status)
+			result, err = model.GetFinanceSubscriptions(start, end, "pool", 1)
+			require.NoError(t, err)
+			require.Len(t, result.Items, 1)
+			assert.Equal(t, pool.ID, result.Items[0].ID)
+			// 修改后重新读取必须回显；重复保存相同值也应成功。
+			for range 2 {
+				_, err = model.SaveFinancePoolSubscription(pool.ID, "Renewed pool", start+86400, end+86400)
+				require.NoError(t, err)
+			}
+			result, err = model.GetFinanceSubscriptions(start, end, "pool", 1)
+			require.NoError(t, err)
+			assert.Equal(t, "Renewed pool", result.Items[0].Name)
+			assert.Equal(t, start+86400, result.Items[0].StartTime)
+			// 所有写入校验都在后端，绕过表单仍不能存空名称或倒置时间。
+			for _, name := range []string{" ", strings.Repeat("中", 129)} {
+				_, err = model.SaveFinancePoolSubscription(0, name, start, end)
+				require.Error(t, err)
+			}
+			_, err = model.SaveFinancePoolSubscription(0, "invalid", end, start)
+			require.Error(t, err)
+			_, err = model.SaveFinancePoolSubscription(999999, "missing", start, end)
+			require.Error(t, err)
+			// 超过一页使用稳定主键排序，合并来源不能导致跨页重复或漏项。
+			for range 21 {
+				_, err = model.SaveFinancePoolSubscription(0, "another pool", start, end)
+				require.NoError(t, err)
+			}
+			first, err := model.GetFinanceSubscriptions(start, end, "all", 1)
+			require.NoError(t, err)
+			second, err := model.GetFinanceSubscriptions(start, end, "all", 2)
+			require.NoError(t, err)
+			assert.Len(t, first.Items, 20)
+			assert.Len(t, second.Items, 4)
+			assert.EqualValues(t, 24, second.Total)
+			// 删除记录后同号用户订阅仍存在，类别不是可由客户端改变的写参数。
+			require.NoError(t, model.DeleteFinancePoolSubscription(pool.ID))
+			require.Error(t, model.DeleteFinancePoolSubscription(pool.ID))
+			result, err = model.GetFinanceSubscriptions(start, end, "user", 1)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, result.Total)
+			// 关联记录丢失时左连接保留周期与编号，不用空列表隐藏历史。
+			require.NoError(t, db.Delete(&plan).Error)
+			result, err = model.GetFinanceSubscriptions(start, end, "user", 1)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, result.Total)
+			assert.Empty(t, result.Items[0].Name)
+		})
+	}
 }

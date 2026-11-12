@@ -1052,3 +1052,11 @@ export const financeOverviewStaticKeys = [
   'Month to date',
   'Last month',
 ] as const
+
+// 号池表单标题和日期标签动态选择，登记在提取脚本读取的静态数组中。
+export const FINANCE_SUBSCRIPTION_I18N_KEYS = [
+  'Add pool subscription',
+  'Edit pool subscription',
+  'Timeline start date',
+  'Timeline end date',
+] as const

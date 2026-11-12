@@ -168,7 +168,17 @@ export function UsersMutateDrawer({
   const currentQuotaRaw = form.watch('quota_dollars') || 0
   const selectedRole = form.watch('role')
   const canEditAdminPermissions = currentUser?.role === ROLE.SUPER_ADMIN
-  const targetIsAdmin = (selectedRole ?? currentRow?.role ?? 0) >= ROLE.ADMIN
+  const targetRole = selectedRole ?? currentRow?.role ?? 0
+  const targetIsAdmin = targetRole >= ROLE.ADMIN
+  // 财务角色只能被逐用户授予财务总览，权限矩阵只展示这一项，
+  // 避免界面上可以勾选、保存后却被后端丢弃的选项。
+  const editableResources = targetIsAdmin
+    ? permissionCatalog.resources
+    : permissionCatalog.resources.filter(
+        (resource) =>
+          targetRole === ROLE.FINANCE &&
+          resource.resource === ADMIN_PERMISSION_RESOURCES.FINANCE_OVERVIEW
+      )
 
   const onSubmit = async (data: UserFormValues) => {
     if (!isUpdate || data.password) {
@@ -188,16 +198,19 @@ export function UsersMutateDrawer({
         currentRow?.id,
         permissionCatalog
       )
+      // 只比较本次实际提交的资源：财务角色只提交财务总览一项，
+      // 与完整矩阵比较会永远不相等，导致普通资料编辑也被要求二次验证。
+      const loaded = normalizeAdminPermissions(
+        loadedPermissions.current,
+        permissionCatalog
+      )
       if (
         isUpdate &&
         payload.admin_permissions &&
-        JSON.stringify(payload.admin_permissions) ===
-          JSON.stringify(
-            normalizeAdminPermissions(
-              loadedPermissions.current,
-              permissionCatalog
-            )
-          )
+        Object.entries(payload.admin_permissions).every(
+          ([resource, actions]) =>
+            JSON.stringify(actions) === JSON.stringify(loaded[resource])
+        )
       ) {
         delete payload.admin_permissions
       }
@@ -513,55 +526,55 @@ export function UsersMutateDrawer({
                 </SideDrawerSection>
               )}
 
-              {canEditAdminPermissions &&
-                targetIsAdmin &&
-                permissionCatalog.resources.length > 0 && (
-                  <SideDrawerSection>
-                    <h3 className='text-sm font-medium'>
-                      {t('Admin Permissions')}
-                    </h3>
+              {canEditAdminPermissions && editableResources.length > 0 && (
+                <SideDrawerSection>
+                  <h3 className='text-sm font-medium'>
+                    {t('Admin Permissions')}
+                  </h3>
+                  <p className='text-muted-foreground text-xs'>
+                    {targetIsAdmin
+                      ? t(
+                          'Default administrator permissions can be overridden for this user.'
+                        )
+                      : t(
+                          'Finance accounts can additionally be granted the financial overview.'
+                        )}
+                  </p>
+                  <FormField
+                    control={form.control}
+                    name='admin_permissions'
+                    render={({ field }) => {
+                      const selected = normalizeAdminPermissions(
+                        field.value,
+                        permissionCatalog
+                      )
+                      return (
+                        <FormItem>
+                          <PermissionMatrix
+                            resources={editableResources}
+                            value={selected}
+                            onChange={field.onChange}
+                          />
+                          <FormMessage />
+                        </FormItem>
+                      )
+                    }}
+                  />
+                  {currentUser && targetIsAdmin && (
                     <p className='text-muted-foreground text-xs'>
-                      {t(
-                        'Default administrator permissions can be overridden for this user.'
-                      )}
+                      {hasPermission(
+                        currentUser,
+                        ADMIN_PERMISSION_RESOURCES.CHANNEL,
+                        ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+                      )
+                        ? t('Your account can edit sensitive channel settings.')
+                        : t(
+                            'Your account cannot edit sensitive channel settings.'
+                          )}
                     </p>
-                    <FormField
-                      control={form.control}
-                      name='admin_permissions'
-                      render={({ field }) => {
-                        const selected = normalizeAdminPermissions(
-                          field.value,
-                          permissionCatalog
-                        )
-                        return (
-                          <FormItem>
-                            <PermissionMatrix
-                              resources={permissionCatalog.resources}
-                              value={selected}
-                              onChange={field.onChange}
-                            />
-                            <FormMessage />
-                          </FormItem>
-                        )
-                      }}
-                    />
-                    {currentUser && (
-                      <p className='text-muted-foreground text-xs'>
-                        {hasPermission(
-                          currentUser,
-                          ADMIN_PERMISSION_RESOURCES.CHANNEL,
-                          ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
-                        )
-                          ? t(
-                              'Your account can edit sensitive channel settings.'
-                            )
-                          : t(
-                              'Your account cannot edit sensitive channel settings.'
-                            )}
-                      </p>
-                    )}
-                  </SideDrawerSection>
-                )}
+                  )}
+                </SideDrawerSection>
+              )}
 
               {/* Binding Information (Read-only) */}
               {isUpdate && (

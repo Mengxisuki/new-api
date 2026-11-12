@@ -316,3 +316,51 @@
 本地修复：`controller/resource_relay.go` 将有可信未处理证据的挂靠 429 归入最终日志 `resource_attempts`，保留账号、状态与执行层 ID；终止错误及所有来源不可用仍留最终失败，后续平台预检错误也不丢诊断。`service/log_info_generate.go` 统一附加尝试快照；现有来源详情展示归属及关联身份，公共内容渲染器解释旧错误码。原顺延权限和计费链未改变，历史日志不改写。本轮只需 New API 发布，GPT-Load 已提供安全证据。
 
 验证：SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17 的真实库回归覆盖单条最终记录、尝试累积、账号/钱包/订阅回退、平台单次计数与结算、终止及预检错误；相关后端回归、定向 race、vet、服务构建，前端 27 项回归、类型检查、lint 与构建通过。详细证据与命令见[排障记录](../diagnostics/hosting-resource-fallback.md#2026-11-11-074847-0000--安全顺延尝试并入最终请求日志本地完成)。未提交、推送或部署，线上效果仍待发布验收。
+
+## 2026-11-11 08:15:32 +00:00 — Claude 最终模型 404 会掩盖前一路推理参数 400
+
+现象：请求 `202611110757224789363638268d9d63QBqx5hH` 于 07:57:22–07:57:27 UTC 返回 404。只读核对 wdm 的 journal、PostgreSQL、GPT-Load SQLite 和 Caddy 精确 request_id：New API #10 `OakGL_Claude` 将 `/v1/messages` 转成 `/v1/responses`，再经本机 GPT-Load 访问 Aiwanwu。执行层 ID 为 `db3188f2-33e6-47ac-b0cb-740996dbd631`，不是一次单纯模型拒绝。
+
+两次尝试依次为：组 #8 `Aiwanwu Claude` 返回上游 400，拒绝 enabled 推理并要求 adaptive 与 `output_config.effort`；组 #6 `Aiwanwu` 返回上游 404，提示分组无账号支持 `claude-fable-5-1`。相邻请求 `202611110757296880353938268d9d6U8WsCfAB` 重复同样两步。两组本地模型目录都声明该模型，因此本地声明不能代替对应上游 Key 的实际模型支持；最终错误摘要也不能代替完整 attempts。New API 的 `claude cli trace` 会话规则记录 `strict_session` 停止，未再切其他 New API 渠道。
+
+入口已带 `thinking.type=adaptive`、`output_config.effort=high`，不能建议客户端重复改成已经使用的参数。#10 的转换配置和 `relaykit/relayconvert/internal/claude_messages/to_oai_responses_req.go` 证明存在 Claude→Responses 转换；具体哪一层重新产生 enabled 尚无出站正文或供应商内部日志证据。后续可优先验证端到端原生 Messages 路径，并独立核对组 #6 对应上游 Key 的模型授权；这只是待验证方向，不能承诺改路由即可恢复。当前 New API 为 `344682784654`，GPT-Load 为 `ba2522dcea0c`；本轮未重放任务、执行付费模型测试、修改生产配置或重启服务。
+
+## 2026-11-11 08:48:47 +00:00 — Claude 排障需区分候选 Key 错配、跨服务推理转换与等待超时
+
+补充上一条：用户在 Aiwanwu 面板未见报错。固定窗口 2026-11-10 08:41:30 至 2026-11-11 08:41:30 UTC，GPT-Load 的 Fable/Opus 共 96 次成功、70 次最终失败、3 次取消；最终失败为 47 次 404、23 次 504。尝试级另有组 #6 的 58 次模型 404、组 #8 的 8 次推理参数 400、32 次普通 `Not Found` 和 7 次 502；尝试次数不能当成失败请求数。所有这些模型的 New API 日志均走 #10。本轮运行版本已为 New API `3e8977c53862`、GPT-Load `ba2522dcea0c`，不可沿用上一条的 New API 版本。
+
+已验证的配置错配：使用各组实际凭据仅在服务器内存中请求 Aiwanwu 的 `GET /v1/models`，两个 Key 均为 200，但组 #6 / 凭据 #6 的 7 个模型没有任何 Claude，组 #8 / 凭据 #11 的 7 个模型包含 Fable、Opus、Haiku、Sonnet。本地两组都声明 Fable/Opus，导致 #6 被反复选中后由 Aiwanwu 模型选择层返回不支持。当前目录与历史拒绝相互印证，不能描述成 Claude 原厂执行失败，也不能从管理面板无消费记录推断没有入口拒绝。
+
+已验证的本地转换行为：用合成 adaptive/high 参数调用真实 `relayconvert.ConvertRequestByID`，三个模型序列化后均只保留 `reasoning={effort:high,summary:detailed}`，原生 adaptive 模式只存在于不参与 JSON 的 `ReasoningConversion`。将该结果交给本地 Sub2API 的 `apicompat.ResponsesToAnthropicRequest`，Fable 5 / 5.1 生成 enabled/10240，Opus 5.5 生成 adaptive，均保留 effort=high。两个临时 Go 程序退出码 0，依赖检索关闭，临时文件已清理；未调用模型。该复现解释了协议链的兼容风险及 Fable/Opus 差异，但 Aiwanwu 的实际代码版本与内部出站正文未知，不能把本地源码行为等同于其线上根因证明。
+
+超时边界：23 次 504 的执行尝试状态码为 0，约 120 秒后 `upstream_timeout`、response_started=false、dispatch_state=maybe_sent；这是本地等待终止生成的 504，不是收到 Aiwanwu 的 HTTP 504。两组无超时覆盖、全局无对应持久覆盖，默认 first_byte_timeout 为 120 秒。不能仅据此区分网络、排队或推理慢。32 次普通 404 和 7 次 502 则有真实上游 HTTP 状态；普通 `Not Found` 缺少内部细节，不能断定是哪条上游路由或资源缺失，亦不能用模型列表存在证明该次生成路径正常。
+
+成功对照：Fable 5 请求 `202611110825140932904348268d9d6vDmKzra6`、Opus 5.5 请求 `202611110800516926417198268d9d68m1XLf5f` 均为原始 Messages adaptive/high，经相同 #10 和组 #8 返回 200，因此不应概括成两系列整体不可用。本轮仅查询日志、配置、模型目录并执行本地合成转换，未重放任务、做付费模型测试、改生产或重启服务；修复方向为清理无 Claude 授权的候选、受控验证原生 Messages 链路，尚未实施。
+
+## 2026-11-12 05:02:03 +00:00 — Claude 搜索流失败需区分工具限制警告与输出块冲突
+
+现象：wdm 的 New API 错误日志 #13837–13839 依次为请求 `202611120422101360704818268d9d61pZwQTzk`、`202611120422099260106558268d9d6AVlCNLEb`、`202611120422212381042988268d9d6R6WdDcsx`，于 04:22:30、04:22:35、04:22:37 UTC 失败。三条均走 #10 OakGL_Claude、claude-fable-5，直接错误为 `Responses output item changed from tool_use to text`；journal 显示 received=5、handler_stop，返还预扣费。外层 HTTP 200 是已经开始发送流，不能当成生成成功。线上版本为 `3e8977c53862`。
+
+已核对 Caddy 留存请求的结构：三条均为 stream=true，声明 `web_search_20250305`、name=web_search、max_uses=8，tool_choice 强制 web_search；因此不能归因为客户端未声明搜索工具。`unsupported_search_limit` 只说明 Claude→Responses 无法保留 max_uses；相邻非流式成功请求 `202611120422308954386858268d9d66gvQkoXk` 也有同一诊断，不能把它直接等同于终止原因。#10 将 Messages 转为 Responses，`relaykit/relayconvert/internal/oai_responses/to_claude_messages_stream_resp.go:219` 在返回转换时按 output_index/item_id 查块，既有 tool_use 块随后被识别为 text 就抛出本次错误；这两个源码文件与线上 revision 无差异。
+
+证据边界：GPT-Load 同时刻三条记录为 client_canceled，时长与 New API 中断吻合，不能据此认定是终端用户主动取消。现有已查日志没有出错前的完整上游 SSE，尚不能确定是上游复用索引/身份，还是返回转换关联错误，也不能证明上游实际完成搜索。此次只读生产日志、数据库与请求结构，未重放任务、调用付费模型、修改配置或重启服务；仅追加本地排障记忆。
+
+## 2026-11-12 05:19:00 +00:00 — 受控复现确认 Aiwanwu 搜索流转换产生无归属工具增量与索引冲突
+
+本条收敛上一条尚未确定的来源。继续经 ssh wdm 查询 GPT-Load：线上仍为 `ba2522dcea0c`。三条失败按开始/结束时间与时长对应执行 ID `e58c5001-4d13-4d1a-ab9b-eb02abcec318`、`f87c713d-2864-47b5-b944-237665124cc2`、`abe7eadf-2b62-4815-a6b0-b6559f61f24e`；各只有一次尝试，均为组 #8 Aiwanwu Claude、凭据 #11、sub2api/native/openai-responses。上游 HTTP 200、response_started=true、committed=true，最终 failure_origin=downstream、downstream_cancel/client_canceled；取消是 New API 中断连接的后果。这三条未记录请求正文，运行时 StoreRawRequestResponse=false，历史完整 SSE 无法恢复。
+
+关键复现：保留首条原搜索子请求的查询、通用说明与元数据，通过已核对的 Claude→Responses 字段映射直接调用 Aiwanwu `/v1/responses`，仅把输出上限降为 2048。绕过 New API/GPT-Load 后，上游请求 ID `e2e4e6f2-3233-414c-968d-d539521be224` 在 20.562 秒内返回 completed，但开头依次为：① response.created；② response.function_call_arguments.delta，output_index=0，缺少 item_id/name/call_id，之前也没有工具 output_item.added；③ response.output_item.added，output_index=0，item.type=message。因此工具参数先占用了索引 0，随后文本又占用同一索引。仅保存类型、索引与 ID 的脱敏事件，交给 New API 真实公开入口 ConvertStreamResponseChunk，在第 3 个事件精确复现 `Responses output item changed from tool_use to text`。成功对照的 6 个合法工具事件全部通过；相关转换器与线上 revision 无差异。
+
+同一原请求再直接调用 Aiwanwu 原生 `/v1/messages`，输出同限 2048，上游 ID `7efceaea-9f7f-46b8-b703-cf19e3f63304`，21.289 秒完成：server_tool_use(web_search,index=0) → web_search_tool_result(index=1，含 5 条 web_search_result) → text(index=2) → end_turn/message_stop。原生搜索能够执行；问题位于上游 Claude 搜索事件转 Responses 的兼容路径，不能归为客户端没声明搜索或 GPT-Load 缺工具。前面 4 次公开合成查询曾仅返回普通 function_call/tool_use，未触发故障，不能据此泛化上游全部请求都没有搜索能力。
+
+源码印证与边界：本地 `sub2api/backend/internal/pkg/apicompat/anthropic_to_responses_response.go` 只在普通 tool_use 开始时创建 function_call，未处理 server_tool_use/web_search_tool_result，却会无条件把非空 input_json_delta 转成函数参数增量；该结构与实测孤立增量一致，但供应商实际源码版本未知，不能指定其部署提交。GPT-Load 的 `internal/execution/bifrost/passthrough.go` 与 `model_alias.go` 对该 native 路由不改事件类型/索引，客户端模型与上游模型也相同；与部署版本无差异。
+
+建议后续在 New API #10 将 `/v1/messages` 改为 `/v1/messages`、converter=none，沿 GPT-Load 已有 Anthropic native 路由保留原生搜索事件，并做整链验收；也可由供应商修复 Responses 搜索流转换。不能通过静默删除孤立工具事件、放宽类型冲突或只移除 max_uses 冒充修复。本轮完成 4 次合成调用、原搜索的 Responses/原生 Messages 两次有界调用及本地转换/回放；未更改生产配置、业务源码或重启服务。临时诊断程序与捕获文件已清理，查询正文、用户元数据及凭据未写入仓库。
+
+## 2026-11-12 06:24:18 +00:00 — Gemini 的通用 502 可追溯到上游 Cloudflare 网关
+
+只读核对 wdm 请求 `202611120616105036296358268d9d6WzaBVpEc`：06:16:10–06:16:20 UTC，Caddy 精确 request_id 对应非流式 `/v1/chat/completions`、`gemini-3.8-flash`，约 9.785 秒后返回 502。New API 错误日志 #13948 走 #4 OakGL_Gemini、回环 GPT-Load；journal 保留的上游 HTML 标题为 `aiwanwu.cc | 502: Bad gateway`。这是实际收到的上游 HTTP 502，现有证据不支持归为本机 Caddy 超时或请求参数校验失败；供应商内部失败原因未知。
+
+GPT-Load 执行 ID `1e2493a0-20a7-4ddc-89e7-2785ca173d0b`，仅一次 native/openai-completions 尝试，组 #6 Aiwanwu Gemini，模型名未映射；failure_origin=upstream、failure_category=upstream_host_error、effect=skip_group、will_retry=false。当前仅该组声明此模型，不能从 next_candidate 指令推断实际发生了重试。06:21:35 UTC 同模型另一次请求也返回 502；所查 06:00–06:22 UTC 窗口仅这两条，不能据此断言全天不可用。线上 revision 分别为 New API `3e8977c53862`、GPT-Load `ba2522dcea0c`。
+
+检索注意：请求 ID 可能被后续诊断对话正文引用，全文匹配只用于缩小候选，必须再按 Caddy 顶层 `.request_id` 精确相等筛选，避免把当前排障请求误算为原请求。正文仅在服务器内存核对，未写入仓库；本轮未重放请求、调用付费模型、修改生产配置或重启服务。

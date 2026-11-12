@@ -1085,13 +1085,21 @@ func CreateUser(c *gin.Context) {
 
 func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, userRole int, permissions map[string]map[string]bool) (bool, error) {
 	if permissions == nil {
-		if userRole < common.RoleAdminUser && c.GetInt("role") == common.RoleRootUser {
+		// 财务账号的总览授权不随普通资料编辑清除，只有角色变更或 Root 显式提交才改变。
+		if userRole < common.RoleAdminUser && userRole != common.RoleFinanceUser && c.GetInt("role") == common.RoleRootUser {
 			return true, authz.ClearUserAuthorizationInTx(tx, userID)
 		}
 		return false, nil
 	}
 	if c.GetInt("role") != common.RoleRootUser {
 		return false, fmt.Errorf("only root can update admin permissions")
+	}
+	if userRole == common.RoleFinanceUser {
+		// 只更新财务总览，不能顺带恢复已撤销的开票或挂帐办理能力。
+		// 其他资源的输入被忽略，角色硬边界仍阻止历史管理员授权生效。
+		return true, authz.SetUserPermissionsInTx(tx, userID, authz.PermissionsMap{
+			authz.ResourceFinanceOverview: permissions[authz.ResourceFinanceOverview],
+		})
 	}
 	if userRole < common.RoleAdminUser {
 		return true, authz.ClearUserAuthorizationInTx(tx, userID)

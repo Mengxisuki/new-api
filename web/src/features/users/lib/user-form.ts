@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import {
+  ADMIN_PERMISSION_RESOURCES,
   type PermissionCatalog,
   type AdminPermissionMatrix,
   normalizeAdminPermissions,
@@ -27,7 +28,7 @@ import { quotaUnitsToDollars } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { UserFormData, User } from '../types'
 
 // ============================================================================
 // Form Schema
@@ -92,6 +93,16 @@ export function transformFormDataToPayload(
       data.admin_permissions as AdminPermissionMatrix | undefined,
       catalog
     )
+  } else if (role === ROLE.FINANCE && catalog) {
+    // 财务角色只能被逐用户授予财务总览；只提交这一项资源，
+    // 后端同样会丢弃其他资源，这里不发送是为了不让请求看起来授予了更多权限。
+    const overview = ADMIN_PERMISSION_RESOURCES.FINANCE_OVERVIEW
+    payload.admin_permissions = {
+      [overview]: normalizeAdminPermissions(
+        data.admin_permissions as AdminPermissionMatrix | undefined,
+        catalog
+      )[overview],
+    }
   }
 
   // For create: only send required fields

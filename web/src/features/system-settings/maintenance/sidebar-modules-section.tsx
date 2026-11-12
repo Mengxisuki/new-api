@@ -144,6 +144,10 @@ export function SidebarModulesSection({
       },
     },
     finance: {
+      overview: {
+        title: t('Financial overview'),
+        description: t('View platform-wide revenue, receivables and wallet totals.'),
+      },
       credit: {
         title: t('On-account management'),
         description: t('View credit records'),

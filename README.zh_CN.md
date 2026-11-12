@@ -378,6 +378,27 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 
 验证：配置隔离 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 后执行 `go test ./controller -run '^TestInvoice' -count=1`；权限回归执行 `go test ./service/authz ./middleware -count=1`。在 `web/` 下执行 `bun run test src/features/wallet/__tests__/invoice-payment.test.tsx src/features/invoices/__tests__/admin.test.tsx src/features/system-settings/integrations/__tests__/invoice-rates.test.tsx src/features/users/components/__tests__`、`bunx tsgo -b` 和 `bun run build`。本实现记录人工开票与文件交付，不对接税务开票服务商；发布前应完成真实商户付款、财务上传和用户下载联调。
 
+### 财务总览（第 1 期）
+
+入口为「财务 → 财务总览」（`/finance/overview`）。默认只有 Root 可见。Root 在用户管理中编辑管理员或财务账号，在权限区勾选「财务总览 → 查看财务总览」，经原有单次身份验证保存后生效；普通用户和业务员不能获得此能力。`finance_overview:read` 与既有 `finance:read/write` 相互独立，能开票或结清挂帐不代表能查看经营汇总。接口只接受网页登录会话，不对个人访问令牌开放；侧栏隐藏设置不授予或撤销接口权限。
+
+总览包括实收、退款、实收减退款、开票附加费说明、钱包额度合计、时段消耗，以及按业务线的每日收入、收款渠道构成、当前挂帐账龄、欠款最多的用户和待办。支持今天、近 7/30 天、本月、上月、自定义日期（最长 366 天），统一按上海自然日统计；趋势图提供等价的逐日表格视图。挂帐、钱包额度与待办是当前快照，不随查询时段消失。
+
+口径与边界：
+
+- 钱包充值和客户订阅按成功订单到账时间计入，订阅不按周期摊销。订阅写入 `top_ups` 的同交易号账单镜像会被排除，避免重复统计。
+- 代充值只计外部收款；钱包支付不重复计收入，挂帐订单直到财务登记结清时才计入。结清后退款保留原收款历史，在登记退款时冲减。
+- 退款只包括平台内登记的代充值现金退款和已结清挂帐退款。充值/订阅在商户后台直接退款，目前缺少平台登记来源，不在统计中。
+- 微信、支付宝官方渠道和易支付按本地人民币合同合计。其他网关单列订单存储值，不当作已核实现金；例如 Stripe 的记录金额可能是额度面额。历史钱包订单的渠道不明时也不猜币种。
+- 开票附加费已经包含在实收里，说明金额不重复相加。钱包余额包含赠送、兑换和手动调整，不能当作现金余额或实收；额度显示沿用站点既有单位。消耗依赖消费日志与看板统计均开启，按小时汇总并存在既有缓存落库延迟，不是实时财务账本。
+- 人工补单目前没有独立的持久收款分类，成功订单可能包含人工补单；本页不是与微信商户账单完成核对后的正式财务报表。手动调额分类、充值/订阅自助挂帐、坏账核销、兑换码售赠分类、支出台账及订阅成本覆盖周期均属于后续期，本期未实现。
+
+代码导航：`model/finance_overview.go` 负责只读聚合，`controller/finance_overview.go` 校验时间范围，`GET /api/finance/overview?start=<Unix秒>&end=<Unix秒>` 返回左闭右开时段；`service/authz/resources_finance.go` 定义总览独立权限，前端在 `web/src/features/finance-overview/`。本期不新增业务表、迁移或依赖。
+
+验证命令：`go test ./controller -run '^TestFinanceOverview' -count=1 -v`，设置回环隔离 `TEST_MYSQL_DSN`、`TEST_POSTGRES_DSN` 执行三库查询矩阵；另以 `TEST_SECURITY_DIALECT=mysql` / `postgres` 运行 `TestFinanceOverviewPermissions`。前端在 `web/` 执行 `bun run test src/features/finance-overview src/features/users/components/__tests__/permissions.test.tsx src/hooks/__tests__/sidebar-config.test.tsx`、`bun x tsgo -b` 和 `bun run build`。已实际验证 SQLite 3.50.4、MySQL 8.4.2、PostgreSQL 14.17，使用临时实例和虚构数据完成 Root 登录、接口金额核对、页面明暗模式/表格切换、Root 授予财务角色并完成二次验证；没有执行真实收款或生产发布。
+
+受影响前端 23 文件 224 项测试、类型检查、定向 lint、前后端构建和后端总览/权限竞态检查通过；390 像素手机视口无页面横向溢出。前端全量测试另有一项既有失败：`src/features/task-plugins/__tests__/marketplace-install-dialog.test.tsx` 的源码高亮断言，已在未修改的 HEAD 代码上复现；未扩改该模块。授权设计参考 [OWASP Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) 的默认拒绝、服务端逐请求校验和最小权限，不宣称完成全项目 ASVS 合规认证。
+
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。

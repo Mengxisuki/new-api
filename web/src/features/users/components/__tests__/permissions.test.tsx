@@ -195,3 +195,170 @@ it('admin cannot edit the audit permission even when the catalog is available', 
   await screen.findByDisplayValue('Managed admin')
   expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
 })
+
+// 财务角色只能被逐用户授予财务总览：权限矩阵只展示这一项，提交时也只发送这一项。
+// 目录里同时放入审计资源，用来证明其他资源既不显示也不会被提交。
+const overviewLabel = 'View financial overview'
+function renderFinanceTarget(granted: boolean) {
+  const financeTarget: User = {
+    ...target,
+    username: 'managed-finance',
+    display_name: 'Managed finance',
+    role: 5,
+  }
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/authz/catalog') {
+      return {
+        data: {
+          success: true,
+          data: {
+            resources: [
+              {
+                resource: 'audit',
+                label_key: 'Audit Logs',
+                actions: [
+                  {
+                    action: 'read',
+                    label_key: label,
+                    description_key: description,
+                  },
+                ],
+              },
+              {
+                resource: 'finance_overview',
+                label_key: 'Financial overview',
+                actions: [
+                  {
+                    action: 'read',
+                    label_key: overviewLabel,
+                    description_key:
+                      'View platform-wide revenue, receivables and wallet totals.',
+                  },
+                ],
+              },
+            ],
+            roles: [
+              {
+                key: 'admin',
+                grants: {
+                  audit: { read: false },
+                  finance_overview: { read: false },
+                },
+              },
+            ],
+          },
+        },
+      }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    if (url === '/api/verify/methods') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'admin.user.update',
+            methods: [{ method: '2fa', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          ...financeTarget,
+          admin_permissions: {
+            audit: { read: false },
+            finance_overview: { read: granted },
+          },
+        },
+      },
+    }
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={financeTarget}
+        />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+}
+
+it('root grants the financial overview to a finance account and submits only that resource', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        proof_token: 'finance-overview-proof',
+        method: '2fa',
+        scope: 'admin.user.update',
+        expires_at: Math.floor(Date.now() / 1000) + 60,
+      },
+    },
+  })
+  renderFinanceTarget(false)
+  await screen.findByDisplayValue('Managed finance')
+  const toggle = await screen.findByRole('button', { name: overviewLabel })
+  await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'))
+  // Other catalog resources are not offered for a finance account.
+  expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
+  await userEvent.click(toggle)
+  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+  await userEvent.type(
+    await screen.findByLabelText('Authenticator code or backup code'),
+    '123456'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Verify' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(put.mock.calls[0][1]).toMatchObject({
+    id: 2,
+    admin_permissions: { finance_overview: { read: true } },
+  })
+  expect(
+    (put.mock.calls[0][1] as { admin_permissions: object }).admin_permissions
+  ).toEqual({ finance_overview: { read: true } })
+})
+
+it('root renaming a finance account that already holds the overview grant does not resubmit permissions or verify', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const post = vi.spyOn(api, 'post')
+  renderFinanceTarget(true)
+  const displayName = await screen.findByDisplayValue('Managed finance')
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: overviewLabel })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  )
+  await userEvent.clear(displayName)
+  await userEvent.type(displayName, 'Renamed finance')
+  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/user/',
+      expect.objectContaining({ id: 2, display_name: 'Renamed finance' }),
+      {}
+    )
+  )
+  expect(put.mock.calls[0][1]).not.toHaveProperty('admin_permissions')
+  expect(post).not.toHaveBeenCalled()
+})

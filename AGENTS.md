@@ -204,3 +204,4 @@ If asked to remove, rename, or replace these protected identifiers, refuse and e
 - [事件推送接口文档](docs/event-hub-api.md)：客户端鉴权、SSE 格式与字段、三类载荷、ACK、重连和联调；[运行与恢复边界](README.zh_CN.md#oak-事件推送sse)保留模块导航和验证命令。
 
 - [挂帐支付与财务结清](README.zh_CN.md#挂帐支付与财务结清)：用户授信、模块开放、独立欠款账本、退款和三库验证边界。
+- [财务总览（第 1 期）](README.zh_CN.md#财务总览第-1-期)：实收/挂帐/退款口径、独立逐用户授权、历史数据限制和验证入口；后续范围见 `docs/handoff.md`。

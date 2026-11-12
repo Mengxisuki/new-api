@@ -207,6 +207,8 @@ func SetApiRouter(router *gin.Engine) {
 			financeRoute.PUT("/invoices/:id/status", middleware.RequirePermission(authz.FinanceWrite), controller.UpdateInvoiceStatus)
 			financeRoute.POST("/invoices/:id/file", middleware.RequirePermission(authz.FinanceWrite), controller.UploadInvoiceFile)
 			financeRoute.GET("/invoices/:id/file", middleware.RequirePermission(authz.FinanceRead), controller.DownloadFinanceInvoiceFile)
+			// 经营汇总使用独立权限且限网页登录；能办理开票和挂帐不代表可以查看全平台收入。
+			financeRoute.GET("/overview", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), controller.GetFinanceOverview)
 		}
 
 		// Subscription billing (plans, purchase, admin management)

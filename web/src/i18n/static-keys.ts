@@ -1030,3 +1030,25 @@ export const creditStaticKeys = [
   'Insufficient available credit',
   'Credit record changed. Refresh and try again.',
 ] as const
+
+// 财务总览的权限目录文案来自后端，业务线、渠道和时段名称经常量映射后传入 t()，
+// 提取脚本看不到这些键，显式登记避免同步时遗漏。
+export const financeOverviewStaticKeys = [
+  'Financial overview',
+  'View financial overview',
+  'View platform-wide revenue, receivables and wallet totals.',
+
+  'Wallet top-up',
+  'Subscription',
+  'Account top-up',
+  'Credit settlement',
+  'WeChat Pay',
+  'Alipay',
+  'Epay',
+
+  'Today',
+  'Last 7 days',
+  'Last 30 days',
+  'Month to date',
+  'Last month',
+] as const

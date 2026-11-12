@@ -143,6 +143,11 @@ export function SidebarModulesCard() {
       description: t('Invoice management'),
       modules: [
         {
+          key: 'overview',
+          title: t('Financial overview'),
+          description: t('View platform-wide revenue, receivables and wallet totals.'),
+        },
+        {
           key: 'credit',
           title: t('On-account management'),
           description: t('View credit records'),

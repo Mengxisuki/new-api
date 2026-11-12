@@ -161,6 +161,7 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		},
 		ResourceAudit:            {ActionRead: false},
 		ResourceFinance:          {ActionRead: true, ActionWrite: true},
+		ResourceFinanceOverview:  {ActionRead: false},
 		ResourceRechargeOrders:   {ActionRead: true, ActionWrite: true, "reveal": true, "assign": true, "refund": true},
 		ResourceRechargeProducts: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
@@ -196,6 +197,7 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		},
 		ResourceAudit:            {ActionRead: false},
 		ResourceFinance:          {ActionRead: true, ActionWrite: true},
+		ResourceFinanceOverview:  {ActionRead: false},
 		ResourceRechargeOrders:   {ActionRead: true, ActionWrite: true, "reveal": true, "assign": true, "refund": true},
 		ResourceRechargeProducts: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
@@ -348,4 +350,18 @@ func TestFinanceRoleOnlyGrantsFinanceCapabilities(t *testing.T) {
 	assert.False(t, Can(501, 5, AuditRead))             // 财务不能默认读取其它账号的通用审计。
 	assert.False(t, Can(501, 5, TaskPluginBind))
 	assert.True(t, Can(504, common.RoleRootUser, Permission{Resource: "finance", Action: "write"}))
+	// 财务总览没有默认角色：管理员和财务都要由 Root 逐用户授予，Root 自身始终可见。
+	assert.False(t, Can(501, 5, FinanceOverviewRead))
+	assert.False(t, Can(502, common.RoleAdminUser, FinanceOverviewRead))
+	assert.True(t, Can(504, common.RoleRootUser, FinanceOverviewRead))
+	for _, userID := range []int{501, 502} {
+		require.NoError(t, SetUserPermissions(userID, PermissionsMap{ResourceFinanceOverview: {ActionRead: true}}))
+	}
+	assert.True(t, Can(501, 5, FinanceOverviewRead)) // 财务角色的硬边界为这一项资源放行。
+	assert.True(t, Can(502, common.RoleAdminUser, FinanceOverviewRead))
+	assert.False(t, Can(501, 5, ChannelRead))                             // 放行总览不能连带打开其他资源。
+	assert.False(t, Can(501, common.RoleSalesUser, FinanceOverviewRead))  // 改任业务员后旧授权立即失效。
+	assert.False(t, Can(501, common.RoleCommonUser, FinanceOverviewRead)) // 普通用户即使残留授权也不可见。
+	require.NoError(t, SetUserPermissions(501, PermissionsMap{ResourceFinanceOverview: {ActionRead: false}}))
+	assert.False(t, Can(501, 5, FinanceOverviewRead)) // Root 可以单独收回。
 }

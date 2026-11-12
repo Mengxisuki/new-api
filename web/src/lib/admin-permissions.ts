@@ -26,6 +26,7 @@ export type AdminCapabilities = AdminPermissionMatrix
 export const ADMIN_PERMISSION_RESOURCES = {
   AUDIT: 'audit',
   FINANCE: 'finance', // 与后端权限目录同名，财务工作区按动作校验。
+  FINANCE_OVERVIEW: 'finance_overview', // 经营汇总独立授权，财务角色也需 Root 逐用户授予。
   CHANNEL: 'channel',
   TASK_PLUGIN: 'task_plugin',
 } as const

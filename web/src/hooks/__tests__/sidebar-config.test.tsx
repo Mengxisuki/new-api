@@ -45,7 +45,7 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-function sidebarFor(admin?: object, user?: object, canConfigure = true) {
+function sidebarFor(admin?: object, user?: object, canConfigure = true, role = 1) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -55,7 +55,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   useAuthStore.getState().auth.setUser({
     id: 1,
     username: 'alice',
-    role: 1,
+    role,
     permissions: { sidebar_settings: canConfigure },
     sidebar_modules: user ? JSON.stringify(user) : '',
   })
@@ -216,6 +216,53 @@ it('没有财务读取能力时不显示财务分类', () => {
   expect(
     result.result.current.navGroups.some((group) => group.id === 'finance')
   ).toBe(false)
+})
+
+// 总览复用财务分类的可见性配置；旧配置缺少 overview 时保持默认可见。
+it.each([
+  [undefined, undefined, true],
+  [{ finance: { enabled: true, overview: false } }, undefined, false],
+  [{ finance: { enabled: false } }, undefined, false],
+  [undefined, { finance: { overview: false } }, false],
+])('财务总览遵循站点和个人的侧栏开关 (%j, %j)', (admin, user, visible) => {
+  const { result } = sidebarFor(admin, user, true, 100)
+  expect(result.current.flatMap((group) => group.items).some(
+    (item) => 'url' in item && item.url === '/finance/overview'
+  )).toBe(visible)
+})
+
+// 财务总览是独立权限：办理权限和总览权限各自决定自己的入口，互不带出。
+it.each([
+  {
+    name: '只有总览权限时财务分类只出现总览入口',
+    permissions: {
+      finance: { read: false, write: false },
+      finance_overview: { read: true },
+    },
+    urls: ['/finance/overview'],
+  },
+  {
+    name: '同时具有两种权限时总览排在财务分类第一项',
+    permissions: {
+      finance: { read: true, write: true },
+      finance_overview: { read: true },
+    },
+    urls: ['/finance/overview', '/finance/credit', '/finance/invoices'],
+  },
+])('$name', ({ permissions, urls }) => {
+  useAuthStore.getState().auth.setUser({
+    id: 5,
+    username: 'finance',
+    role: 5,
+    permissions: { admin_permissions: permissions },
+  })
+  const result = renderHook(() => useSidebarData())
+  const finance = result.result.current.navGroups.find(
+    (group) => group.id === 'finance'
+  )
+  expect(finance?.items.map((item) => ('url' in item ? item.url : ''))).toEqual(
+    urls
+  )
 })
 
 // 业务员有独立工作区，不能因低于管理员等级而丢失入口。

@@ -61,6 +61,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/finance/credit/accounts":            accessTokenSessionRule,
 	"GET /api/finance/credit/entries":             accessTokenSessionRule,
 	"POST /api/finance/credit/entries/:id/settle": accessTokenSessionRule,
+	"GET /api/finance/overview":                   accessTokenSessionRule, // 全平台经营数据不对个人令牌开放。
 	// 代充值只接受网页登录，PAT 不能读取账户凭据或执行资金动作。
 	"GET /api/account-recharge/products":                                   accessTokenSessionRule,
 	"POST /api/account-recharge/quote":                                     accessTokenSessionRule,

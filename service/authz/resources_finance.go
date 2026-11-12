@@ -12,6 +12,14 @@ var FinanceRead = Permission{Resource: ResourceFinance, Action: ActionRead} // �
 // 后端处理器仍须验证付款状态及申请生命周期。
 var FinanceWrite = Permission{Resource: ResourceFinance, Action: ActionWrite}
 
+// ResourceFinanceOverview 单独标识经营汇总，不随开票和挂帐办理权限一并授予。
+// 汇总包含全平台收入与欠款，能办理单笔业务不代表可以查看整体经营数据。
+const ResourceFinanceOverview = "finance_overview"
+
+// FinanceOverviewRead 允许查看财务总览；没有任何角色默认拥有。
+// Root 由 superuser 规则放行，其余账号必须由 Root 逐用户授予。
+var FinanceOverviewRead = Permission{Resource: ResourceFinanceOverview, Action: ActionRead}
+
 // 角色基线由后端目录唯一维护，前端通过现有权限目录获取。
 // 普通管理员保留财务办理能力，财务角色仅获得这两个动作。
 // Root 由现有 superuser 规则隐式拥有，不另存重复策略。
@@ -31,6 +39,18 @@ func init() {
 				LabelKey:       "Manage invoices and credit",
 				DescriptionKey: "Process invoices and confirm full credit settlements.",
 				DefaultRoles:   []string{BuiltInRoleAdmin, BuiltInRoleFinance},
+			},
+		},
+	})
+	// 默认角色留空：管理员和财务都不会因升级自动看到经营汇总。
+	RegisterResource(ResourceDefinition{
+		Resource: ResourceFinanceOverview,
+		LabelKey: "Financial overview",
+		Actions: []ActionDefinition{
+			{
+				Action:         ActionRead,
+				LabelKey:       "View financial overview",
+				DescriptionKey: "View platform-wide revenue, receivables and wallet totals.",
 			},
 		},
 	})

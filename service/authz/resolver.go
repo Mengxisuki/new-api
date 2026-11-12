@@ -13,7 +13,8 @@ import (
 func Can(userID int, systemRole int, permission Permission) bool {
 	// 财务角色的资源边界高于历史用户覆盖，降权后不能沿用旧管理员权限。
 	// 逐请求检查角色，旧缓存的用户覆盖不能扩大到渠道、审计或插件资源。
-	if systemRole == common.RoleFinanceUser && permission.Resource != ResourceFinance {
+	// 财务总览是财务角色唯一可被逐用户授予的额外资源，基线仍默认拒绝。
+	if systemRole == common.RoleFinanceUser && permission.Resource != ResourceFinance && permission.Resource != ResourceFinanceOverview {
 		return false
 	}
 	// 业务员的硬边界优先于历史覆盖，不能通过遗留管理员授权执行退款。

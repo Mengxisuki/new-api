@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   Box,
+  ChartColumn,
   ClipboardList,
   CreditCard,
   FileText,
@@ -54,6 +55,8 @@ export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const canReadFinance = hasPermission(user, 'finance', 'read')
+  // 财务总览是独立权限：可以只看总览而不办理开票挂帐，也可以反过来。
+  const canReadFinanceOverview = hasPermission(user, 'finance_overview', 'read')
 
   return {
     navGroups: [
@@ -173,22 +176,36 @@ export function useSidebarData(): SidebarData {
           ]
         : []),
       // 财务按真实权限单独成组，不能借管理员数字阈值扩大其他菜单权限。
-      ...(canReadFinance
+      // 分组内每个入口各自按对应权限显示，任一权限成立即出现分组。
+      ...(canReadFinance || canReadFinanceOverview
         ? [
             {
               id: 'finance',
               title: t('Finance'),
               items: [
-                {
-                  title: t('On-account management'),
-                  url: '/finance/credit',
-                  icon: FileText,
-                },
-                {
-                  title: t('Invoice management'),
-                  url: '/finance/invoices',
-                  icon: FileText,
-                },
+                ...(canReadFinanceOverview
+                  ? [
+                      {
+                        title: t('Financial overview'),
+                        url: '/finance/overview',
+                        icon: ChartColumn,
+                      },
+                    ]
+                  : []),
+                ...(canReadFinance
+                  ? [
+                      {
+                        title: t('On-account management'),
+                        url: '/finance/credit',
+                        icon: FileText,
+                      },
+                      {
+                        title: t('Invoice management'),
+                        url: '/finance/invoices',
+                        icon: FileText,
+                      },
+                    ]
+                  : []),
               ],
             },
           ]

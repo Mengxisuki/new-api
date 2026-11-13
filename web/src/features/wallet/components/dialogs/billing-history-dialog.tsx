@@ -61,11 +61,14 @@ import { OfficialPaymentQrDialog } from './official-payment-qr-dialog'
 interface BillingHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** 可选付款方式筛选；个人挂帐入口只展示 credit 订单。 */
+  paymentMethod?: string
 }
 
 export function BillingHistoryDialog({
   open,
   onOpenChange,
+  paymentMethod,
 }: BillingHistoryDialogProps) {
   const { t } = useTranslation()
   const {
@@ -86,7 +89,9 @@ export function BillingHistoryDialog({
     handlePageSizeChange,
     handleSearch,
     handleCompleteOrder,
-  } = useBillingHistory({ enabled: open })
+  } = useBillingHistory({ enabled: open, paymentMethod })
+  // 挂帐入口只用于查看本人订单，不能把通用管理员补单操作带入个人资料。
+  const showAdminOrderActions = isAdmin && !paymentMethod
 
   const [activeTab, setActiveTab] = useState('orders') // 发票列表仅在用户主动切换时查询。
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
@@ -149,7 +154,9 @@ export function BillingHistoryDialog({
         >
           <TabsList aria-label={t('Billing records')}>
             <TabsTrigger value='orders'>{t('Orders')}</TabsTrigger>
-            <TabsTrigger value='invoices'>{t('My invoices')}</TabsTrigger>
+            {!paymentMethod && (
+              <TabsTrigger value='invoices'>{t('My invoices')}</TabsTrigger>
+            )}
           </TabsList>
           <TabsContent value='orders'>
             <div className='min-h-0 space-y-3'>
@@ -277,7 +284,7 @@ export function BillingHistoryDialog({
                                     <Copy className='h-3 w-3' />
                                   )}
                                 </Button>
-                                {isAdmin && record.user_id != null && (
+                                {showAdminOrderActions && record.user_id != null && (
                                   <StatusBadge
                                     label={`${t('User ID')}: ${record.user_id}`}
                                     variant='neutral'
@@ -364,7 +371,9 @@ export function BillingHistoryDialog({
                             </div>
                           )}
                           {/* Admin Actions */}
-                          {isSuperAdmin && record.status === 'pending' && (
+                          {showAdminOrderActions &&
+                            isSuperAdmin &&
+                            record.status === 'pending' && (
                             <div className='mt-4 flex justify-end'>
                               <Button
                                 size='sm'
@@ -423,11 +432,13 @@ export function BillingHistoryDialog({
               )}
             </div>
           </TabsContent>
-          <TabsContent value='invoices'>
-            {open && activeTab === 'invoices' ? (
-              <UserInvoicesList open={open} />
-            ) : null}
-          </TabsContent>
+          {!paymentMethod && (
+            <TabsContent value='invoices'>
+              {open && activeTab === 'invoices' ? (
+                <UserInvoicesList open={open} />
+              ) : null}
+            </TabsContent>
+          )}
         </Tabs>
       </Dialog>
 

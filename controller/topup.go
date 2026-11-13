@@ -696,6 +696,11 @@ func GetUserTopUps(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
 	keyword := c.Query("keyword")
+	paymentMethod := c.Query("payment_method")
+	if paymentMethod != "" && paymentMethod != model.PaymentProviderCredit {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
 
 	var (
 		topups []*model.TopUp
@@ -703,9 +708,9 @@ func GetUserTopUps(c *gin.Context) {
 		err    error
 	)
 	if keyword != "" {
-		topups, total, err = model.SearchUserTopUps(userId, keyword, pageInfo)
+		topups, total, err = model.SearchUserTopUps(userId, keyword, pageInfo, paymentMethod)
 	} else {
-		topups, total, err = model.GetUserTopUps(userId, pageInfo)
+		topups, total, err = model.GetUserTopUps(userId, pageInfo, paymentMethod)
 	}
 	if err != nil {
 		common.ApiError(c, err)

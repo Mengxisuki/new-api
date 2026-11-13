@@ -116,6 +116,63 @@ const overviewSchema = z.object({
 })
 export type FinanceOverview = z.infer<typeof overviewSchema>
 
+// 第四期支出记录：现金按发生日，成本按订阅覆盖日或充值消耗日统计。
+const expenseSchema = z.object({
+  id: z.number().int(),
+  kind: z.enum(['subscription', 'recharge', 'other']),
+  title: z.string(),
+  amount_cents: z.number().int(),
+  occurred_at: z.number().int(),
+  coverage_start: z.number().int(),
+  coverage_end: z.number().int(),
+  remaining_balance_cents: z.number().int(),
+  note: z.string(),
+  created_at: z.number().int(),
+  updated_at: z.number().int(),
+})
+export type FinanceExpense = z.infer<typeof expenseSchema>
+
+const expenseSummarySchema = z.object({
+  start: z.number().int(),
+  end: z.number().int(),
+  cash_cents: z.number().int(),
+  cost_cents: z.number().int(),
+  items: z.array(expenseSchema),
+})
+export type FinanceExpenseSummary = z.infer<typeof expenseSummarySchema>
+
+// 支出写入只提交业务字段，操作人和时间由后端会话确定。
+export async function getFinanceExpenses(start: number, end: number) {
+  const response = await api.get('/api/finance/expenses', { params: { start, end } })
+  return expenseSummarySchema.parse(requireServerSuccess(response.data).data)
+}
+
+export async function createFinanceExpense(input: {
+  kind: FinanceExpense['kind']
+  title: string
+  amount_cents: number
+  occurred_at: number
+  coverage_start: number
+  coverage_end: number
+  remaining_balance_cents: number
+  note: string
+}) {
+  const response = await api.post('/api/finance/expenses', input)
+  return expenseSchema.parse(requireServerSuccess(response.data).data)
+}
+
+export async function consumeFinanceExpenseBalance(
+  id: number,
+  remaining_balance_cents: number,
+  consumed_at: number
+) {
+  const response = await api.post(`/api/finance/expenses/${id}/consume`, {
+    remaining_balance_cents,
+    consumed_at,
+  })
+  return expenseSchema.parse(requireServerSuccess(response.data).data)
+}
+
 // 流水返回每次实际操作的快照，钱包与订阅不适用的字段为 null/零而非虚构余额。
 const entrySchema = z.object({
   id: z.number().int(),

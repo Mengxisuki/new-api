@@ -219,7 +219,8 @@ export async function transferAffiliateQuota(
 export async function getUserBillingHistory(
   page: number,
   pageSize: number,
-  keyword?: string
+  keyword?: string,
+  paymentMethod?: string
 ): Promise<ApiResponse<BillingHistoryResponse>> {
   const params = new URLSearchParams({
     p: page.toString(),
@@ -227,6 +228,9 @@ export async function getUserBillingHistory(
   })
   if (keyword) {
     params.append('keyword', keyword)
+  }
+  if (paymentMethod) {
+    params.append('payment_method', paymentMethod)
   }
   // 用户主动查询要求本次新请求，不能复用打开前仍在途的旧列表。
   const res = await api.get(`/api/user/topup/self?${params.toString()}`, {

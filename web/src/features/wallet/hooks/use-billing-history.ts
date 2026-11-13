@@ -45,10 +45,17 @@ interface UseBillingHistoryOptions {
   initialPage?: number
   /** Initial page size */
   initialPageSize?: number
+  /** 只查看指定付款方式的订单，例如个人挂帐面板只传 credit。 */
+  paymentMethod?: string
 }
 
 export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
-  const { initialPage = 1, initialPageSize = 10, enabled = true } = options
+  const {
+    initialPage = 1,
+    initialPageSize = 10,
+    enabled = true,
+    paymentMethod,
+  } = options
   const isAdmin = useIsAdmin()
   const isSuperAdmin = useIsSuperAdmin() // 补单权限与账单查看权限分别判断。
   const currentUserId = useAuthStore((state) => state.auth.user?.id ?? 0)
@@ -71,9 +78,16 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
     const requestId = ++requestIdRef.current
     setLoading(true)
     try {
-      const response = isAdmin
-        ? await getAllBillingHistory(page, pageSize, debouncedKeyword)
-        : await getUserBillingHistory(page, pageSize, debouncedKeyword)
+      // 指定付款方式时必须继续走本人接口，避免管理员权限绕过挂帐筛选。
+      const response =
+        isAdmin && !paymentMethod
+          ? await getAllBillingHistory(page, pageSize, debouncedKeyword)
+          : await getUserBillingHistory(
+              page,
+              pageSize,
+              debouncedKeyword,
+              paymentMethod
+            )
 
       if (requestId !== requestIdRef.current) return
 
@@ -95,7 +109,7 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
         setLoading(false)
       }
     }
-  }, [debouncedKeyword, isAdmin, page, pageSize])
+  }, [debouncedKeyword, isAdmin, page, pageSize, paymentMethod])
 
   /**
    * Complete a pending order (admin only)

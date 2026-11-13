@@ -215,6 +215,10 @@ func SetApiRouter(router *gin.Engine) {
 			financeRoute.POST("/credit/entries/:id/settle", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), middleware.UserCriticalRateLimit("credit-settle"), controller.SettleCreditEntry)
 			financeRoute.POST("/credit/entries/:id/write-off", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), middleware.UserCriticalRateLimit("credit-write-off"), controller.WriteOffCreditEntry)
 			financeRoute.GET("/adjustments", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceOverviewRead), controller.GetFinanceAdjustments)
+			// 第四期支出台账：读取复用财务读取能力，写入要求财务写权限且仅接受网页登录会话。
+			financeRoute.GET("/expenses", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceRead), controller.GetFinanceExpenses)
+			financeRoute.POST("/expenses", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), controller.CreateFinanceExpense)
+			financeRoute.POST("/expenses/:id/consume", controller.RechargeSessionOnly, middleware.RequirePermission(authz.FinanceWrite), controller.ConsumeFinanceExpenseBalance)
 			financeRoute.GET("/invoices", middleware.RequirePermission(authz.FinanceRead), controller.GetFinanceInvoices)
 			financeRoute.PUT("/invoices/:id/status", middleware.RequirePermission(authz.FinanceWrite), controller.UpdateInvoiceStatus)
 			financeRoute.POST("/invoices/:id/file", middleware.RequirePermission(authz.FinanceWrite), controller.UploadInvoiceFile)

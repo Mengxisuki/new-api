@@ -35,6 +35,7 @@ import { CreditPanel, TodoPanel } from './components/credit-panels'
 import { ManualFinancePanel } from './components/manual-finance-panel'
 import { OverviewMetrics } from './components/overview-metrics'
 import { RevenueBreakdown, RevenueTrend } from './components/revenue-panels'
+import { ExpenseLedgerPanel } from './components/expense-ledger-panel'
 import { SubscriptionGantt } from './components/subscription-gantt'
 import {
   MAX_RANGE_DAYS,
@@ -60,6 +61,7 @@ export function FinanceOverviewPage() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const canRead = hasPermission(user, 'finance_overview', 'read')
+  const canWriteExpenses = hasPermission(user, 'finance', 'write')
   // 选择 'custom' 时用下面两个日期，否则用预设；默认看本月至今。
   const [preset, setPreset] = useState<RangePreset | 'custom'>('month')
   const [from, setFrom] = useState<Date | undefined>()
@@ -171,6 +173,11 @@ export function FinanceOverviewPage() {
               <ManualFinancePanel
                 key={`${query.data.start}:${query.data.end}`}
                 data={query.data}
+              />
+              <ExpenseLedgerPanel
+                start={query.data.start}
+                end={query.data.end}
+                canWrite={canWriteExpenses}
               />
               <div className='grid gap-3 xl:grid-cols-[2fr_1fr]'>
                 <CreditPanel data={query.data} />

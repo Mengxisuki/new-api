@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { CreditCard } from 'lucide-react'
+import { CreditCard, Receipt } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
@@ -30,6 +31,8 @@ import {
 } from '@/features/credit/api'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+
+import { BillingHistoryDialog } from '@/features/wallet/components/dialogs/billing-history-dialog'
 
 // 额度卡是本人资料的只读财务摘要。
 // 总授信、占用和可用额来自同一服务端响应，
@@ -73,6 +76,7 @@ import { formatNumber } from '@/lib/format'
 export function CreditSummaryCard() {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const query = useQuery({
     queryKey: ['self-credit'],
     queryFn: getSelfCreditAccount,
@@ -89,11 +93,24 @@ export function CreditSummaryCard() {
       ].filter(Boolean)
     : []
   return (
-    <TitledCard
-      title={t('On-account credit')}
-      icon={<CreditCard className='size-4' />}
-      disableHoverEffect
-    >
+    <>
+      <TitledCard
+        title={t('On-account credit')}
+        icon={<CreditCard className='size-4' />}
+        disableHoverEffect
+        action={
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='w-full gap-2 sm:w-auto'
+            onClick={() => setHistoryOpen(true)}
+          >
+            <Receipt className='size-4' />
+            {t('Order History')}
+          </Button>
+        }
+      >
       {/* 首次加载不显示零额度，避免误导用户授权已经关闭。 */}
       {query.isLoading && <Skeleton className='h-40 w-full' />}
       {/* 错误可独立重试，不影响个人资料表单的未保存内容。 */}
@@ -140,18 +157,14 @@ export function CreditSummaryCard() {
               </p>
             </>
           )}
-          {/* 主动刷新能查看付款或结清后的额度，不触发任何资金动作。 */}
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            disabled={query.isFetching}
-            onClick={() => void query.refetch()}
-          >
-            {t('Refresh')}
-          </Button>
         </div>
       )}
-    </TitledCard>
+      </TitledCard>
+      <BillingHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        paymentMethod='credit'
+      />
+    </>
   )
 }

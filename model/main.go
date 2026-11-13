@@ -377,6 +377,9 @@ func migrateDB() error {
 		&UserSubscription{},
 		// 人工号池周期仅用于财务甘特图，不参与结算。
 		&FinancePoolSubscription{},
+		// 第四期手工支出：主记录与充值余额消耗明细必须一起迁移。
+		&FinanceExpense{},
+		&FinanceExpenseConsumption{},
 		&SubscriptionPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},

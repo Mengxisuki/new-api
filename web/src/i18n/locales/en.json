@@ -8352,6 +8352,19 @@
     "Approve a refund only after external processing has stopped. WeChat confirmation submits or queries the original-channel refund; monitor its result in Order management.": "Approve a refund only after external processing has stopped. WeChat confirmation submits or queries the original-channel refund; monitor its result in Order management.",
     "Refunding": "Refunding",
     "Paid": "Paid",
-    "WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue.": "WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue."
+    "WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue.": "WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue.",
+    "Expense ledger": "Expense ledger",
+    "Cash expenses": "Cash expenses",
+    "Cost expenses": "Cost expenses",
+    "Remaining balance": "Remaining balance",
+    "Save expense": "Save expense",
+    "Expense title": "Expense title",
+    "Cash is recorded on purchase; cost is amortized or recognized when balance is consumed.": "Cash is recorded on purchase; cost is amortized or recognized when balance is consumed.",
+    "Failed to save expense": "Failed to save expense",
+    "Occurred date": "Occurred date",
+    "Coverage start": "Coverage start",
+    "Coverage end": "Coverage end",
+    "Remaining balance (CNY)": "Remaining balance (CNY)",
+    "Amount (CNY)": "Amount (CNY)"
   }
 }

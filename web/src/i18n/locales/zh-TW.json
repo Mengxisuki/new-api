@@ -8352,6 +8352,19 @@
     "Approve a refund only after external processing has stopped. WeChat confirmation submits or queries the original-channel refund; monitor its result in Order management.": "确认外部办理已停止后再批准退款。微信确认会提交或查询原路退款，请在订单管理中查看结果。",
     "Refunding": "退款中",
     "Paid": "已支付",
-    "WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue.": "微信退款操作 {{operation}} 失敗（{{code}}）。排除問題後請恢復原退款。"
+    "WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue.": "微信退款操作 {{operation}} 失敗（{{code}}）。排除問題後請恢復原退款。",
+    "Expense ledger": "支出台帳",
+    "Cash expenses": "現金支出",
+    "Cost expenses": "成本支出",
+    "Remaining balance": "剩餘餘額",
+    "Save expense": "儲存支出",
+    "Expense title": "支出名稱",
+    "Cash is recorded on purchase; cost is amortized or recognized when balance is consumed.": "現金按採購日記錄；成本按覆蓋期攤銷或餘額消耗確認。",
+    "Failed to save expense": "儲存支出失敗",
+    "Occurred date": "發生日期",
+    "Coverage start": "覆蓋開始",
+    "Coverage end": "覆蓋結束",
+    "Remaining balance (CNY)": "剩餘餘額（元）",
+    "Amount (CNY)": "金額（元）"
   }
 }

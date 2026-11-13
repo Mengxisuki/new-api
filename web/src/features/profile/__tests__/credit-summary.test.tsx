@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -127,4 +128,42 @@ test('读取失败时提供重试且不显示未配置授信', async () => {
       'On-account credit is not configured. Contact an administrator.'
     )
   ).not.toBeInTheDocument()
+})
+
+// 订单入口复用钱包账单弹窗，但查询参数由服务端限定为挂帐付款方式。
+// 个人资料不能把普通微信、支付宝或其他钱包订单混入挂帐历史。
+test('挂帐面板移除刷新并只打开挂帐订单历史', async () => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/user/credit') {
+      return {
+        data: {
+          success: true,
+          data: {
+            user_id: 2,
+            enabled: true,
+            limit_cents: 20000,
+            used_cents: 6500,
+            topup_enabled: true,
+            subscription_enabled: false,
+            recharge_enabled: false,
+            version: 1,
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: { items: [], total: 0 } } }
+  })
+  const user = userEvent.setup()
+  mount()
+  expect(await screen.findByRole('button', { name: /Order History/i })).toBeVisible()
+  expect(screen.queryByRole('button', { name: /^Refresh$/i })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /Order History/i }))
+  expect(await screen.findByText('Billing History')).toBeVisible()
+  expect(get).toHaveBeenCalledWith(
+    expect.stringContaining('/api/user/topup/self?'),
+    expect.objectContaining({ disableDuplicate: true })
+  )
+  expect(get.mock.calls.some(([url]) => String(url).includes('payment_method=credit'))).toBe(true)
+  expect(screen.queryByRole('tab', { name: 'My invoices' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Complete Order' })).not.toBeInTheDocument()
 })

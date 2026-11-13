@@ -361,7 +361,7 @@ export function RechargeFormCard({
                 <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
                   {t('Payment Method')}
                 </Label>
-                {hasStandardPaymentMethods ? (
+                {hasStandardPaymentMethods || (credit && onCreditSelect) ? (
                   <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
                     {topupInfo?.pay_methods?.map((method) => {
                       const minTopup = Math.max(
@@ -426,37 +426,39 @@ export function RechargeFormCard({
                         button
                       )
                     })}
+                    {credit && onCreditSelect && (
+                      <Button
+                        variant='outline'
+                        className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                        onClick={onCreditSelect}
+                        disabled={!!creditDisabledReason || !!creditLoading}
+                        title={creditDisabledReason}
+                        aria-label={`${t('On account')}${creditDisabledReason ? `. ${creditDisabledReason}` : ''}`}
+                      >
+                        <WalletCards className='h-4 w-4' />
+                        <span className='flex min-w-0 flex-col items-start'>
+                          <span className='max-w-full truncate'>
+                            {creditLoading ? t('Checking...') : t('On account')}
+                          </span>
+                          <span className='text-muted-foreground max-w-full truncate text-xs font-normal'>
+                            {creditDisabledReason ||
+                              t('Remaining credit: {{amount}} CNY', {
+                                amount: formatNumber(
+                                  (credit.limit_cents - credit.used_cents) / 100
+                                ),
+                              })}
+                          </span>
+                        </span>
+                      </Button>
+                    )}
                   </div>
                 ) : null}
                 {credit && onCreditSelect && (
-                  <div className='space-y-2'>
-                    <Button
-                      variant='outline'
-                      className='min-h-14 w-full justify-start text-left'
-                      onClick={onCreditSelect}
-                      disabled={!!creditDisabledReason || !!creditLoading}
-                      title={creditDisabledReason}
-                      aria-label={`${t('On account')}${creditDisabledReason ? `. ${creditDisabledReason}` : ''}`}
-                    >
-                      <WalletCards className='h-4 w-4' />
-                      <span className='flex flex-col items-start'>
-                        <span>{creditLoading ? t('Checking...') : t('On account')}</span>
-                        <span className='text-muted-foreground text-xs font-normal'>
-                          {creditDisabledReason ||
-                            t('Remaining credit: {{amount}} CNY', {
-                              amount: formatNumber(
-                                (credit.limit_cents - credit.used_cents) / 100
-                              ),
-                            })}
-                        </span>
-                      </span>
-                    </Button>
-                    {!credit.enabled || !credit.topup_enabled ? (
-                      <p className='text-muted-foreground text-xs'>
-                        {t('On-account wallet top-up is not enabled for this account.')}
-                      </p>
-                    ) : null}
-                  </div>
+                  !credit.enabled || !credit.topup_enabled ? (
+                    <p className='text-muted-foreground text-xs'>
+                      {t('On-account wallet top-up is not enabled for this account.')}
+                    </p>
+                  ) : null
                 )}
                 {!hasStandardPaymentMethods && !hasWaffoPaymentMethods && !credit && (
                   <Alert>

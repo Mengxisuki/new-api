@@ -33,7 +33,7 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 			}
 			db := modelManagementDB(t, dialect, dsn)
 			require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.AccountRechargeOrder{},
-				&model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.QuotaLedger{}))
+				&model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.PaymentRefund{}, &model.QuotaLedger{}))
 			exportEnabled, consumeEnabled := common.DataExportEnabled, common.LogConsumeEnabled
 			common.DataExportEnabled, common.LogConsumeEnabled = true, true
 			t.Cleanup(func() {
@@ -156,6 +156,27 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 			assert.True(t, overview.ConsumptionAvailable)
 			assert.Equal(t, model.FinanceTodo{PendingInvoices: 2, PendingRefunds: 2}, overview.Todo)
 
+			// 微信成功日期决定现金退款归属，不按批准日期或本地查询日期挪账。
+			// 代充值已有本地退款事件，同一交易写入自动账本后只计算一次。
+			// 未完成的处理中记录即使有金额也不能计入现金退款。
+			require.NoError(t, db.Create(&[]model.PaymentRefund{
+				{Module: model.CreditModuleTopup, TradeNo: "t-wechat", RefundNo: "RF-finance-topup", AmountCents: 10000, Status: "succeeded", CreatedAt: start - 100, CompletedAt: day2 + 20},
+				{Module: model.CreditModuleSubscription, TradeNo: "s-wechat", RefundNo: "RF-finance-sub", AmountCents: 3000, Status: "succeeded", CreatedAt: day2, CompletedAt: day3 + 20},
+				{Module: model.CreditModuleRecharge, TradeNo: "r-refunded", RefundNo: "RF-finance-recharge", AmountCents: 4000, Status: "succeeded", CreatedAt: day2, CompletedAt: day3 + 30},
+				{Module: model.CreditModuleTopup, TradeNo: "t-next-day", RefundNo: "RF-finance-pending", AmountCents: 999, Status: "processing", CreatedAt: day2},
+			}).Error)
+			afterRefund, err := model.GetFinanceOverview(start, end)
+			require.NoError(t, err)
+			assert.EqualValues(t, 18500, afterRefund.RefundCents) // 三笔微信17000，加已结清挂帐1500。
+			assert.EqualValues(t, 13549, afterRefund.NetCents)
+			assert.Equal(t, overview.ReceivedCents, afterRefund.ReceivedCents) // 历史收款事实不会抹掉。
+			// 代充值事件在第二日，但微信在第三日成功；分别查询可发现错误日期与重复累计。
+			for _, period := range []struct{ start, cents int64 }{{start, 0}, {day2, 10000}, {day3, 8500}} {
+				daily, err := model.GetFinanceOverview(period.start, period.start+86400)
+				require.NoError(t, err)
+				assert.EqualValues(t, period.cents, daily.RefundCents)
+			}
+
 			// 看板统计关闭时明确标记消耗不可用，而不是返回一个看似真实的零。
 			common.DataExportEnabled = false
 			overview, err = model.GetFinanceOverview(start, end)
@@ -235,7 +256,7 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
 	require.NoError(t, model.PublishUserAuthCache(root.Id))
 	require.NoError(t, model.DB.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}, &model.TopUp{}, &model.SubscriptionOrder{},
-		&model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.QuotaLedger{}))
+		&model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.PaymentRefund{}, &model.QuotaLedger{}))
 	oldMaster := common.IsMasterNode
 	common.IsMasterNode = true
 	t.Cleanup(func() { common.IsMasterNode = oldMaster })

@@ -72,6 +72,7 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     user: true,
     setting: true,
     subscription: true,
+    orders: true,
   },
 }
 
@@ -130,6 +131,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/finance/overview': { section: 'finance', module: 'overview' },
   '/finance/credit': { section: 'finance', module: 'credit' },
   '/finance/invoices': { section: 'finance', module: 'invoices' },
+  '/orders': { section: 'admin', module: 'orders' },
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/system-settings': { section: 'admin', module: 'setting' },
   '/system-settings/site': { section: 'admin', module: 'setting' },

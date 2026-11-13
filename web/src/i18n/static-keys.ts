@@ -19,6 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // 微信退款状态及后端拒绝原因由动态字段读取。
+  'Refund status',
+  'Refund reason (up to 80 bytes)',
+  'Refund prepared',
+  'Refund processing',
+  'Refund succeeded',
+  'Refund closed',
+  'Refund abnormal',
+  'Invalid refund request',
+  'Only official WeChat payments support automatic refunds',
+  'The order cannot be refunded in its current state',
+  'The original subscription entitlement is unavailable; manual reconciliation is required',
+  'Refund payment orders',
+
   // 发票列表、详情与本人账单共用动态状态键，静态登记避免同步时漏收录。
   'Awaiting payment',
   'Awaiting invoice',
@@ -1095,4 +1109,9 @@ export const FINANCE_SUBSCRIPTION_I18N_KEYS = [
   'Edit pool subscription',
   'Timeline start date',
   'Timeline end date',
+] as const
+
+// 微信网关错误以安全操作名和错误码插值，不展示原始响应。
+export const PAYMENT_REFUND_ERROR_KEYS = [
+  'WeChat refund {{operation}} failed ({{code}}). Recover the original refund after resolving the issue.',
 ] as const

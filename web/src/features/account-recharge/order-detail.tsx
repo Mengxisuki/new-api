@@ -756,11 +756,13 @@ export function RechargeOrderDetail(props: {
                             </span>
                           )}
                           {t(
-                            'Approve a refund only after confirming that external processing has stopped. For WeChat, complete the original-channel refund in the gateway before recording confirmation.'
+                            'Approve a refund only after external processing has stopped. WeChat confirmation submits or queries the original-channel refund; monitor its result in Order management.'
                           )}
                         </p>
                         {order.payment_status === 'refunding' &&
                           order.payment_provider !== 'wallet' &&
+                          order.payment_provider !== 'wechat' &&
+                          order.payment_provider !== 'official_wechat' &&
                           (order.payment_provider !== 'credit' ||
                             detail.data?.credit_status === 'settled') && (
                             <Field>
@@ -784,6 +786,8 @@ export function RechargeOrderDetail(props: {
                             !note.trim() ||
                             (order.payment_status === 'refunding' &&
                               order.payment_provider !== 'wallet' &&
+                              order.payment_provider !== 'wechat' &&
+                              order.payment_provider !== 'official_wechat' &&
                               (order.payment_provider !== 'credit' ||
                                 detail.data?.credit_status === 'settled') &&
                               !reference.trim())

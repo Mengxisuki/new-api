@@ -931,6 +931,22 @@ func RefundRechargeOrder(c *gin.Context) {
 	if !rechargeProof(c, o.ID, req.Version, action) {
 		return
 	}
+	// 微信确认改为真实网关退款，旧界面也不能用人工凭证伪造成功。
+	// 先恢复原退款身份，外部请求失败保留原记录供订单管理继续查询。
+	if req.Confirm && (o.PaymentProvider == "wechat" || o.PaymentProvider == model.PaymentProviderWechat) {
+		existing, err := model.GetPaymentRefund(model.CreditModuleRecharge, o.TradeNo)
+		if err != nil {
+			rechargeError(c, err)
+			return
+		}
+		result, err := service.RefundPaymentOrder(c.Request.Context(), model.CreditModuleRecharge, o.TradeNo, req.Note, c.GetInt("id"), existing != nil)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, result)
+		return
+	}
 	if err := model.RefundAccountRecharge(o.ID, c.GetInt("id"), req.Version, req.Confirm, req.Note, req.Reference); err != nil {
 		rechargeError(c, err)
 		return

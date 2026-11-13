@@ -218,3 +218,12 @@ export async function writeOffCreditEntry(id: number, reason: string) {
   )
   requireServerSuccess(response.data)
 }
+
+// 个人资料只读本人授信，不接受用户编号或保存参数。
+// null 表示尚未配置；解析或网络错误必须交给页面错误态。
+export async function getSelfCreditAccount() {
+  const response = await api.get('/api/user/credit', { disableDuplicate: true })
+  return creditAccountSchema
+    .nullable()
+    .parse(requireServerSuccess(response.data).data)
+}

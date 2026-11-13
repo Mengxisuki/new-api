@@ -67,7 +67,7 @@ func TestManualFinanceDatabaseMatrix(t *testing.T) {
 				t.Skip("dedicated test database DSN is not configured")
 			}
 			db := modelManagementDB(t, dialect, dsn) // 初始化真实方言与主库句柄。
-			require.NoError(t, db.AutoMigrate(&model.QuotaLedger{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionOrder{}, &model.TopUp{}, &model.Log{}))
+			require.NoError(t, db.AutoMigrate(&model.PaymentRefund{}, &model.QuotaLedger{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionOrder{}, &model.TopUp{}, &model.Log{}))
 			payment := operation_setting.GetPaymentSetting()
 			previous := *payment // 后台订阅保留正式合规门禁，夹具只设置已确认状态。
 			payment.ComplianceConfirmed, payment.ComplianceTermsVersion = true, operation_setting.CurrentComplianceTermsVersion
@@ -447,7 +447,7 @@ func checkManualFinanceRollback(t *testing.T, db *gorm.DB) {
 	account, err := model.GetCreditAccount(user.Id)
 	require.NoError(t, err)
 	assert.Zero(t, account.UsedCents) // 未成功发放的权益不能先占授信。
-	for _, table := range []any{&model.QuotaLedger{}, &model.CreditEntry{}, &model.UserSubscription{}} {
+	for _, table := range []any{&model.PaymentRefund{}, &model.QuotaLedger{}, &model.CreditEntry{}, &model.UserSubscription{}} {
 		var count int64
 		require.NoError(t, db.Model(table).Where("user_id = ?", user.Id).Count(&count).Error)
 		assert.Zero(t, count) // 任一表留下半笔记录都是事务原子性回归。

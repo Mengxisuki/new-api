@@ -143,3 +143,15 @@ func WriteOffCreditEntry(c *gin.Context) {
 	}
 	common.ApiSuccess(c, nil)
 }
+
+// GetSelfCreditAccount 仅按会话身份读取本人授信，不能指定其他用户。
+// 未配置返回 null；数据库失败与没有授信分开表达。
+// 个人资料页只展示额度，调整授权仍使用 Root 管理入口。
+func GetSelfCreditAccount(c *gin.Context) {
+	account, err := model.GetCreditAccount(c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, account)
+}

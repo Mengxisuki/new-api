@@ -144,6 +144,7 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/waffo-pancake/amount", controller.RequestWaffoPancakeAmount)
 				selfRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.RequestWaffoPancakePay)
 				// 自助挂帐只允许本人登录会话，资金事务仍逐次核实授信授权。
+				selfRoute.GET("/credit", controller.RechargeSessionOnly, controller.GetSelfCreditAccount)
 				selfRoute.POST("/credit/pay", controller.RechargeSessionOnly, middleware.UserCriticalRateLimit("credit-pay"), controller.RequestCreditTopUp)
 				selfRoute.POST("/aff_transfer", middleware.UserCriticalRateLimit("aff-transfer"), controller.TransferAffQuota)
 				selfRoute.PUT("/setting", controller.UpdateUserSetting)
@@ -198,6 +199,13 @@ func SetApiRouter(router *gin.Engine) {
 		middleware.DeclareAccessTokenPermissionRoute("PUT", "/api/finance/invoices/:id/status", authz.FinanceWrite)
 		middleware.DeclareAccessTokenPermissionRoute("POST", "/api/finance/invoices/:id/file", authz.FinanceWrite)
 		middleware.DeclareAccessTokenPermissionRoute("GET", "/api/finance/invoices/:id/file", authz.FinanceRead)
+		orderRoute := apiRouter.Group("/orders")
+		orderRoute.Use(middleware.AdminAuth(), controller.RechargeSessionOnly)
+		{
+			orderRoute.GET("", middleware.RequirePermission(authz.OrdersRead), controller.GetPaymentOrders)
+			orderRoute.POST("/refund", middleware.RequirePermission(authz.OrdersRefund), middleware.UserCriticalRateLimit("payment-refund"), controller.RefundPaymentOrder)
+		}
+
 		financeRoute := apiRouter.Group("/finance")
 		financeRoute.Use(middleware.FinanceAuth())
 		{

@@ -289,13 +289,15 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 	})
 	overview.ReceivedCents = overview.TopupCents + overview.SubscriptionCents + overview.RechargeCents + overview.CreditSettledCents
 
-	// 现金退款有两类：在线付款的代充值订单按退款事件时间计，已结清挂帐按关闭时间计。
-	// 充值和订阅订单没有退款状态，在商户后台直接退的款项平台无从得知，不在此列。
+	// 历史人工退款按代充值事件时间计，已结清挂帐按关闭时间计。
+	// 自动退款按独立退款账本统计；直接在商户后台发起的退款仍需人工核对。
 	var rechargeRefund, creditRefund int64
+	automaticRechargeRefund := DB.Model(&PaymentRefund{}).Select("1").Where("payment_refunds.module = ? AND payment_refunds.trade_no = account_recharge_orders.trade_no", CreditModuleRecharge)
 	if err := DB.Table("account_recharge_events").
 		Joins("JOIN account_recharge_orders ON account_recharge_orders.id = account_recharge_events.order_id").
 		Where("account_recharge_events.action = ? AND account_recharge_events.created_at >= ? AND account_recharge_events.created_at < ?", "refund", start, end).
 		Where("account_recharge_orders.payment_provider NOT IN ?", []string{"wallet", "credit"}).
+		Where("NOT EXISTS (?)", automaticRechargeRefund).
 		Select("COALESCE(SUM(account_recharge_orders.money_cents), 0)").Scan(&rechargeRefund).Error; err != nil {
 		return nil, err
 	}
@@ -303,7 +305,12 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 		Select("COALESCE(SUM(amount_cents), 0)").Scan(&creditRefund).Error; err != nil {
 		return nil, err
 	}
-	overview.RefundCents = rechargeRefund + creditRefund
+	// 自动退款统一按微信成功时间统计；上方排除代充值镜像事件防止重算。
+	var paymentRefund int64
+	if err := DB.Model(&PaymentRefund{}).Where("status = ? AND completed_at >= ? AND completed_at < ?", "succeeded", start, end).Select("COALESCE(SUM(amount_cents), 0)").Scan(&paymentRefund).Error; err != nil {
+		return nil, err
+	}
+	overview.RefundCents = rechargeRefund + creditRefund + paymentRefund
 	overview.NetCents = overview.ReceivedCents - overview.RefundCents
 
 	// 开票附加费已经包含在各订单实付里，这里只说明其中有多少是附加费。

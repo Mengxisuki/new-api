@@ -207,6 +207,10 @@ func (p *SubscriptionPlan) NormalizeDefaults() {
 
 // Subscription order (payment -> webhook -> create UserSubscription)
 type SubscriptionOrder struct {
+	// 每笔付款实际增加的权益，历史缺失时禁止自动推断。
+	FulfilledSubscriptionID int   `json:"fulfilled_subscription_id"`
+	GrantedSeconds          int64 `json:"granted_seconds" gorm:"type:bigint"`
+
 	Id              int             `json:"id"`
 	UserId          int             `json:"user_id" gorm:"index"`
 	PlanId          int             `json:"plan_id" gorm:"index"`
@@ -262,6 +266,9 @@ func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
 
 // User subscription instance
 type UserSubscription struct {
+	// 本次开通或续费的增量，仅传回订单落账，不改变订阅表结构。
+	GrantedSeconds int64 `json:"-" gorm:"-"`
+
 	Id     int `json:"id"`
 	UserId int `json:"user_id" gorm:"index;index:idx_user_sub_active,priority:1"`
 	PlanId int `json:"plan_id" gorm:"index"`
@@ -474,6 +481,7 @@ func renewUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 	}
 	// 沿用统一周期计算，按月套餐仍按日历月延长。
 	// 本次新增时长不从当前时间起算，避免提前续费损失剩余期限。
+	sub.GrantedSeconds = endTime - sub.EndTime // 记录实际日历周期增量，退款不读取后来的套餐配置。
 	sub.EndTime = endTime
 	updates := map[string]any{"end_time": endTime} // 局部更新不覆盖已存在的用量和分组权益快照。
 	// 原到期时间可能截掉下一次重置；延长后恢复原节奏，不从购买时刻重排。
@@ -527,7 +535,11 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 		Order("end_time desc, id desc").
 		Limit(1).
 		Find(&activeSub)
-	if activeQuery.Error == nil && activeQuery.RowsAffected > 0 {
+	// 查询失败不能被当作没有其他订阅，否则退款可能错误撤销仍有效的分组。
+	if activeQuery.Error != nil {
+		return "", activeQuery.Error
+	}
+	if activeQuery.RowsAffected > 0 {
 		return "", nil
 	}
 	// Determine the downgrade target: an explicit downgrade group takes precedence,
@@ -601,6 +613,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		allowWalletOverflow = *plan.AllowWalletOverflow
 	}
 	sub := &UserSubscription{
+		GrantedSeconds:      endUnix - now.Unix(),
 		UserId:              userId,
 		PlanId:              plan.Id,
 		AmountTotal:         plan.TotalAmount,
@@ -739,6 +752,8 @@ func completeSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err != nil {
 			return err
 		}
+		// 订单与精确权益关联同事务保存，续期不会误关联到另一份历史实例。
+		order.FulfilledSubscriptionID, order.GrantedSeconds = subscription.Id, subscription.GrantedSeconds
 		// 原订阅可能包含分组权益，提交后同步缓存但不改变认证会话。
 		if subscription.PrevUserGroup != "" {
 			upgradeGroup = strings.TrimSpace(subscription.UpgradeGroup)
@@ -924,6 +939,8 @@ func PaySubscriptionOnAccount(tradeNo string, userID int) error {
 		if _, err := ChargeCreditTx(tx, userID, CreditModuleSubscription, tradeNo, cents); err != nil { // 占额失败会回滚前面的开通或续期。
 			return err
 		}
+		// 挂帐订单也记录真实权益增量，保持所有购买入口一致。
+		order.FulfilledSubscriptionID, order.GrantedSeconds = sub.Id, sub.GrantedSeconds
 		// 镜像仅用于账单展示，不向钱包加额，也不是现金实收。
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil { // 镜像记录与权益和债务必须一致提交。
 			return err

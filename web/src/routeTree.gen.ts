@@ -43,6 +43,7 @@ import { Route as AuthenticatedHostingIndexRouteImport } from './routes/_authent
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
 import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authenticated/models/$section'
+import { Route as AuthenticatedOrdersIndexRouteImport } from './routes/_authenticated/orders/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedRechargeOrdersIndexRouteImport } from './routes/_authenticated/recharge-orders/index'
@@ -254,6 +255,12 @@ const AuthenticatedModelsSectionRoute =
   AuthenticatedModelsSectionRouteImport.update({
     id: '/models/$section',
     path: '/models/$section',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedOrdersIndexRoute =
+  AuthenticatedOrdersIndexRouteImport.update({
+    id: '/orders/',
+    path: '/orders/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedPlaygroundIndexRoute =
@@ -506,6 +513,7 @@ export interface FileRoutesByFullPath {
   '/hosting/': typeof AuthenticatedHostingIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
+  '/orders/': typeof AuthenticatedOrdersIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
   '/recharge-orders/': typeof AuthenticatedRechargeOrdersIndexRoute
@@ -575,6 +583,7 @@ export interface FileRoutesByTo {
   '/hosting': typeof AuthenticatedHostingIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
+  '/orders': typeof AuthenticatedOrdersIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
   '/recharge-orders': typeof AuthenticatedRechargeOrdersIndexRoute
@@ -648,6 +657,7 @@ export interface FileRoutesById {
   '/_authenticated/hosting/': typeof AuthenticatedHostingIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
+  '/_authenticated/orders/': typeof AuthenticatedOrdersIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
   '/_authenticated/recharge-orders/': typeof AuthenticatedRechargeOrdersIndexRoute
@@ -720,6 +730,7 @@ export interface FileRouteTypes {
     | '/hosting/'
     | '/keys/'
     | '/models/'
+    | '/orders/'
     | '/playground/'
     | '/profile/'
     | '/recharge-orders/'
@@ -789,6 +800,7 @@ export interface FileRouteTypes {
     | '/hosting'
     | '/keys'
     | '/models'
+    | '/orders'
     | '/playground'
     | '/profile'
     | '/recharge-orders'
@@ -861,6 +873,7 @@ export interface FileRouteTypes {
     | '/_authenticated/hosting/'
     | '/_authenticated/keys/'
     | '/_authenticated/models/'
+    | '/_authenticated/orders/'
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
     | '/_authenticated/recharge-orders/'
@@ -1154,6 +1167,13 @@ declare module '@tanstack/react-router' {
       path: '/models/$section'
       fullPath: '/models/$section'
       preLoaderRoute: typeof AuthenticatedModelsSectionRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/orders/': {
+      id: '/_authenticated/orders/'
+      path: '/orders'
+      fullPath: '/orders/'
+      preLoaderRoute: typeof AuthenticatedOrdersIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/playground/': {
@@ -1514,6 +1534,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedHostingIndexRoute: typeof AuthenticatedHostingIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
+  AuthenticatedOrdersIndexRoute: typeof AuthenticatedOrdersIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
   AuthenticatedRechargeOrdersIndexRoute: typeof AuthenticatedRechargeOrdersIndexRoute
@@ -1547,6 +1568,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedHostingIndexRoute: AuthenticatedHostingIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
+  AuthenticatedOrdersIndexRoute: AuthenticatedOrdersIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
   AuthenticatedRechargeOrdersIndexRoute: AuthenticatedRechargeOrdersIndexRoute,

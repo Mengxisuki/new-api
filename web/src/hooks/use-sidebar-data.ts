@@ -229,6 +229,15 @@ export function useSidebarData(): SidebarData {
             url: '/users',
             icon: Users,
           },
+          ...(hasPermission(user, 'orders', 'read')
+            ? [
+                {
+                  title: t('Order management'),
+                  url: '/orders',
+                  icon: ClipboardList,
+                },
+              ]
+            : []),
           {
             title: t('Redemption Codes'),
             url: '/redemption-codes',

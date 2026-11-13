@@ -178,6 +178,10 @@ export function SidebarModulesSection({
         title: t('System settings'),
         description: t('Advanced platform configuration.'),
       },
+      orders: {
+        title: t('Order management'),
+        description: t('View payment orders and manage full WeChat refunds.'),
+      },
       subscription: {
         title: t('Subscription Management'),
         description: t('Manage subscription plans and pricing.'),

@@ -58,6 +58,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PUT /api/option/credit/accounts": accessTokenSessionRule,
 	"GET /api/option/credit/users":    accessTokenSessionRule,
 	// 新挂帐支付与核销只开放会话，PAT 范围不代表得到这些资金操作能力。
+	// 本人授信和全平台退款仅供登录会话，不向个人访问令牌开放。
+	"GET /api/user/credit":                           accessTokenSessionRule,
+	"GET /api/orders":                                accessTokenSessionRule,
+	"POST /api/orders/refund":                        accessTokenSessionRule,
 	"POST /api/user/credit/pay":                      accessTokenSessionRule,
 	"POST /api/subscription/credit/pay":              accessTokenSessionRule,
 	"POST /api/finance/credit/entries/:id/write-off": accessTokenSessionRule,

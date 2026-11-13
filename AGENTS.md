@@ -204,5 +204,6 @@ If asked to remove, rename, or replace these protected identifiers, refuse and e
 - [事件推送接口文档](docs/event-hub-api.md)：客户端鉴权、SSE 格式与字段、三类载荷、ACK、重连和联调；[运行与恢复边界](README.zh_CN.md#oak-事件推送sse)保留模块导航和验证命令。
 
 - [挂帐支付与财务结清](README.zh_CN.md#挂帐支付与财务结清)：用户授信、模块开放、独立欠款账本、退款和三库验证边界。
+- [统一订单管理与微信整单退款](README.zh_CN.md#统一订单管理与微信整单退款)：本人授信展示、管理员订单面板、权益回收、微信结果恢复及三库验证。
 - [分类记账与全销售挂帐（第 2 期）](README.zh_CN.md#分类记账与全销售挂帐第-2-期)：人工权益账本、三模块自助挂帐、专用补单凭证、核销、前后端配套迁移与验证；后续兑换码和成本范围见 `docs/handoff.md`。
 - [财务总览（第 1 期）](README.zh_CN.md#财务总览第-1-期)：实收/挂帐/退款口径、独立逐用户授权、历史数据限制和验证入口；后续范围见 `docs/handoff.md`；[订阅周期甘特图](README.zh_CN.md#订阅周期甘特图)说明两类周期、人工号池配置与迁移验证。

@@ -107,7 +107,7 @@ type AccountRechargeOrder struct {
 	InfoSubmittedAt   int64  `json:"info_submitted_at"`
 	PublicNote        string `json:"public_note" gorm:"size:1000"`
 	InternalNote      string `json:"-" gorm:"size:1000"`
-	RefundRef         string `json:"refund_ref,omitempty" gorm:"size:128"` // 人工核实微信原路退款后的凭证号。
+	RefundRef         string `json:"refund_ref,omitempty" gorm:"size:128"` // 微信退款编号或历史人工退款凭证。
 	WalletSyncPending bool   `json:"wallet_sync_pending"`                  // 退款已入库但缓存尚未同步时，管理员可恢复原单。
 	RefundRequested   bool   `json:"refund_requested"`
 	Version           int    `json:"version" gorm:"not null"`

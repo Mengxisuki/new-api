@@ -162,6 +162,7 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceAudit:            {ActionRead: false},
 		ResourceFinance:          {ActionRead: true, ActionWrite: true},
 		ResourceFinanceOverview:  {ActionRead: false},
+		ResourceOrders:           {ActionRead: true, "refund": true},
 		ResourceRechargeOrders:   {ActionRead: true, ActionWrite: true, "reveal": true, "assign": true, "refund": true},
 		ResourceRechargeProducts: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))
@@ -198,6 +199,7 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceAudit:            {ActionRead: false},
 		ResourceFinance:          {ActionRead: true, ActionWrite: true},
 		ResourceFinanceOverview:  {ActionRead: false},
+		ResourceOrders:           {ActionRead: true, "refund": true},
 		ResourceRechargeOrders:   {ActionRead: true, ActionWrite: true, "reveal": true, "assign": true, "refund": true},
 		ResourceRechargeProducts: {ActionRead: true, ActionWrite: true},
 	}, ExplicitUserPermissions(42))

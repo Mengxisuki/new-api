@@ -257,6 +257,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"channel":    true,
 			"models":     true,
 			"redemption": true,
+			"orders":     true, // 交易管理仍由服务端权限独立约束。
 			"user":       true,
 			"setting":    false, // 管理员不能访问系统设置
 		}
@@ -267,6 +268,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"channel":    true,
 			"models":     true,
 			"redemption": true,
+			"orders":     true, // 交易管理仍由服务端权限独立约束。
 			"user":       true,
 			"setting":    true,
 		}

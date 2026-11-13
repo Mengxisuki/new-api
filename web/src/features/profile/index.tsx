@@ -25,6 +25,7 @@ import { useStatus } from '@/hooks/use-status'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CheckinCalendarCard } from './components/checkin-calendar-card'
+import { CreditSummaryCard } from './components/credit-summary-card'
 import { InvoiceProfileCard } from './components/invoice-profile-card'
 import { LanguagePreferencesCard } from './components/language-preferences-card'
 import { ProfileHeader } from './components/profile-header'
@@ -73,6 +74,8 @@ export function Profile() {
               </div>
 
               <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
+                {/* 本人额度紧邻资料设置；窄屏按自然阅读顺序落在设置之后。 */}
+                <CreditSummaryCard />
                 {checkinEnabled && (
                   <CheckinCalendarCard
                     checkinEnabled={checkinEnabled}

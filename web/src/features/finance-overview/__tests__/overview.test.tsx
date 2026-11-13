@@ -60,6 +60,7 @@ const overview = {
   subscription_cents: 3000,
   recharge_cents: 6000,
   credit_settled_cents: 5950,
+  redemption_cents: 0,
   received_cents: 30000,
   refund_cents: 4000,
   net_cents: 26000,
@@ -71,6 +72,7 @@ const overview = {
       subscription_cents: 0,
       recharge_cents: 6000,
       credit_settled_cents: 0,
+      redemption_cents: 0,
     },
     {
       day: DAY + 86400,
@@ -78,6 +80,7 @@ const overview = {
       subscription_cents: 3000,
       recharge_cents: 0,
       credit_settled_cents: 5950,
+      redemption_cents: 0,
     },
   ],
   channels: [
@@ -110,6 +113,12 @@ const overview = {
   consumed_quota: 1000,
   consumption_available: true,
   todo: { pending_invoices: 2, pending_refunds: 1 },
+  redemption: {
+    unredeemed_sale_cents: 0,
+    unredeemed_sale_count: 0,
+    unredeemed_gift_count: 0,
+    unredeemed_unknown_count: 0,
+  },
 }
 
 let client: QueryClient
@@ -264,6 +273,29 @@ test('有总览权限时按人民币展示各项指标并区分时段数字与�
   expect(screen.getByText('#9')).toBeInTheDocument()
 })
 
+test('兑换码库存单列并说明未兑换金额不是现金', async () => {
+  mount(
+    { finance_overview: { read: true } },
+    {
+      ...overview,
+      redemption_cents: 1234,
+      received_cents: 31234,
+      net_cents: 27234,
+      redemption: {
+        unredeemed_sale_cents: 5000,
+        unredeemed_sale_count: 2,
+        unredeemed_gift_count: 3,
+        unredeemed_unknown_count: 1,
+      },
+    }
+  )
+  expect(await screen.findByText('Unredeemed sold codes')).toBeInTheDocument()
+  expect(metric('Unredeemed sold codes').getByText('CN¥50.00')).toBeInTheDocument()
+  expect(
+    metric('Unredeemed sold codes').getByText(/Gifted: 3, unclassified: 1/)
+  ).toBeInTheDocument()
+})
+
 test('没有总览权限时不请求数据并显示无访问权限', () => {
   // 即使具有财务办理权限，也不能查看经营汇总。
   const get = mount({ finance: { read: true, write: true } })
@@ -303,8 +335,8 @@ test('图表收到每天每条业务线的金额，表格视图给出相同数�
   await screen.findByText('Revenue trend')
   await waitFor(() => expect(chart).toHaveBeenCalled())
   const values = chart.mock.calls.at(-1)?.[0].spec.data[0].values
-  // 两天乘四条业务线，金额以元传给图表。
-  expect(values).toHaveLength(8)
+  // 两天乘五条业务线，金额以元传给图表。
+  expect(values).toHaveLength(10)
   expect(values).toContainEqual({
     day: '2026-11-01',
     line: 'Wallet top-up',
@@ -389,7 +421,9 @@ test('所选时段没有收入时趋势面板显示空状态而不是空图表',
         subscription_cents: 0,
         recharge_cents: 0,
         credit_settled_cents: 0,
+        redemption_cents: 0,
       })),
+      redemption_cents: 0,
     }
   )
   await screen.findByText('Revenue trend')

@@ -23,7 +23,7 @@ import (
 const financeTestDay = int64(1793462400)
 
 // 三库验证聚合口径：分组、取模分日、条件求和都必须在三种方言上得到相同数字。
-// 本功能不新增表或字段，因此只验证只读查询，不涉及迁移升级。
+// 兑换码字段沿用主表迁移，测试夹具显式创建该表以覆盖旧库升级后的查询契约。
 func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
@@ -32,7 +32,7 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 				t.Skip("test database DSN is not configured")
 			}
 			db := modelManagementDB(t, dialect, dsn)
-			require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.AccountRechargeOrder{},
+			require.NoError(t, db.AutoMigrate(&model.Redemption{}, &model.TopUp{}, &model.SubscriptionOrder{}, &model.AccountRechargeOrder{},
 				&model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.QuotaLedger{}))
 			exportEnabled, consumeEnabled := common.DataExportEnabled, common.LogConsumeEnabled
 			common.DataExportEnabled, common.LogConsumeEnabled = true, true
@@ -117,6 +117,20 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 				{UserID: 2, CreatedAt: end + 3600, Quota: 5000}, // 时段之后。
 			}).Error)
 
+			// 售出码收入按兑换日确认；即使兑换后清理软删除，也不能从财务总览消失。
+			redeemedCode := model.Redemption{
+				UserId: 1, Key: "finance-redeemed-code", Name: "sold", Quota: 100,
+				Status: common.RedemptionCodeStatusUsed, DistributionType: model.RedemptionDistributionSale,
+				PriceCents: 1234, CreatedTime: start - 3600, RedeemedTime: start + 100, UsedUserId: 1,
+			}
+			require.NoError(t, db.Create(&redeemedCode).Error)
+			require.NoError(t, db.Delete(&redeemedCode).Error)
+			require.NoError(t, db.Create(&[]model.Redemption{
+				{UserId: 1, Key: "finance-sale-pending", Name: "sale-pending", Quota: 100, Status: common.RedemptionCodeStatusEnabled, DistributionType: model.RedemptionDistributionSale, PriceCents: 5000},
+				{UserId: 1, Key: "finance-gift-pending", Name: "gift-pending", Quota: 100, Status: common.RedemptionCodeStatusEnabled, DistributionType: model.RedemptionDistributionGift},
+				{UserId: 1, Key: "finance-unknown-pending", Name: "unknown-pending", Quota: 100, Status: common.RedemptionCodeStatusEnabled},
+			}).Error)
+
 			overview, err := model.GetFinanceOverview(start, end)
 			require.NoError(t, err)
 
@@ -124,13 +138,14 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 			assert.EqualValues(t, 3000, overview.SubscriptionCents)
 			assert.EqualValues(t, 6000, overview.RechargeCents)
 			assert.EqualValues(t, 7000, overview.CreditSettledCents)
-			assert.EqualValues(t, 32049, overview.ReceivedCents)
+			assert.EqualValues(t, 1234, overview.RedemptionCents)
+			assert.EqualValues(t, 33283, overview.ReceivedCents)
 			assert.EqualValues(t, 5500, overview.RefundCents) // 代充值 4000 加已结清挂帐 1500。
-			assert.EqualValues(t, 26549, overview.NetCents)
+			assert.EqualValues(t, 27783, overview.NetCents)
 			assert.EqualValues(t, 723, overview.InvoiceFeeCents)
 
 			assert.Equal(t, []model.FinanceDaily{
-				{Day: start, TopupCents: 15050, RechargeCents: 6000},
+				{Day: start, TopupCents: 15050, RechargeCents: 6000, RedemptionCents: 1234},
 				{Day: day2, TopupCents: 999, CreditSettledCents: 7000},
 				{Day: day3, SubscriptionCents: 3000},
 			}, overview.Daily)
@@ -138,7 +153,12 @@ func TestFinanceOverviewDatabaseMatrix(t *testing.T) {
 				{Channel: model.PaymentProviderWechat, Cents: 19999, Count: 4},
 				{Channel: model.FinanceChannelCreditSettlement, Cents: 7000, Count: 1},
 				{Channel: model.PaymentProviderEpay, Cents: 5050, Count: 1},
+				{Channel: model.FinanceChannelRedemptionSale, Cents: 1234, Count: 1},
 			}, overview.Channels)
+			assert.Equal(t, model.FinanceRedemption{
+				UnredeemedSaleCents: 5000, UnredeemedSaleCount: 1,
+				UnredeemedGiftCount: 1, UnredeemedUnknownCount: 1,
+			}, overview.Redemption)
 			assert.Equal(t, []model.FinanceOtherGateway{{Provider: model.PaymentProviderStripe, Money: 20, Count: 1}}, overview.OtherGateways)
 
 			assert.Equal(t, model.FinanceCredit{
@@ -234,7 +254,7 @@ func TestFinanceOverviewPermissions(t *testing.T) {
 	root, rootIdentity := setupSecurityEnrollmentTest(t)
 	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
 	require.NoError(t, model.PublishUserAuthCache(root.Id))
-	require.NoError(t, model.DB.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}, &model.TopUp{}, &model.SubscriptionOrder{},
+	require.NoError(t, model.DB.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}, &model.Redemption{}, &model.TopUp{}, &model.SubscriptionOrder{},
 		&model.AccountRechargeOrder{}, &model.AccountRechargeEvent{}, &model.CreditAccount{}, &model.CreditEntry{}, &model.InvoiceRequest{}, &model.QuotaData{}, &model.QuotaLedger{}))
 	oldMaster := common.IsMasterNode
 	common.IsMasterNode = true

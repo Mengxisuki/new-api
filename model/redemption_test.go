@@ -10,6 +10,32 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestValidateRedemptionDistribution(t *testing.T) {
+	tests := []struct {
+		name         string
+		distribution string
+		priceCents   int64
+		wantError    bool
+	}{
+		{name: "sold with price", distribution: RedemptionDistributionSale, priceCents: 1234},
+		{name: "gift without price", distribution: RedemptionDistributionGift},
+		{name: "unknown is rejected for new records", distribution: RedemptionDistributionUnknown, wantError: true},
+		{name: "sold without price", distribution: RedemptionDistributionSale, wantError: true},
+		{name: "gift with price", distribution: RedemptionDistributionGift, priceCents: 1, wantError: true},
+		{name: "negative price", distribution: RedemptionDistributionSale, priceCents: -1, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRedemptionDistribution(tt.distribution, tt.priceCents)
+			if tt.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestSearchRedemptionsFiltersAndPaginates(t *testing.T) {
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
@@ -168,11 +194,12 @@ func TestRedemptionQuotaRejectsWalletOverflow(t *testing.T) {
 	setupRedeemFixture(t, 500)
 
 	redemption := &Redemption{
-		Name:        "overflow-redemption",
-		Key:         "10000000000000000000000000000002",
-		Status:      common.RedemptionCodeStatusEnabled,
-		Quota:       common.MaxWalletQuota + 1,
-		CreatedTime: common.GetTimestamp(),
+		Name:             "overflow-redemption",
+		Key:              "10000000000000000000000000000002",
+		Status:           common.RedemptionCodeStatusEnabled,
+		Quota:            common.MaxWalletQuota + 1,
+		DistributionType: RedemptionDistributionGift,
+		CreatedTime:      common.GetTimestamp(),
 	}
 	require.Error(t, redemption.Insert())
 }

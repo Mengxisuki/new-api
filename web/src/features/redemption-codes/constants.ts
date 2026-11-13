@@ -30,6 +30,12 @@ export const REDEMPTION_STATUS = {
   USED: 3,
 } as const
 
+export const REDEMPTION_DISTRIBUTION_LABEL_KEYS = {
+  sale: 'Sold',
+  gift: 'Gifted',
+  unknown: 'Unclassified',
+} as const
+
 export const REDEMPTION_STATUS_VALUES = Object.values(REDEMPTION_STATUS).map(
   (value) => String(value)
 ) as `${number}`[]

@@ -205,6 +205,10 @@ test('successful batch creation opens export with returned codes and the configu
     target: { value: '2000' },
   })
   await user.click(
+    within(createDialog).getByText('Select distribution')
+  )
+  await user.click(screen.getByRole('option', { name: 'Gifted' }))
+  await user.click(
     within(createDialog).getByRole('button', { name: 'Save changes' })
   )
   const exportDialog = await screen.findByRole('dialog', {

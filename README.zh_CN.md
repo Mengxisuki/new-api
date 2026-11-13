@@ -449,6 +449,14 @@ Root 可在用户管理中创建财务账号或通过原有单次验证将现有
 
 第二期不包括兑换码售赠分类、上游成本/支出台账、订阅成本摊销、部分还款、批量结清或自动坏账追回；生产发布仍需单独授权。
 
+### 兑换码售赠分类（第 3 期，本地实现）
+
+第三期将兑换码纳入财务总览，但不把额度面额当作现金，也不新增第四期的成本台账。管理员创建兑换码时必须选择「售出」或「赠送」：售出码保存单码人民币售价（整数分），赠送码售价固定为零；历史兑换码保持「未分类」，不从额度、名称或日志推断价格。
+
+售出码只有在用户成功兑换后，才按 `redeemed_time` 计入独立的「兑换码」业务线和兑换日收入；创建日、未兑换库存、赠送码均不计实收。未兑换售出码的登记金额与数量、赠送数量、未分类数量在财务总览单列为当前快照，不代表现金或应收。已确认兑换收入不会因为清理兑换码而消失，已兑换记录也不能再由管理接口修改分类、售价或状态。
+
+实现入口：`model/redemption.go`、`controller/redemption.go`、`model/finance_overview.go`，前端位于 `web/src/features/redemption-codes/` 与 `web/src/features/finance-overview/`。现有管理员权限和独立 `finance_overview:read` 权限保持不变。SQLite 定向回归及前端测试已完成，MySQL/PostgreSQL 三库矩阵、生产构建和发布仍需单独验收，不代表已部署。
+
 服务器原生部署及 GitHub 手动构建/发布的配置、接入状态与失败处理，见 [Oak 部署说明](./deploy/oak/README.md)。
 
 贡献前请阅读 [AGENTS.md](./AGENTS.md)。按改动范围执行检查：Go 模块使用 `make test`；前端在 `web/` 下运行 `bun check -b`、`bun run lint`、`bun run test` 和 `bun run build`。修改 RelayKit 后还必须在 `relaykit/` 下执行 `GOWORK=off go build ./...`。

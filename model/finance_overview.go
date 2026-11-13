@@ -32,6 +32,9 @@ var financeCNYProviders = []string{PaymentProviderEpay, PaymentProviderWechat, P
 // FinanceChannelCreditSettlement 标识线下结清的挂帐款，与在线支付渠道并列展示。
 const FinanceChannelCreditSettlement = "credit_settlement"
 
+// FinanceChannelRedemptionSale 表示按兑换时间确认的售出兑换码收入。
+const FinanceChannelRedemptionSale = "redemption_sale"
+
 // FinanceDaily 是一个上海自然日内各业务线的实收，Day 为该日零点的 Unix 秒。
 type FinanceDaily struct {
 	Day                int64 `json:"day"`                  // 上海该自然日零点的 Unix 秒，作为逐日序列的键。
@@ -39,6 +42,15 @@ type FinanceDaily struct {
 	SubscriptionCents  int64 `json:"subscription_cents"`   // 当日订阅实收，按付款日一次性计入。
 	RechargeCents      int64 `json:"recharge_cents"`       // 当日代充值实收，不含余额支付和挂帐。
 	CreditSettledCents int64 `json:"credit_settled_cents"` // 当日登记结清的挂帐款。
+	RedemptionCents    int64 `json:"redemption_cents"`     // 当日售出兑换码按兑换时间确认的收入。
+}
+
+// FinanceRedemption 是兑换码收入和未兑换库存，库存属于当前快照而非期间收入。
+type FinanceRedemption struct {
+	UnredeemedSaleCents    int64 `json:"unredeemed_sale_cents"`
+	UnredeemedSaleCount    int64 `json:"unredeemed_sale_count"`
+	UnredeemedGiftCount    int64 `json:"unredeemed_gift_count"`
+	UnredeemedUnknownCount int64 `json:"unredeemed_unknown_count"`
 }
 
 // FinanceChannel 按收款渠道汇总实收；Channel 为支付渠道标识或挂帐结清。
@@ -92,7 +104,8 @@ type FinanceOverview struct {
 	SubscriptionCents  int64 `json:"subscription_cents"`   // 时段内订阅实收。
 	RechargeCents      int64 `json:"recharge_cents"`       // 时段内代充值实收。
 	CreditSettledCents int64 `json:"credit_settled_cents"` // 时段内结清的挂帐款。
-	ReceivedCents      int64 `json:"received_cents"`       // 四条业务线实收合计。
+	RedemptionCents    int64 `json:"redemption_cents"`     // 时段内按兑换确认的售出兑换码收入。
+	ReceivedCents      int64 `json:"received_cents"`       // 五条业务线实收合计。
 	RefundCents        int64 `json:"refund_cents"`         // 时段内登记的现金退款。
 	NetCents           int64 `json:"net_cents"`            // 实收减退款。
 	InvoiceFeeCents    int64 `json:"invoice_fee_cents"`    // 实收中包含的开票附加费。
@@ -112,6 +125,7 @@ type FinanceOverview struct {
 	WriteOffCents     int64               `json:"write_off_cents"`    // 按本期核销时间统计的坏账，不是现金支出。
 	WriteOffCount     int64               `json:"write_off_count"`    // 本期核销笔数。
 	ManualAdjustments []QuotaLedgerTotals `json:"manual_adjustments"` // 人工发放/更正分来源分原因统计。
+	Redemption        FinanceRedemption   `json:"redemption"`         // 兑换码收入与未兑换库存。
 }
 
 // financeBucket 是一次分组查询的一行：某自然日、某渠道的金额与笔数。
@@ -131,6 +145,22 @@ func financeBuckets(query *gorm.DB, timeCol, labelCol, amountCol string) ([]fina
 	err := query.Select(fmt.Sprintf("%s AS bucket_day, %s AS bucket_label, COALESCE(SUM(%s), 0) AS amount, COUNT(*) AS cnt", day, labelCol, amountCol)).
 		Group(day + ", " + labelCol).Scan(&rows).Error
 	return rows, err
+}
+
+// financeCentsBuckets 保持人民币分为整数，避免兑换码售价经过 float64 聚合。
+func financeCentsBuckets(query *gorm.DB, timeCol, labelCol, amountCol string) ([]financeBucketCents, error) {
+	day := fmt.Sprintf("%s - ((%s + %d) %% 86400)", timeCol, timeCol, financeZoneOffset)
+	var rows []financeBucketCents
+	err := query.Select(fmt.Sprintf("%s AS bucket_day, %s AS bucket_label, COALESCE(SUM(%s), 0) AS amount, COUNT(*) AS cnt", day, labelCol, amountCol)).
+		Group(day + ", " + labelCol).Scan(&rows).Error
+	return rows, err
+}
+
+type financeBucketCents struct {
+	BucketDay   int64
+	BucketLabel string
+	Amount      int64
+	Cnt         int64
 }
 
 // GetFinanceOverview 汇总 [start, end) 时段的收入与当前挂帐、钱包、待办快照。
@@ -173,6 +203,14 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 	// 挂帐以财务登记结清的时间计入；结清后又退款的记录保留原结清时间。
 	settlements, err := financeBuckets(DB.Model(&CreditEntry{}).Where("settled_at >= ? AND settled_at < ?", start, end),
 		"settled_at", "module", "amount_cents")
+	if err != nil {
+		return nil, err
+	}
+	// 售出兑换码在实际兑换时确认收入，必须读取软删除记录以保留历史财务事实。
+	redemptions, err := financeCentsBuckets(DB.Unscoped().Model(&Redemption{}).
+		Where("distribution_type = ? AND status = ? AND redeemed_time >= ? AND redeemed_time < ?",
+			RedemptionDistributionSale, common.RedemptionCodeStatusUsed, start, end),
+		"redeemed_time", "distribution_type", "price_cents")
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +270,29 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 			total.Count += row.Cnt
 		}
 	}
+	for _, row := range redemptions {
+		daily := &overview.Daily[(row.BucketDay-firstDay)/86400]
+		daily.RedemptionCents += row.Amount
+		overview.RedemptionCents += row.Amount
+		channel := channels[FinanceChannelRedemptionSale]
+		if channel == nil {
+			channel = &FinanceChannel{Channel: FinanceChannelRedemptionSale}
+			channels[FinanceChannelRedemptionSale] = channel
+		}
+		channel.Cents += row.Amount
+		channel.Count += row.Cnt
+	}
+	// 未兑换库存是当前快照，不计入实收，也不从额度面额推算现金。
+	if err := DB.Unscoped().Model(&Redemption{}).
+		Where("status <> ? AND redeemed_time = 0", common.RedemptionCodeStatusUsed).
+		Select("COALESCE(SUM(CASE WHEN distribution_type = ? THEN price_cents ELSE 0 END), 0) AS unredeemed_sale_cents, "+
+			"COALESCE(SUM(CASE WHEN distribution_type = ? THEN 1 ELSE 0 END), 0) AS unredeemed_sale_count, "+
+			"COALESCE(SUM(CASE WHEN distribution_type = ? THEN 1 ELSE 0 END), 0) AS unredeemed_gift_count, "+
+			"COALESCE(SUM(CASE WHEN distribution_type = ? OR distribution_type = '' THEN 1 ELSE 0 END), 0) AS unredeemed_unknown_count",
+			RedemptionDistributionSale, RedemptionDistributionSale, RedemptionDistributionGift, RedemptionDistributionUnknown).
+		Scan(&overview.Redemption).Error; err != nil {
+		return nil, err
+	}
 	// 线下收款按人工记录发生日计入所属业务线，渠道单独展示，不造网关账单。
 	// 调额后消费不再计一次收入，后台开订阅也不重复生成 TopUp 镜像。
 	manualCash, err := financeBuckets(DB.Model(&QuotaLedger{}).
@@ -287,7 +348,7 @@ func GetFinanceOverview(start, end int64) (*FinanceOverview, error) {
 	slices.SortFunc(overview.OtherGateways, func(a, b FinanceOtherGateway) int {
 		return cmp.Compare(a.Provider, b.Provider)
 	})
-	overview.ReceivedCents = overview.TopupCents + overview.SubscriptionCents + overview.RechargeCents + overview.CreditSettledCents
+	overview.ReceivedCents = overview.TopupCents + overview.SubscriptionCents + overview.RechargeCents + overview.CreditSettledCents + overview.RedemptionCents
 
 	// 现金退款有两类：在线付款的代充值订单按退款事件时间计，已结清挂帐按关闭时间计。
 	// 充值和订阅订单没有退款状态，在商户后台直接退的款项平台无从得知，不在此列。

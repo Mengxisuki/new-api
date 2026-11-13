@@ -33,7 +33,7 @@ import type { FinanceDaily, FinanceOverview } from '../api'
 import { CHANNEL_LABEL_KEYS, REVENUE_LINES, formatCNY } from '../constants'
 import { formatShanghaiDay } from '../lib/range'
 
-// 收入趋势：按上海自然日堆叠四条业务线的实收。
+// 收入趋势：按上海自然日堆叠五条业务线的实收。
 // 图表用于看走势，表格视图给出每一天的精确金额，两者数据完全相同；
 // 浅色模式下部分颜色对比度不足，因此表格视图是必备的等价读法，不是可选项。
 export function RevenueTrend(props: { data: FinanceOverview }) {

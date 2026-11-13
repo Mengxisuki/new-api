@@ -42,6 +42,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Sheet,
   SheetClose,
   SheetContent,
@@ -64,7 +71,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { addTimeToDate } from '@/lib/time'
 
 import { createRedemption, updateRedemption, getRedemption } from '../api'
-import { SUCCESS_MESSAGES } from '../constants'
+import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
 import {
   getRedemptionFormSchema,
   type RedemptionFormValues,
@@ -166,6 +173,10 @@ export function RedemptionsMutateDrawer({
     !isUpdate ||
     (redemptionLoadState === 'ready' && loadedRedemption?.id === redemptionId)
   const isLoadingRedemption = redemptionLoadState === 'loading'
+  const isReadOnly =
+    isUpdate &&
+    (loadedRedemption?.status === REDEMPTION_STATUS.USED ||
+      loadedRedemption?.redeemed_time !== 0)
 
   const onSubmit = async (data: RedemptionFormValues) => {
     if (isUpdate && (!currentRow || !loadedRedemption || !isUpdateReady)) {
@@ -287,7 +298,7 @@ export function RedemptionsMutateDrawer({
               aria-busy={isLoadingRedemption}
             >
               <fieldset
-                disabled={!isUpdateReady || isSubmitting}
+                disabled={!isUpdateReady || isSubmitting || isReadOnly}
                 className='contents'
               >
                 <SideDrawerSection>
@@ -337,6 +348,66 @@ export function RedemptionsMutateDrawer({
                         <FormMessage />
                       </FormItem>
                     )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='distribution_type'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Distribution')}</FormLabel>
+                        <Select
+                          value={field.value || undefined}
+                          onValueChange={field.onChange}
+                          disabled={isReadOnly}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder={t('Select distribution')} />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value='sale'>{t('Sold')}</SelectItem>
+                            <SelectItem value='gift'>{t('Gifted')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {t('Sold codes are counted as revenue only when redeemed.')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='price_yuan'
+                    render={({ field }) => {
+                      const distributionType = form.watch('distribution_type')
+                      return (
+                        <FormItem>
+                          <FormLabel>{t('Price per code (CNY)')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type='text'
+                              inputMode='decimal'
+                              placeholder='0.00'
+                              disabled={
+                                isReadOnly || distributionType !== 'sale'
+                              }
+                              onChange={(event) => field.onChange(event.target.value)}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {distributionType === 'sale'
+                              ? t('Enter the confirmed selling price for one code.')
+                              : t('Gifted codes must have a zero price.')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )
+                    }}
                   />
 
                   <FormField
@@ -438,7 +509,7 @@ export function RedemptionsMutateDrawer({
             <Button
               form='redemption-form'
               type='submit'
-              disabled={isSubmitting || !isUpdateReady}
+              disabled={isSubmitting || !isUpdateReady || isReadOnly}
             >
               {submitButtonLabel}
             </Button>

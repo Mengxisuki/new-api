@@ -41,6 +41,8 @@ const codes: Redemption[] = [11, 22, 33].map((id) => ({
   key: `key-${id}`,
   status: 1,
   quota: 100,
+  distribution_type: 'gift',
+  price_cents: 0,
   created_time: 1,
   redeemed_time: 0,
   expired_time: 0,

@@ -31,6 +31,7 @@ const dailySchema = z.object({
   subscription_cents: z.number().int(),
   recharge_cents: z.number().int(),
   credit_settled_cents: z.number().int(),
+  redemption_cents: z.number().int(),
 })
 export type FinanceDaily = z.infer<typeof dailySchema>
 
@@ -64,6 +65,7 @@ const overviewSchema = z.object({
   subscription_cents: z.number().int(),
   recharge_cents: z.number().int(),
   credit_settled_cents: z.number().int(), // 挂帐在财务结清时才转入实收。
+  redemption_cents: z.number().int(),
   received_cents: z.number().int(),
   refund_cents: z.number().int(),
   net_cents: z.number().int(),
@@ -104,6 +106,12 @@ const overviewSchema = z.object({
   todo: z.object({
     pending_invoices: z.number().int(),
     pending_refunds: z.number().int(),
+  }),
+  redemption: z.object({
+    unredeemed_sale_cents: z.number().int(),
+    unredeemed_sale_count: z.number().int(),
+    unredeemed_gift_count: z.number().int(),
+    unredeemed_unknown_count: z.number().int(),
   }),
 })
 export type FinanceOverview = z.infer<typeof overviewSchema>

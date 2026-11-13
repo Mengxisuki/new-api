@@ -313,6 +313,17 @@ export const STATIC_I18N_KEYS = [
   'Expired time cannot be earlier than current time',
   'Quota must be a positive number',
   'Successfully created {{count}} redemption codes',
+  'Failed to create redemption codes, please try again later',
+  'Redeemed redemption codes cannot be edited',
+  'gift redemption price must be zero',
+  'sale redemption price is invalid',
+  'redemption distribution type is required',
+  'invalid redemption status',
+  'redemption code was redeemed or not found',
+  'used redemption code cannot be updated',
+  'Sold',
+  'Gifted',
+  'Unclassified',
 
   // Home page (constants-driven labels)
   'Cost Tracking',
@@ -1069,6 +1080,7 @@ export const financeOverviewStaticKeys = [
   'Subscription',
   'Account top-up',
   'Credit settlement',
+  'Redeemed codes',
   'Offline collection',
   // 人工财务汇总与明细通过共享字段映射生成表头。
   'Adjustment classification',

@@ -10,19 +10,58 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	// 兑换码的售赠分类必须显式保存；空值仅代表历史记录无法追溯。
+	RedemptionDistributionSale    = "sale"
+	RedemptionDistributionGift    = "gift"
+	RedemptionDistributionUnknown = "unknown"
+)
+
 type Redemption struct {
-	Id           int            `json:"id"`
-	UserId       int            `json:"user_id"`
-	Key          string         `json:"key" gorm:"type:char(32);uniqueIndex"`
-	Status       int            `json:"status" gorm:"default:1"`
-	Name         string         `json:"name" gorm:"index"`
-	Quota        int            `json:"quota" gorm:"default:100"`
-	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
-	RedeemedTime int64          `json:"redeemed_time" gorm:"bigint"`
-	Count        int            `json:"count" gorm:"-:all"` // only for api request
-	UsedUserId   int            `json:"used_user_id"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
-	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	Id               int            `json:"id"`
+	UserId           int            `json:"user_id"`
+	Key              string         `json:"key" gorm:"type:char(32);uniqueIndex"`
+	Status           int            `json:"status" gorm:"default:1"`
+	Name             string         `json:"name" gorm:"index"`
+	Quota            int            `json:"quota" gorm:"default:100"`
+	DistributionType string         `json:"distribution_type" gorm:"size:16;index;default:unknown"` // sale、gift 或历史 unknown。
+	PriceCents       int64          `json:"price_cents" gorm:"type:bigint;not null;default:0"` // 售出码的单码人民币售价。
+	CreatedTime      int64          `json:"created_time" gorm:"bigint"`
+	RedeemedTime     int64          `json:"redeemed_time" gorm:"bigint"`
+	Count            int            `json:"count" gorm:"-:all"` // only for api request
+	UsedUserId       int            `json:"used_user_id"`
+	DeletedAt        gorm.DeletedAt `gorm:"index"`
+	ExpiredTime      int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+}
+
+// ValidateRedemptionDistribution 校验人民币售价与售赠分类的组合，禁止把额度面额当成售价。
+func ValidateRedemptionDistribution(distributionType string, priceCents int64) error {
+	if distributionType == RedemptionDistributionGift {
+		if priceCents != 0 {
+			return errors.New("gift redemption price must be zero")
+		}
+		return nil
+	}
+	if distributionType == RedemptionDistributionSale {
+		if priceCents <= 0 || priceCents > MaxCreditCents {
+			return errors.New("sale redemption price is invalid")
+		}
+		return nil
+	}
+	return errors.New("redemption distribution type is required")
+}
+
+func normalizeRedemptionDistribution(distributionType string) string {
+	if distributionType == "" {
+		return RedemptionDistributionUnknown
+	}
+	return distributionType
+}
+
+// AfterFind 让旧记录以“未分类”返回，但不伪造历史售价。
+func (redemption *Redemption) AfterFind(_ *gorm.DB) error {
+	redemption.DistributionType = normalizeRedemptionDistribution(redemption.DistributionType)
+	return nil
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -186,33 +225,75 @@ func Redeem(key string, userId int) (quota int, err error) {
 }
 
 func (redemption *Redemption) Insert() error {
+	return InsertRedemptionTx(DB, redemption)
+}
+
+// InsertRedemptionTx 复用创建校验，允许批次创建在同一个数据库事务中提交。
+func InsertRedemptionTx(tx *gorm.DB, redemption *Redemption) error {
 	if redemption.Quota <= 0 {
 		return errors.New("redemption quota must be positive")
 	}
 	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Create(redemption).Error
-	return err
+	if err := ValidateRedemptionDistribution(redemption.DistributionType, redemption.PriceCents); err != nil {
+		return err
+	}
+	return tx.Create(redemption).Error
 }
 
+// Update 只修改未兑换码的业务字段，避免旧页面覆盖已确认的收入事实。
+// SelectUpdate 保留旧调用入口，但同样禁止把兑换码伪造为已兑换。
 func (redemption *Redemption) SelectUpdate() error {
-	// This can update zero values
-	return DB.Model(redemption).Select("redeemed_time", "status").Updates(redemption).Error
+	return redemption.UpdateStatus()
 }
 
-// Update Make sure your token's fields is completed, because this will update non-zero values
 func (redemption *Redemption) Update() error {
+	if redemption.Status == common.RedemptionCodeStatusUsed {
+		return errors.New("used redemption code cannot be updated")
+	}
 	if redemption.Quota <= 0 {
 		return errors.New("redemption quota must be positive")
 	}
 	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
-	return err
+	if err := ValidateRedemptionDistribution(redemption.DistributionType, redemption.PriceCents); err != nil {
+		return err
+	}
+	result := DB.Model(&Redemption{}).
+		Where("id = ? AND status <> ? AND redeemed_time = 0", redemption.Id, common.RedemptionCodeStatusUsed).
+		Updates(map[string]any{
+			"name":              redemption.Name,
+			"quota":             redemption.Quota,
+			"expired_time":      redemption.ExpiredTime,
+			"distribution_type": redemption.DistributionType,
+			"price_cents":       redemption.PriceCents,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("redemption code was redeemed or not found")
+	}
+	return nil
+}
+
+// UpdateStatus 仅允许在可用和停用之间切换，used 只能由 Redeem 事务产生。
+func (redemption *Redemption) UpdateStatus() error {
+	if redemption.Status != common.RedemptionCodeStatusEnabled && redemption.Status != common.RedemptionCodeStatusDisabled {
+		return errors.New("invalid redemption status")
+	}
+	result := DB.Model(&Redemption{}).
+		Where("id = ? AND status <> ? AND redeemed_time = 0", redemption.Id, common.RedemptionCodeStatusUsed).
+		Update("status", redemption.Status)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("redemption code was redeemed or not found")
+	}
+	return nil
 }
 
 func (redemption *Redemption) Delete() error {

@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
+import { formatInvoiceAmount } from '@/features/invoices/format'
+import { toIntlLocale } from '@/i18n/languages'
 import { MaskedValueDisplay } from '@/components/masked-value-display'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
@@ -30,13 +32,18 @@ import {
 } from '@/components/ui/tooltip'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
 
-import { REDEMPTION_FILTER_EXPIRED, REDEMPTION_STATUSES } from '../constants'
+import {
+  REDEMPTION_DISTRIBUTION_LABEL_KEYS,
+  REDEMPTION_FILTER_EXPIRED,
+  REDEMPTION_STATUSES,
+} from '../constants'
 import { isRedemptionExpired, isTimestampExpired } from '../lib'
 import type { Redemption } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 
 export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return [
     {
       id: 'select',
@@ -131,6 +138,24 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
         return value.includes(String(statusValue))
       },
       size: 120,
+    },
+    {
+      accessorKey: 'distribution_type',
+      header: t('Distribution'),
+      cell: ({ row }) =>
+        t(
+          REDEMPTION_DISTRIBUTION_LABEL_KEYS[
+            row.original.distribution_type
+          ]
+        ),
+      size: 120,
+    },
+    {
+      accessorKey: 'price_cents',
+      header: t('Price per code'),
+      cell: ({ row }) =>
+        formatInvoiceAmount((row.original.price_cents || 0) / 100, locale),
+      size: 130,
     },
     {
       id: 'code',
@@ -233,7 +258,7 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
                   className='cursor-help'
                 />
               }
-            ></TooltipTrigger>
+            />
             <TooltipContent>
               <div className='space-y-1 text-xs'>
                 <div>

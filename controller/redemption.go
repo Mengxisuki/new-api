@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func GetAllRedemptions(c *gin.Context) {
@@ -66,59 +67,79 @@ func AddRedemption(c *gin.Context) {
 		return
 	}
 
-	redemption := model.Redemption{}
-	err := c.ShouldBindJSON(&redemption)
-	if err != nil {
+	var request struct {
+		Name             string `json:"name"`
+		Quota            int    `json:"quota"`
+		Count            int    `json:"count"`
+		ExpiredTime      int64  `json:"expired_time"`
+		DistributionType string `json:"distribution_type"`
+		PriceCents       int64  `json:"price_cents"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if utf8.RuneCountInString(redemption.Name) == 0 || utf8.RuneCountInString(redemption.Name) > 20 {
+	if utf8.RuneCountInString(request.Name) == 0 || utf8.RuneCountInString(request.Name) > 20 {
 		common.ApiErrorT(c, "Redemption code name length must be between 1-20")
 		return
 	}
-	if redemption.Count <= 0 {
+	if request.Count <= 0 {
 		common.ApiErrorT(c, "Redemption code count must be greater than 0")
 		return
 	}
-	if redemption.Count > 100 {
+	if request.Count > 100 {
 		common.ApiErrorT(c, "Maximum 100 redemption codes can be generated at once")
 		return
 	}
-	if redemption.Quota <= 0 {
+	if request.Quota <= 0 {
 		common.ApiErrorT(c, "Redemption quota must be positive")
 		return
 	}
-	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+	if err := common.ValidateWalletQuota(request.Quota); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := validateExpiredTime(redemption.ExpiredTime); err != nil {
+	if err := model.ValidateRedemptionDistribution(request.DistributionType, request.PriceCents); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := validateExpiredTime(request.ExpiredTime); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	var keys []string
-	for i := 0; i < redemption.Count; i++ {
-		key := common.GetUUID()
-		cleanRedemption := model.Redemption{
-			UserId:      c.GetInt("id"),
-			Name:        redemption.Name,
-			Key:         key,
-			CreatedTime: common.GetTimestamp(),
-			Quota:       redemption.Quota,
-			ExpiredTime: redemption.ExpiredTime,
+	// 批次必须原子提交，不能返回部分密钥后留下不完整的销售库存。
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		for range request.Count {
+			key := common.GetUUID()
+			cleanRedemption := model.Redemption{
+				UserId:           c.GetInt("id"),
+				Name:             request.Name,
+				Key:              key,
+				CreatedTime:      common.GetTimestamp(),
+				Quota:            request.Quota,
+				ExpiredTime:      request.ExpiredTime,
+				DistributionType: request.DistributionType,
+				PriceCents:       request.PriceCents,
+			}
+			if err := model.InsertRedemptionTx(tx, &cleanRedemption); err != nil {
+				return err
+			}
+			keys = append(keys, key)
 		}
-		err = cleanRedemption.Insert()
-		if err != nil {
-			common.SysError(common.LogText("failed to insert redemption: %s", err.Error()))
-			common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Failed to create redemption code, please try again later"), gin.H{"data": keys})
-			return
-		}
-		keys = append(keys, key)
+		return nil
+	})
+	if err != nil {
+		common.SysError(common.LogText("failed to insert redemption batch: %s", err.Error()))
+		common.ApiError(c, common.NewMessage("Failed to create redemption codes, please try again later"))
+		return
 	}
 	recordManageAudit(c, "redemption.create", map[string]any{
-		"name":  redemption.Name,
-		"count": redemption.Count,
-		"quota": logger.FormatQuota(redemption.Quota),
+		"name":              request.Name,
+		"count":             request.Count,
+		"quota":             logger.FormatQuota(request.Quota),
+		"distribution_type": request.DistributionType,
+		"price_cents":       request.PriceCents,
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -143,40 +164,56 @@ func DeleteRedemption(c *gin.Context) {
 }
 
 func UpdateRedemption(c *gin.Context) {
-	statusOnly := c.Query("status_only")
-	redemption := model.Redemption{}
-	err := c.ShouldBindJSON(&redemption)
+	statusOnly := c.Query("status_only") != ""
+	var request struct {
+		Id               int    `json:"id"`
+		Name             string `json:"name"`
+		Quota            int    `json:"quota"`
+		ExpiredTime      int64  `json:"expired_time"`
+		Status           int    `json:"status"`
+		DistributionType string `json:"distribution_type"`
+		PriceCents       int64  `json:"price_cents"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	cleanRedemption, err := model.GetRedemptionById(request.Id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	cleanRedemption, err := model.GetRedemptionById(redemption.Id)
-	if err != nil {
-		common.ApiError(c, err)
+	if cleanRedemption.Status == common.RedemptionCodeStatusUsed || cleanRedemption.RedeemedTime != 0 {
+		common.ApiError(c, common.NewMessage("Redeemed redemption codes cannot be edited"))
 		return
 	}
-	if statusOnly == "" {
-		if redemption.Quota <= 0 {
+	if statusOnly {
+		cleanRedemption.Status = request.Status
+		err = cleanRedemption.UpdateStatus()
+	} else {
+		if request.Quota <= 0 {
 			common.ApiErrorT(c, "Redemption quota must be positive")
 			return
 		}
-		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		if err := common.ValidateWalletQuota(request.Quota); err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		if err := validateExpiredTime(redemption.ExpiredTime); err != nil {
+		if err := model.ValidateRedemptionDistribution(request.DistributionType, request.PriceCents); err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		// If you add more fields, please also update redemption.Update()
-		cleanRedemption.Name = redemption.Name
-		cleanRedemption.Quota = redemption.Quota
-		cleanRedemption.ExpiredTime = redemption.ExpiredTime
+		if err := validateExpiredTime(request.ExpiredTime); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		cleanRedemption.Name = request.Name
+		cleanRedemption.Quota = request.Quota
+		cleanRedemption.ExpiredTime = request.ExpiredTime
+		cleanRedemption.DistributionType = request.DistributionType
+		cleanRedemption.PriceCents = request.PriceCents
+		err = cleanRedemption.Update()
 	}
-	if statusOnly != "" {
-		cleanRedemption.Status = redemption.Status
-	}
-	err = cleanRedemption.Update()
 	if err != nil {
 		common.ApiError(c, err)
 		return

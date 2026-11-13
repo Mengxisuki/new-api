@@ -55,6 +55,12 @@ export const REVENUE_LINES: {
     light: '#eda100',
     dark: '#c98500',
   },
+  {
+    key: 'redemption_cents',
+    labelKey: 'Redeemed codes',
+    light: '#8b5cf6',
+    dark: '#a78bfa',
+  },
 ]
 
 // 收款渠道标识到展示名称的 i18n 键；未知渠道原样显示标识，不猜测名称。
@@ -64,6 +70,7 @@ export const CHANNEL_LABEL_KEYS: Record<string, string> = {
   epay: 'Epay',
   credit_settlement: 'Credit settlement',
   offline_cash: 'Offline collection',
+  redemption_sale: 'Redeemed codes',
 }
 
 // 总览金额固定为人民币实收，不跟随站点余额的展示币种切换。

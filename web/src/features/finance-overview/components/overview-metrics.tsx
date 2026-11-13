@@ -76,6 +76,18 @@ export function OverviewMetrics(props: { data: FinanceOverview }) {
         )}
       />
       <Metric
+        label={t('Unredeemed sold codes')}
+        value={formatCNY(data.redemption.unredeemed_sale_cents, locale)}
+        hint={t(
+          'Current registered value of {{count}} sold codes awaiting redemption. Gifted: {{gifted}}, unclassified: {{unknown}}. Not cash received.',
+          {
+            count: data.redemption.unredeemed_sale_count,
+            gifted: data.redemption.unredeemed_gift_count,
+            unknown: data.redemption.unredeemed_unknown_count,
+          }
+        )}
+      />
+      <Metric
         label={t('Wallet balance held')}
         value={formatQuota(data.wallet_balance_quota)}
         hint={t('Current wallet quota, including bonuses and manual adjustments. Not a cash balance.')}

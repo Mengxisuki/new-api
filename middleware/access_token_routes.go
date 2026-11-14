@@ -66,6 +66,11 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/subscription/credit/pay":              accessTokenSessionRule,
 	"POST /api/finance/credit/entries/:id/write-off": accessTokenSessionRule,
 	"GET /api/finance/adjustments":                   accessTokenSessionRule,
+	// 支出台账仅接受网页登录，不能因持有 finance scope 而向 PAT 开放。
+	// 读写能力仍由路由上的 FinanceRead / FinanceWrite 独立验证。
+	"GET /api/finance/expenses":              accessTokenSessionRule,
+	"POST /api/finance/expenses":             accessTokenSessionRule,
+	"POST /api/finance/expenses/:id/consume": accessTokenSessionRule,
 	// 财务读取与写入另由真实路由分别校验能力。
 	"GET /api/finance/credit/accounts":            accessTokenSessionRule,
 	"GET /api/finance/credit/entries":             accessTokenSessionRule,

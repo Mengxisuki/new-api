@@ -299,6 +299,33 @@ func TestHostingKeyPolicyRouteContract(t *testing.T) {
 	}
 }
 
+// 支出台账只接受网页登录，持有财务 scope 的 PAT 也不能访问。
+// 通用覆盖测试只检查声明数量，此处额外锁定会话规则，防止误改为 scope。
+// 真实路由注册同时检查声明冲突，不为测试构造另一套权限配置。
+// 请求均保持匿名且不传业务数据，不应触发支出登记或消耗写入。
+func TestFinanceExpenseRoutesRequireBrowserSession(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	// 遍历真实路由，参数化路径须与 Gin 的 FullPath 保持一致。
+	count := 0
+	for _, route := range engine.Routes() {
+		if route.Path != "/api/finance/expenses" && !strings.HasPrefix(route.Path, "/api/finance/expenses/") {
+			continue
+		}
+		count++
+		// 仅会话声明不能附带可被个人令牌授予的权限范围。
+		rule, ok := middleware.AccessTokenRouteRule(route.Method + " " + route.Path)
+		require.True(t, ok, route.Method+" "+route.Path)
+		assert.Equal(t, "session", rule.Kind())
+		assert.Empty(t, rule.Scope())
+		// 匿名请求必须在进入数据库读写前拒绝，不能由空库错误代替鉴权。
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(route.Method, strings.ReplaceAll(route.Path, ":id", "1"), nil))
+		assert.Equal(t, http.StatusUnauthorized, response.Code)
+	}
+	// 防止接口全部漏注册导致循环空跑，也覆盖登记与余额消耗两种写入。
+	assert.Equal(t, 3, count)
+}
+
 // 代充值的每个控制台入口都明确拒绝 PAT，不能遗漏后退到默认规则。
 // 支付通知是唯一例外，已经在签名回调测试中覆盖收款边界。
 func TestRechargeRoutesRequireBrowserSession(t *testing.T) {

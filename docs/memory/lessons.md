@@ -386,3 +386,11 @@ GPT-Load 执行 ID `1e2493a0-20a7-4ddc-89e7-2785ca173d0b`，仅一次 native/ope
 根因：测试使用隔离数据库并按查询前的业务表清单手工 `AutoMigrate`；生产启动会统一迁移 `Redemption`，但测试不会自动继承 `model/main.go` 的完整迁移列表。
 
 规避：每次财务总览读取新增业务表，都要在现有总览/权限测试夹具中加入对应模型迁移，并补一条真实业务记录验证收入、当前快照和软删除口径。不要在生产查询中用“表不存在则返回零”静默降级，否则会把迁移遗漏伪装成没有财务数据。
+
+## 2026-11-14 05:52:29 +00:00 — 新增会话专用财务路由也须声明个人令牌规则
+
+现象：第四期提交 `3a6c01669` 的模型与控制器定向测试通过，但 CI 的 `TestAccessTokenRouteRulesCoverEveryDashboardRoute` 报支出台账 GET、POST 和余额消耗 POST 共三条路由未声明。延续 2026-10-28 的路由契约教训：直接注册路由时，即使已有 `RechargeSessionOnly` 与 `RequirePermission`，也不会自动登记个人令牌规则。
+
+修复：在 `middleware/access_token_routes.go` 为三条路径补 `accessTokenSessionRule`，保留现有财务读写权限；不能改成 finance scope 来满足覆盖数量，否则会错误表达 PAT 授权边界。`router/access_token_scope_test.go` 新增真实路由的会话规则与匿名 401 回归。遵循 [OWASP 授权指南](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) 的默认拒绝、逐请求服务端校验；未改变登录或会话生命周期。
+
+验证：修改前复现同样三条失败；修改后 `go test ./router ./middleware -count=1` 通过。以 HEAD 受控源码加本次补丁生成隔离快照，运行完整 `make test`，根模块、relaykit、tokenkit 均通过。仅修改路由声明与测试，无数据库变更；未提交、推送或部署。新增控制台接口后必须包含 router 包回归，不能只测业务模型和控制器。
